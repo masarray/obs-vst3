@@ -1,0 +1,102 @@
+OBS Safe VST3 Host — Windows x64 installation
+==============================================
+
+Recommended for most users: Smart Setup.exe
+---------------------------------------------
+1. Close OBS Studio.
+2. Run:
+     OBS-Safe-VST3-Host-Setup-x64.exe
+3. The installer automatically detects a normal OBS Studio installation from
+   Windows registration and common install locations.
+4. If OBS is portable or installed in an unusual folder, the installer shows a
+   simple folder picker. Select the OBS root containing:
+     bin\64bit\obs64.exe
+5. Click Install.
+6. Start OBS Studio, open an audio source -> Filters -> + -> Safe VST3 Host.
+
+The smart installer does not install or modify OBS itself. It only installs:
+  obs-plugins\64bit\obs-safe-vst3.dll
+  obs-plugins\64bit\obs-safe-vst3-host.exe
+  data\obs-plugins\obs-safe-vst3\locale\en-US.ini
+
+If OBS Studio is open, Setup asks you to close OBS before installation instead
+of continuing into a confusing file-in-use failure.
+
+Portable ZIP / advanced install
+-------------------------------
+The GitHub Actions portable artifact keeps this layout:
+  obs-plugins/64bit/obs-safe-vst3.dll
+  obs-plugins/64bit/obs-safe-vst3-host.exe
+  data/obs-plugins/obs-safe-vst3/locale/en-US.ini
+
+You can extract it directly into the OBS Studio root, or run:
+
+  powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+
+For a custom OBS location:
+
+  powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -ObsRoot "D:\OBS Studio"
+
+One-click local installer build
+-------------------------------
+Developers/testers on Windows can double-click:
+
+  BUILD-INSTALLER.cmd
+
+It uses the same pinned OBS 31.1.1/libobs build inputs as CI, builds the P1 DLL
+and isolated helper, stages the package, and compiles the same smart Setup.exe.
+The first build downloads/builds the OBS development SDK and can take longer;
+later builds reuse the local .local-build cache.
+
+Local prerequisites:
+- Windows x64
+- Visual Studio 2022 with Desktop development with C++
+- CMake 3.25+
+- Git
+
+Inno Setup 6 is installed automatically through winget (or Chocolatey when
+available) if it is not already installed.
+
+Output:
+  .local-build\windows-installer\installer-output\OBS-Safe-VST3-Host-Setup-x64.exe
+
+Uninstall
+---------
+The smart installer registers OBS Safe VST3 Host in Windows Installed Apps, so
+it can be removed from Windows Settings normally.
+
+For a portable ZIP installation, close OBS and run:
+
+  powershell -ExecutionPolicy Bypass -File .\uninstall-windows.ps1
+
+or remove only:
+  obs-plugins\64bit\obs-safe-vst3.dll
+  obs-plugins\64bit\obs-safe-vst3-host.exe
+  data\obs-plugins\obs-safe-vst3\
+
+Safety notes
+------------
+- The helper process isolates VST3 crashes from the OBS process; it is NOT a
+  security sandbox. Load only VST3 plug-ins you trust.
+- P1 supports Windows x64, VST3 audio effects, mono/stereo and float32.
+- P1 does not yet provide scanner/cache, sidechain, arbitrary multichannel,
+  float64 fallback or automatic helper restart.
+- If a helper misses the bounded processing deadline or exits, the OBS filter
+  leaves the original dry audio buffer untouched.
+
+Runtime validation represented by CI
+------------------------------------
+The P1 package and smart installer are generated only after CI verifies:
+- protocol/state ABI tests on Linux;
+- helper compile/link/tests on Windows;
+- real libobs module load + source registration;
+- real VST3 load/process with Steinberg ADelay from the pinned SDK;
+- parameter-to-DSP delivery;
+- component/controller state round-trip;
+- repeated audio-slot processing;
+- forced helper termination and dry fail-open behavior;
+- smart Setup.exe compile;
+- silent smart-installer smoke installation into a synthetic OBS directory.
+
+Native editor behavior and long-duration testing with third-party VST3 plug-ins
+still require representative desktop runtime acceptance before P1 is merged.

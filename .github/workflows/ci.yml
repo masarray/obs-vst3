@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure portable tests
+        run: cmake -S . -B build -DSAFEVST3_BUILD_TESTS=ON
+      - name: Build protocol test
+        run: cmake --build build --target protocol-layout-test --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  helper-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure helper
+        run: cmake -S . -B build -A x64 -DSAFEVST3_BUILD_OBS_PLUGIN=OFF -DSAFEVST3_BUILD_TESTS=ON
+      - name: Build helper
+        run: cmake --build build --config Release --target obs-safe-vst3-host protocol-layout-test --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure

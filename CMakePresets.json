@@ -1,0 +1,55 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-helper",
+      "displayName": "Windows x64 - isolated helper + tests",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/windows-helper",
+      "architecture": "x64",
+      "cacheVariables": {
+        "SAFEVST3_BUILD_OBS_PLUGIN": "OFF",
+        "SAFEVST3_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "portable-tests",
+      "displayName": "Portable protocol tests",
+      "binaryDir": "${sourceDir}/build/portable-tests",
+      "cacheVariables": {
+        "SAFEVST3_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-helper-release",
+      "configurePreset": "windows-helper",
+      "configuration": "Release",
+      "targets": ["obs-safe-vst3-host", "protocol-layout-test"]
+    },
+    {
+      "name": "portable-tests",
+      "configurePreset": "portable-tests",
+      "targets": ["protocol-layout-test"]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-helper-release",
+      "configurePreset": "windows-helper",
+      "configuration": "Release",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "portable-tests",
+      "configurePreset": "portable-tests",
+      "output": {"outputOnFailure": true}
+    }
+  ]
+}
