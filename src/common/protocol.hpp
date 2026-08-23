@@ -35,6 +35,20 @@ enum class ProcessResult : long {
     InvalidBlock = 2,
 };
 
+enum class EditorCommand : long {
+    None = 0,
+    Open = 1,
+    Hide = 2,
+};
+
+enum class EditorStatus : long {
+    Unknown = 0,
+    Closed = 1,
+    Open = 2,
+    Unsupported = 3,
+    Error = 4,
+};
+
 enum ParameterFlags : std::uint32_t {
     ParameterCanAutomate = 1u << 0,
     ParameterReadOnly = 1u << 1,
@@ -82,7 +96,11 @@ struct alignas(64) SharedAudioRegion {
     volatile long host_status = static_cast<long>(HostStatus::Booting);
     volatile long shutdown_requested = 0;
     volatile long last_error = 0;
-    std::uint32_t reserved[5]{};
+    volatile long editor_command = static_cast<long>(EditorCommand::None);
+    volatile long editor_request_generation = 0;
+    volatile long editor_applied_generation = 0;
+    volatile long editor_status = static_cast<long>(EditorStatus::Unknown);
+    std::uint32_t reserved[1]{};
     alignas(64) ParameterDescriptor parameters[kMaxParameters]{};
     alignas(64) AudioSlot slots[kSlotCount]{};
 };
