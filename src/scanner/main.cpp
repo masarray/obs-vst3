@@ -154,20 +154,66 @@ int probe(const fs::path& plugin, const fs::path& output)
     return found ? 0 : 5;
 }
 
-bool run_probe_child(const fs::path& self, const fs::path& plugin, const fs::path& output)
+HANDLE make_probe_job()
 {
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!job)
+        return nullptr;
+
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        CloseHandle(job);
+        return nullptr;
+    }
+    return job;
+}
+
+bool run_probe_child(HANDLE probe_job, const fs::path& self, const fs::path& plugin, const fs::path& output)
+{
+    if (!probe_job)
+        return false;
+
     std::wstring command = quote(self.wstring()) + L" --probe " + quote(plugin.wstring()) + L" --out " + quote(output.wstring());
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
+
+    // Attach the child to the kill-on-close job at process creation time. If
+    // OBS terminates the scanner because the whole scan exceeded its ceiling,
+    // the scanner's job handle closes and Windows terminates any active probe
+    // even though third-party VST3 code is running inside that descendant.
+    SIZE_T attribute_bytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_bytes);
+    if (attribute_bytes == 0)
+        return false;
+
+    std::vector<unsigned char> attribute_storage(attribute_bytes);
+    auto* attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attribute_storage.data());
+    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attribute_bytes))
+        return false;
+
+    HANDLE jobs[] = {probe_job};
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                                   jobs, sizeof(jobs), nullptr, nullptr)) {
+        DeleteProcThreadAttributeList(attributes);
+        return false;
+    }
+
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof(si);
+    si.lpAttributeList = attributes;
     PROCESS_INFORMATION pi{};
 
-    if (!CreateProcessW(self.c_str(), command.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW, nullptr, self.parent_path().c_str(), &si, &pi))
+    const BOOL created = CreateProcessW(self.c_str(), command.data(), nullptr, nullptr, FALSE,
+                                        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+                                        nullptr, self.parent_path().c_str(), &si.StartupInfo, &pi);
+    DeleteProcThreadAttributeList(attributes);
+    if (!created)
         return false;
 
     const DWORD wait = WaitForSingleObject(pi.hProcess, 15000);
-    if (wait == WAIT_TIMEOUT)
+    if (wait == WAIT_TIMEOUT) {
         TerminateProcess(pi.hProcess, 0xDEAD);
+        (void)WaitForSingleObject(pi.hProcess, 2000);
+    }
 
     DWORD exit_code = 1;
     if (wait == WAIT_OBJECT_0)
@@ -184,10 +230,16 @@ int scan_all(const fs::path& self, const fs::path& cache)
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
 
+    HANDLE probe_job = make_probe_job();
+    if (!probe_job)
+        return 8;
+
     const auto staging = cache.wstring() + L".tmp";
     std::ofstream combined(fs::path(staging), std::ios::binary | std::ios::trunc);
-    if (!combined)
+    if (!combined) {
+        CloseHandle(probe_job);
         return 6;
+    }
 
     unsigned found = 0;
     unsigned failed = 0;
@@ -198,7 +250,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
         const auto probe_out = temp_dir / (L"obs-safe-vst3-probe-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(serial++) + L".tsv");
         DeleteFileW(probe_out.c_str());
 
-        if (run_probe_child(self, bundle, probe_out)) {
+        if (run_probe_child(probe_job, self, bundle, probe_out)) {
             std::ifstream in(probe_out, std::ios::binary);
             std::string line;
             while (std::getline(in, line)) {
@@ -216,9 +268,11 @@ int scan_all(const fs::path& self, const fs::path& cache)
     combined.close();
     if (!MoveFileExW(staging.c_str(), cache.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         DeleteFileW(staging.c_str());
+        CloseHandle(probe_job);
         return 7;
     }
 
+    CloseHandle(probe_job); // Kill-on-close also guarantees no probe survives scan completion.
     std::cout << "plugins=" << found << " failed_bundles=" << failed << '\n';
     return 0;
 }
