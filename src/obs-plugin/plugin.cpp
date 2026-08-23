@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -59,6 +60,7 @@ struct Filter {
 // another reference; destruction then happens only from a non-realtime thread.
 std::mutex retired_bridges_mutex;
 std::vector<std::shared_ptr<WinObsBridge>> retired_bridges;
+std::jthread retired_bridge_reaper;
 
 void retire_bridge(std::shared_ptr<WinObsBridge> bridge)
 {
@@ -87,6 +89,34 @@ void reap_retired_bridges()
         }
     }
     ready_to_destroy.clear();
+}
+
+void start_retired_bridge_reaper()
+{
+    if (retired_bridge_reaper.joinable())
+        return;
+
+    // This reaper lives for the entire OBS module lifetime, not for any one
+    // filter. A callback delayed by the scheduler can therefore release its
+    // bridge at any later point and the helper will still be reaped off the
+    // realtime thread, even after the final filter instance was destroyed.
+    retired_bridge_reaper = std::jthread([](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            reap_retired_bridges();
+            for (int i = 0; i < 10 && !stop.stop_requested(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        reap_retired_bridges();
+    });
+}
+
+void stop_retired_bridge_reaper()
+{
+    retired_bridge_reaper.request_stop();
+    retired_bridge_reaper = std::jthread{};
+    // OBS unload occurs after source instances are gone, so one final
+    // non-realtime pass releases anything that became ready during shutdown.
+    reap_retired_bridges();
 }
 
 void publish_bridge(Filter* filter, std::shared_ptr<WinObsBridge> next)
@@ -386,14 +416,8 @@ void filter_destroy(void* data)
     filter->recovery_thread = std::jthread{};
     publish_bridge(filter, {});
 
-    // Realtime processing is bounded to <=10 ms. Give any in-flight callback a
-    // short grace period to drop its local shared_ptr, then reap on this
-    // non-realtime destroy thread. Anything still referenced remains safely in
-    // the module-level quarantine rather than being destroyed by audio.
-    for (int i = 0; i < 20; ++i) {
-        reap_retired_bridges();
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    // The module-level reaper outlives every filter. Reap anything already ready
+    // here, while delayed realtime references remain quarantined for a later pass.
     reap_retired_bridges();
     delete filter;
 }
@@ -460,9 +484,21 @@ obs_source_info source_info = make_source_info();
 
 bool obs_module_load(void)
 {
+    try {
+        start_retired_bridge_reaper();
+    } catch (const std::exception& e) {
+        blog(LOG_ERROR, "[obs-safe-vst3] failed to start non-realtime bridge reaper: %s", e.what());
+        return false;
+    }
+
     obs_register_source(&source_info);
     blog(LOG_INFO, "[obs-safe-vst3] public-trial module loaded");
     return true;
+}
+
+void obs_module_unload(void)
+{
+    stop_retired_bridge_reaper();
 }
 
 const char* obs_module_description(void)
