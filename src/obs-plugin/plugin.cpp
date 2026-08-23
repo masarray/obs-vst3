@@ -53,6 +53,48 @@ struct Filter {
     std::atomic<bool> enabled{true};
 };
 
+// A bridge destructor can wait for the helper process, so an OBS realtime audio
+// callback must never become the final owner of a bridge that has been replaced.
+// Retired bridges stay quarantined here until no callback/recovery thread holds
+// another reference; destruction then happens only from a non-realtime thread.
+std::mutex retired_bridges_mutex;
+std::vector<std::shared_ptr<WinObsBridge>> retired_bridges;
+
+void retire_bridge(std::shared_ptr<WinObsBridge> bridge)
+{
+    if (!bridge)
+        return;
+    std::lock_guard lock(retired_bridges_mutex);
+    retired_bridges.push_back(std::move(bridge));
+}
+
+void reap_retired_bridges()
+{
+    std::vector<std::shared_ptr<WinObsBridge>> ready_to_destroy;
+    {
+        std::lock_guard lock(retired_bridges_mutex);
+        auto it = retired_bridges.begin();
+        while (it != retired_bridges.end()) {
+            // Once removed from filter->bridge, no new realtime references can
+            // appear. use_count()==1 therefore means this quarantine is the sole
+            // remaining owner and it is safe to destroy off the audio thread.
+            if (it->use_count() == 1) {
+                ready_to_destroy.push_back(std::move(*it));
+                it = retired_bridges.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    ready_to_destroy.clear();
+}
+
+void publish_bridge(Filter* filter, std::shared_ptr<WinObsBridge> next)
+{
+    auto previous = std::atomic_exchange_explicit(&filter->bridge, std::move(next), std::memory_order_acq_rel);
+    retire_bridge(std::move(previous));
+}
+
 std::filesystem::path module_binary_dir()
 {
     const char* module_path = obs_get_module_binary_path(obs_current_module());
@@ -226,7 +268,7 @@ void restart_bridge(Filter* filter)
     }
 
     if (!filter->enabled.load(std::memory_order_relaxed) || path.empty()) {
-        std::atomic_store_explicit(&filter->bridge, std::shared_ptr<WinObsBridge>{}, std::memory_order_release);
+        publish_bridge(filter, {});
         return;
     }
 
@@ -234,7 +276,7 @@ void restart_bridge(Filter* filter)
     const auto channels = filter->channels;
     if (channels == 0 || channels > safevst3::kMaxChannels) {
         blog(LOG_WARNING, "[obs-safe-vst3] public trial supports mono/stereo only; current OBS layout has %u channels", channels);
-        std::atomic_store_explicit(&filter->bridge, std::shared_ptr<WinObsBridge>{}, std::memory_order_release);
+        publish_bridge(filter, {});
         return;
     }
 
@@ -243,18 +285,18 @@ void restart_bridge(Filter* filter)
     const auto helper = helper_path();
     if (helper.empty() || !std::filesystem::exists(helper)) {
         blog(LOG_ERROR, "[obs-safe-vst3] helper executable not found next to plugin binary");
-        std::atomic_store_explicit(&filter->bridge, std::shared_ptr<WinObsBridge>{}, std::memory_order_release);
+        publish_bridge(filter, {});
         return;
     }
 
     if (!bridge->start(helper, std::filesystem::u8path(path), class_id, sample_rate, channels, error)) {
         blog(LOG_ERROR, "[obs-safe-vst3] failed to start isolated VST3 host: %s", error.c_str());
-        std::atomic_store_explicit(&filter->bridge, std::shared_ptr<WinObsBridge>{}, std::memory_order_release);
+        publish_bridge(filter, {});
         return;
     }
 
     blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s", path.c_str());
-    std::atomic_store_explicit(&filter->bridge, std::move(bridge), std::memory_order_release);
+    publish_bridge(filter, std::move(bridge));
 }
 
 const char* filter_name(void*) { return obs_module_text("SafeVST3Filter"); }
@@ -312,6 +354,8 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
             if (stop.stop_requested())
                 break;
 
+            reap_retired_bridges();
+
             bool has_path = false;
             {
                 std::lock_guard lock(filter->config_mutex);
@@ -326,6 +370,7 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
                 restart_bridge(filter);
             }
         }
+        reap_retired_bridges();
     });
     return filter;
 }
@@ -335,9 +380,21 @@ void filter_destroy(void* data)
     auto* filter = static_cast<Filter*>(data);
     if (!filter)
         return;
+
+    filter->enabled.store(false, std::memory_order_release);
     filter->recovery_thread.request_stop();
     filter->recovery_thread = std::jthread{};
-    std::atomic_store_explicit(&filter->bridge, std::shared_ptr<WinObsBridge>{}, std::memory_order_release);
+    publish_bridge(filter, {});
+
+    // Realtime processing is bounded to <=10 ms. Give any in-flight callback a
+    // short grace period to drop its local shared_ptr, then reap on this
+    // non-realtime destroy thread. Anything still referenced remains safely in
+    // the module-level quarantine rather than being destroyed by audio.
+    for (int i = 0; i < 20; ++i) {
+        reap_retired_bridges();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    reap_retired_bridges();
     delete filter;
 }
 
