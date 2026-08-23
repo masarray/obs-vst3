@@ -433,6 +433,22 @@ bool Vst3Engine::queue_parameter(std::uint32_t id, double normalized) noexcept
 
 bool Vst3Engine::queue_parameter_from_controller(std::uint32_t id, double normalized) noexcept
 {
+    return queue_processor_parameter(id, normalized);
+}
+
+bool Vst3Engine::set_controller_parameter(std::uint32_t id, double normalized) noexcept
+{
+    if (!controller_)
+        return false;
+    EngineParameter* parameter = find_parameter(id);
+    if (!parameter)
+        return false;
+    normalized = normalize_parameter_value(normalized, parameter->step_count);
+    return controller_->setParamNormalized(static_cast<ParamID>(id), normalized) == kResultTrue;
+}
+
+bool Vst3Engine::queue_processor_parameter(std::uint32_t id, double normalized) noexcept
+{
     return queue_parameter_impl(id, normalized, false);
 }
 
@@ -498,8 +514,9 @@ void Vst3Engine::capture_output_parameter_changes() noexcept
 
         value = normalize_parameter_value(value, parameter->step_count);
         parameter->current_normalized = value;
-        if (controller_)
-            (void)controller_->setParamNormalized(queue->getParameterId(), value);
+        // Processor feedback is intentionally controller-free. S2.2 transfers
+        // this update over DSP->control SPSC and the control thread applies it
+        // to IEditController. This keeps vendor UI calls out of process().
         record_parameter_update(id, value);
     }
     output_parameter_changes_.clearQueue();
