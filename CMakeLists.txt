@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(obs-safe-vst3 VERSION 0.2.0 LANGUAGES C CXX)
+project(obs-safe-vst3 VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -92,4 +92,8 @@ if(SAFEVST3_BUILD_TESTS)
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
     add_test(NAME protocol-layout COMMAND protocol-layout-test)
+
+    add_executable(parameter-control-test tests/parameter_control.cpp)
+    target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
+    add_test(NAME parameter-control COMMAND parameter-control-test)
 endif()
