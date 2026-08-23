@@ -4,6 +4,7 @@
 
 #include "common/parameter_utils.hpp"
 #include "pluginterfaces/vst/vstspeaker.h"
+#include "public.sdk/source/common/memorystream.h"
 #include "public.sdk/source/vst/utility/stringconvert.h"
 
 #include <algorithm>
@@ -13,6 +14,42 @@ namespace safevst3 {
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
+
+namespace {
+
+bool copy_stream(MemoryStream& stream, std::vector<std::uint8_t>& destination,
+                 const char* label, std::string& error)
+{
+    const auto raw_size = stream.getSize();
+    if (raw_size < 0 || static_cast<std::uint64_t>(raw_size) > kMaxStateBytes) {
+        error = std::string(label) + " state exceeds the supported snapshot size";
+        return false;
+    }
+
+    const auto size = static_cast<std::size_t>(raw_size);
+    if (size == 0) {
+        destination.clear();
+        return true;
+    }
+
+    const char* data = stream.getData();
+    if (!data) {
+        error = std::string(label) + " state stream returned no data";
+        return false;
+    }
+
+    const auto* begin = reinterpret_cast<const std::uint8_t*>(data);
+    destination.assign(begin, begin + static_cast<std::ptrdiff_t>(size));
+    return true;
+}
+
+MemoryStream read_stream(const std::vector<std::uint8_t>& bytes)
+{
+    return MemoryStream(bytes.empty() ? nullptr : const_cast<std::uint8_t*>(bytes.data()),
+                        static_cast<TSize>(bytes.size()));
+}
+
+} // namespace
 
 Vst3Engine::~Vst3Engine() { close(); }
 
@@ -215,6 +252,98 @@ bool Vst3Engine::open(const std::string& path,
     }
 
     latency_samples_ = processor_->getLatencySamples();
+    return true;
+}
+
+bool Vst3Engine::capture_state(PluginStateSnapshot& snapshot, std::string& error)
+{
+    snapshot = {};
+    error.clear();
+    if (!component_) {
+        error = "VST3 component unavailable while capturing state";
+        return false;
+    }
+
+    MemoryStream component_stream;
+    if (component_->getState(&component_stream) != kResultTrue) {
+        error = "VST3 component getState failed";
+        return false;
+    }
+    if (!copy_stream(component_stream, snapshot.component, "VST3 component", error))
+        return false;
+
+    if (controller_) {
+        MemoryStream controller_stream;
+        if (controller_->getState(&controller_stream) == kResultTrue &&
+            !copy_stream(controller_stream, snapshot.controller, "VST3 controller", error))
+            return false;
+    }
+
+    if (snapshot.total_bytes() > kMaxStateBytes) {
+        error = "Combined VST3 component/controller state exceeds the supported snapshot size";
+        snapshot = {};
+        return false;
+    }
+    return true;
+}
+
+bool Vst3Engine::restore_state(const PluginStateSnapshot& snapshot, std::string& error)
+{
+    error.clear();
+    if (!component_ || !processor_) {
+        error = "VST3 component unavailable while restoring state";
+        return false;
+    }
+    if (snapshot.total_bytes() > kMaxStateBytes) {
+        error = "VST3 state exceeds the supported snapshot size";
+        return false;
+    }
+
+    // State restoration is a control-plane transaction. Suspend the processor,
+    // restore in the ordering required by the VST3 specification, and always
+    // try to resume so a corrupt vendor blob cannot leave the helper inactive.
+    (void)processor_->setProcessing(false);
+    (void)component_->setActive(false);
+    input_parameter_changes_.clearQueue();
+    output_parameter_changes_.clearQueue();
+    parameter_changes_pending_ = false;
+
+    bool restored = true;
+    auto component_stream = read_stream(snapshot.component);
+    if (component_->setState(&component_stream) != kResultTrue) {
+        error = "VST3 component setState failed";
+        restored = false;
+    }
+
+    if (restored && controller_) {
+        auto controller_component_stream = read_stream(snapshot.component);
+        if (controller_->setComponentState(&controller_component_stream) != kResultTrue) {
+            error = "VST3 controller setComponentState failed";
+            restored = false;
+        }
+    }
+
+    if (restored && controller_ && !snapshot.controller.empty()) {
+        auto controller_stream = read_stream(snapshot.controller);
+        if (controller_->setState(&controller_stream) != kResultTrue) {
+            error = "VST3 controller setState failed";
+            restored = false;
+        }
+    }
+
+    const bool activated = component_->setActive(true) == kResultTrue;
+    const bool processing = activated && processor_->setProcessing(true) == kResultTrue;
+    if (!activated || !processing) {
+        error = !activated ? "VST3 setActive(true) failed after state restore"
+                           : "VST3 setProcessing(true) failed after state restore";
+        return false;
+    }
+
+    if (!restored)
+        return false;
+
+    latency_samples_ = processor_->getLatencySamples();
+    refresh_parameter_values();
     return true;
 }
 

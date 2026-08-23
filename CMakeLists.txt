@@ -33,6 +33,7 @@ if(WIN32)
     FetchContent_MakeAvailable(vst3sdk)
 
     add_library(safevst3_vst3_hosting_runtime STATIC
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/common/memorystream.cpp
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
     )
@@ -45,6 +46,7 @@ if(WIN32)
     add_library(safevst3_win_ipc STATIC
         src/platform/windows/win_ipc.cpp
         src/platform/windows/editor_ipc.cpp
+        src/platform/windows/state_ipc.cpp
     )
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
@@ -69,6 +71,7 @@ if(WIN32)
             add_library(obs-safe-vst3 MODULE
                 src/obs-plugin/plugin.cpp
                 src/obs-plugin/parameter_controls.cpp
+                src/obs-plugin/state_store.cpp
             )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(obs-safe-vst3 PRIVATE OBS::libobs safevst3_win_ipc)
@@ -95,8 +98,12 @@ if(SAFEVST3_BUILD_TESTS)
     target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
     add_test(NAME parameter-control COMMAND parameter-control-test)
 
+    add_executable(state-snapshot-test tests/state_snapshot.cpp)
+    target_link_libraries(state-snapshot-test PRIVATE safevst3_protocol)
+    add_test(NAME state-snapshot COMMAND state-snapshot-test)
+
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
-    add_dependencies(protocol-layout-test parameter-control-test)
+    add_dependencies(protocol-layout-test parameter-control-test state-snapshot-test)
     add_test(NAME protocol-layout COMMAND protocol-layout-test)
 endif()
