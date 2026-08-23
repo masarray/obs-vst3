@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "obs-plugin/parameter_controls.hpp"
+#include "obs-plugin/state_store.hpp"
 #include "platform/windows/win_ipc.hpp"
 
 #include <obs-module.h>
@@ -75,6 +76,8 @@ struct Filter {
     std::string class_id;
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
+    std::atomic<std::uint32_t> observed_state_generation{0};
+    std::atomic<std::uint32_t> saved_state_generation{0};
     std::atomic<double> deadline_fraction{kInternalDeadlineFraction};
     std::atomic<bool> enabled{true};
     std::atomic<bool> shutting_down{false};
@@ -389,6 +392,68 @@ std::pair<std::string, std::string> current_identity(Filter* filter)
     return {filter->path, filter->class_id};
 }
 
+bool capture_bridge_state(Filter* filter,
+                          const std::string& path,
+                          const std::string& class_id,
+                          bool force)
+{
+    if (!filter || !filter->context || path.empty())
+        return false;
+
+    std::lock_guard restart_lock(filter->restart_mutex);
+    if (!filter->bridge_owner || !filter->bridge_owner->running())
+        return false;
+
+    const std::uint32_t dirty = filter->bridge_owner->state_dirty_generation();
+    if (!force && dirty == filter->saved_state_generation.load(std::memory_order_acquire))
+        return true;
+
+    safevst3::PluginStateSnapshot snapshot{};
+    std::string error;
+    if (!filter->bridge_owner->capture_state(snapshot, error)) {
+        // Never keep an older opaque snapshot after the plug-in tells us the
+        // current exact state can no longer be captured. The normalized host
+        // parameters remain the conservative compatibility fallback.
+        safevst3::obsstate::discard(filter->context, path, class_id);
+        filter->observed_state_generation.store(dirty, std::memory_order_release);
+        filter->saved_state_generation.store(dirty, std::memory_order_release);
+        blog(LOG_WARNING, "[obs-safe-vst3] exact VST3 state capture unavailable; using parameter fallback: %s", error.c_str());
+        return false;
+    }
+
+    if (!safevst3::obsstate::save(filter->context, path, class_id, snapshot, error)) {
+        blog(LOG_WARNING, "[obs-safe-vst3] could not persist exact VST3 state: %s", error.c_str());
+        return false;
+    }
+
+    filter->observed_state_generation.store(dirty, std::memory_order_release);
+    filter->saved_state_generation.store(dirty, std::memory_order_release);
+    return true;
+}
+
+bool capture_current_bridge_state(Filter* filter, bool force)
+{
+    if (!filter)
+        return false;
+    const auto [path, class_id] = current_identity(filter);
+    return capture_bridge_state(filter, path, class_id, force);
+}
+
+void apply_parameter_fallback(WinObsBridge& bridge,
+                              obs_source_t* context,
+                              const std::string& path,
+                              const std::string& class_id)
+{
+    if (!context || path.empty())
+        return;
+    obs_data_t* settings = obs_source_get_settings(context);
+    if (!settings)
+        return;
+    safevst3::obsparam::apply_parameter_settings(
+        bridge, settings, safevst3::obsparam::parameter_scope(path, class_id));
+    obs_data_release(settings);
+}
+
 void restart_bridge(Filter* filter)
 {
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
@@ -441,10 +506,40 @@ void restart_bridge(Filter* filter)
         return;
     }
 
-    blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s (%s, %u samples latency, %u/%u parameters exposed)",
+    // Restore exact opaque VST3 state before this helper is ever visible to the
+    // realtime callback. Invalid snapshots are quarantined by deleting them;
+    // existing normalized parameter persistence remains the fallback path.
+    bool restored_exact_state = false;
+    safevst3::PluginStateSnapshot snapshot{};
+    std::string state_error;
+    const auto load_result = safevst3::obsstate::load(
+        filter->context, path, class_id, snapshot, state_error);
+    if (load_result == safevst3::obsstate::LoadResult::Loaded) {
+        if (bridge->restore_state(snapshot, state_error)) {
+            restored_exact_state = true;
+        } else {
+            safevst3::obsstate::discard(filter->context, path, class_id);
+            blog(LOG_WARNING, "[obs-safe-vst3] saved exact VST3 state was rejected; using parameter fallback: %s",
+                 state_error.c_str());
+        }
+    } else if (load_result == safevst3::obsstate::LoadResult::Invalid) {
+        safevst3::obsstate::discard(filter->context, path, class_id);
+        blog(LOG_WARNING, "[obs-safe-vst3] saved VST3 state is invalid; using parameter fallback: %s",
+             state_error.c_str());
+    }
+
+    if (!restored_exact_state)
+        apply_parameter_fallback(*bridge, filter->context, path, class_id);
+
+    const std::uint32_t state_generation = bridge->state_dirty_generation();
+    filter->observed_state_generation.store(state_generation, std::memory_order_release);
+    filter->saved_state_generation.store(state_generation, std::memory_order_release);
+
+    blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s (%s, %u samples latency, %u/%u parameters exposed, state=%s)",
          path.c_str(), bridge->plugin_name().c_str(), bridge->latency_samples(),
          static_cast<unsigned>(bridge->parameters().size()),
-         static_cast<unsigned>(bridge->parameter_total_count()));
+         static_cast<unsigned>(bridge->parameter_total_count()),
+         restored_exact_state ? "restored" : "parameter-fallback");
     publish_bridge_locked(filter, std::move(bridge));
 }
 
@@ -452,6 +547,17 @@ bool bridge_running(Filter* filter)
 {
     std::lock_guard restart_lock(filter->restart_mutex);
     return filter->bridge_owner && filter->bridge_owner->running();
+}
+
+bool read_bridge_state_generation(Filter* filter, std::uint32_t& generation)
+{
+    if (!filter)
+        return false;
+    std::lock_guard restart_lock(filter->restart_mutex);
+    if (!filter->bridge_owner || !filter->bridge_owner->running())
+        return false;
+    generation = filter->bridge_owner->state_dirty_generation();
+    return true;
 }
 
 bool open_editor_button(obs_properties_t*, obs_property_t*, void* data)
@@ -485,17 +591,6 @@ void apply_current_parameter_settings(Filter* filter, obs_data_t* settings)
         safevst3::obsparam::apply_parameter_settings(*filter->bridge_owner, settings, scope);
 }
 
-void reapply_source_parameter_settings(Filter* filter)
-{
-    if (!filter || !filter->context)
-        return;
-    obs_data_t* settings = obs_source_get_settings(filter->context);
-    if (!settings)
-        return;
-    apply_current_parameter_settings(filter, settings);
-    obs_data_release(settings);
-}
-
 const char* filter_name(void*) { return obs_module_text("SafeVST3Filter"); }
 
 void filter_defaults(obs_data_t* settings)
@@ -524,12 +619,19 @@ void filter_update(void* data, obs_data_t* settings)
         class_id = legacy_class;
     }
 
-    bool identity_changed = false;
+    const auto [old_path, old_class_id] = current_identity(filter);
+    const bool identity_changed = old_path != path || old_class_id != class_id;
+
+    // Save the old plug-in while its helper and identity are still paired. A
+    // UI selection change can therefore never write old state under the new
+    // plug-in's identity.
+    if (identity_changed && !old_path.empty())
+        (void)capture_bridge_state(filter, old_path, old_class_id, true);
+
     {
         std::lock_guard lock(filter->config_mutex);
         if (filter->shutting_down.load(std::memory_order_acquire))
             return;
-        identity_changed = filter->path != path || filter->class_id != class_id;
         filter->path = path;
         filter->class_id = class_id;
     }
@@ -542,12 +644,24 @@ void filter_update(void* data, obs_data_t* settings)
     filter->deadline_fraction.store(kInternalDeadlineFraction, std::memory_order_relaxed);
 
     const bool needs_restart = identity_changed || enabled_changed;
-    if (needs_restart)
+    if (needs_restart) {
         restart_bridge(filter);
+    } else {
+        // Existing normalized values continue to work as the compatibility
+        // fallback. Exact state is authoritative only when a helper is born.
+        apply_current_parameter_settings(filter, settings);
+    }
 
-    apply_current_parameter_settings(filter, settings);
     if (needs_restart && filter->context)
         obs_source_update_properties(filter->context);
+}
+
+void filter_save(void* data, obs_data_t*)
+{
+    auto* filter = static_cast<Filter*>(data);
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+        return;
+    (void)capture_current_bridge_state(filter, true);
 }
 
 void* filter_create(obs_data_t* settings, obs_source_t* context)
@@ -563,8 +677,10 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
 
     filter_update(filter, settings);
     filter->recovery_thread = std::jthread([filter](std::stop_token stop) {
+        unsigned recovery_ticks = 0;
+        unsigned stable_dirty_ticks = 0;
         while (!stop.stop_requested()) {
-            for (int i = 0; i < 30 && !stop.stop_requested(); ++i)
+            for (int i = 0; i < 10 && !stop.stop_requested(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (stop.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
                 break;
@@ -574,16 +690,41 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
                 std::lock_guard lock(filter->config_mutex);
                 has_path = !filter->path.empty();
             }
-            if (!filter->enabled.load(std::memory_order_relaxed) || !has_path)
+            if (!filter->enabled.load(std::memory_order_relaxed) || !has_path) {
+                recovery_ticks = 0;
+                stable_dirty_ticks = 0;
                 continue;
-
-            if (!bridge_running(filter)) {
-                blog(LOG_WARNING, "[obs-safe-vst3] helper stopped; attempting isolated recovery");
-                restart_bridge(filter);
-                reapply_source_parameter_settings(filter);
-                if (filter->context)
-                    obs_source_update_properties(filter->context);
             }
+
+            std::uint32_t dirty = 0;
+            if (read_bridge_state_generation(filter, dirty)) {
+                recovery_ticks = 0;
+                const std::uint32_t observed =
+                    filter->observed_state_generation.load(std::memory_order_acquire);
+                if (dirty != observed) {
+                    filter->observed_state_generation.store(dirty, std::memory_order_release);
+                    stable_dirty_ticks = 0;
+                } else if (dirty != filter->saved_state_generation.load(std::memory_order_acquire)) {
+                    // Debounce vendor/editor activity. Two stable one-second
+                    // observations keep getState() off active knob gestures.
+                    if (++stable_dirty_ticks >= 2) {
+                        (void)capture_current_bridge_state(filter, false);
+                        stable_dirty_ticks = 0;
+                    }
+                } else {
+                    stable_dirty_ticks = 0;
+                }
+                continue;
+            }
+
+            stable_dirty_ticks = 0;
+            if (++recovery_ticks < 3)
+                continue;
+            recovery_ticks = 0;
+            blog(LOG_WARNING, "[obs-safe-vst3] helper stopped; attempting isolated recovery");
+            restart_bridge(filter);
+            if (filter->context)
+                obs_source_update_properties(filter->context);
         }
     });
     return filter;
@@ -594,6 +735,10 @@ void filter_destroy(void* data)
     auto* filter = static_cast<Filter*>(data);
     if (!filter)
         return;
+
+    // Capture before shutdown flags make the control plane unavailable. This is
+    // the last exact snapshot if OBS exits before the debounce worker fires.
+    (void)capture_current_bridge_state(filter, true);
 
     filter->shutting_down.store(true, std::memory_order_release);
     filter->shutdown_source.request_stop();
@@ -723,6 +868,7 @@ obs_source_info make_source_info()
     info.get_defaults = filter_defaults;
     info.get_properties = filter_properties;
     info.update = filter_update;
+    info.save = filter_save;
     info.filter_audio = filter_audio;
     return info;
 }
