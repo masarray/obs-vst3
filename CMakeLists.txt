@@ -32,9 +32,6 @@ if(WIN32)
     )
     FetchContent_MakeAvailable(vst3sdk)
 
-    # sdk_hosting deliberately contains the platform-neutral hosting core only.
-    # Module::create and PlugProvider live in separate SDK translation units, so
-    # include the exact Windows/runtime implementations needed by our host.
     add_library(safevst3_vst3_hosting_runtime STATIC
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
@@ -42,9 +39,6 @@ if(WIN32)
     target_link_libraries(safevst3_vst3_hosting_runtime PUBLIC sdk_hosting sdk)
     target_compile_definitions(safevst3_vst3_hosting_runtime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     if(MSVC)
-        # Steinberg's SMTG_CPP20 detection reads __cplusplus. MSVC reports the
-        # legacy value unless /Zc:__cplusplus is enabled, which otherwise sends
-        # module_win32.cpp down its pre-C++20 generic_u8string() branch.
         target_compile_options(safevst3_vst3_hosting_runtime PRIVATE /Zc:__cplusplus)
     endif()
 
@@ -68,7 +62,10 @@ if(WIN32)
     if(SAFEVST3_BUILD_OBS_PLUGIN)
         find_package(libobs CONFIG QUIET)
         if(libobs_FOUND)
-            add_library(obs-safe-vst3 MODULE src/obs-plugin/plugin.cpp)
+            add_library(obs-safe-vst3 MODULE
+                src/obs-plugin/plugin.cpp
+                src/obs-plugin/parameter_controls.cpp
+            )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(obs-safe-vst3 PRIVATE OBS::libobs safevst3_win_ipc)
             target_compile_definitions(obs-safe-vst3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
