@@ -63,6 +63,16 @@ void copy_text(char* destination, std::size_t capacity, const std::string& value
     destination[count] = '\0';
 }
 
+void publish_heartbeat(safevst3::SharedAudioRegion* region) noexcept
+{
+    if (!region)
+        return;
+    InterlockedExchange64(
+        reinterpret_cast<volatile LONG64*>(&region->helper_heartbeat_ms),
+        static_cast<LONG64>(GetTickCount64()));
+    InterlockedIncrement(&region->helper_progress_generation);
+}
+
 void publish_parameter_value(safevst3::SharedAudioRegion* region,
                              std::uint32_t id,
                              double normalized) noexcept
@@ -361,17 +371,26 @@ int wmain(int argc, wchar_t** argv)
     if (mmcss)
         AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
 
+    publish_heartbeat(region);
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Ready));
     SetEvent(endpoint.ready_event());
 
     HANDLE request_handle = endpoint.request_event();
     while (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) == 0) {
-        const DWORD wait = MsgWaitForMultipleObjectsEx(1, &request_handle, INFINITE,
+        // Wake periodically even when OBS is idle. If this main/helper thread
+        // becomes stuck inside vendor DSP/UI/lifecycle code, this heartbeat
+        // stops and the OBS-side watchdog can distinguish a hang from idleness.
+        publish_heartbeat(region);
+        const DWORD wait = MsgWaitForMultipleObjectsEx(1, &request_handle, 250,
                                                        QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (wait == WAIT_FAILED)
             break;
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
+        if (wait == WAIT_TIMEOUT) {
+            publish_heartbeat(region);
+            continue;
+        }
 
         if (wait == WAIT_OBJECT_0 + 1)
             pump_windows_messages();
@@ -439,6 +458,7 @@ int wmain(int argc, wchar_t** argv)
             InterlockedExchange(&region->editor_status,
                                 static_cast<long>(editor.visible() ? EditorStatus::Open : EditorStatus::Closed));
         }
+        publish_heartbeat(region);
     }
 
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::ShuttingDown));
