@@ -204,7 +204,7 @@ void NativeEditorWindow::resize_client(int width, int height) noexcept
 
 void NativeEditorWindow::notify_view_size(int width, int height) noexcept
 {
-    if (!view_ || width <= 0 || height <= 0)
+    if (!view_ || !attached_ || width <= 0 || height <= 0)
         return;
     Steinberg::ViewRect size{0, 0, width, height};
     (void)view_->onSize(&size);
