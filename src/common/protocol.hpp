@@ -6,13 +6,14 @@
 namespace safevst3 {
 
 inline constexpr std::uint32_t kProtocolMagic = 0x3356534Fu; // "OSV3"
-inline constexpr std::uint32_t kProtocolVersion = 2;
+inline constexpr std::uint32_t kProtocolVersion = 3;
 inline constexpr std::uint32_t kMaxChannels = 2;
 inline constexpr std::uint32_t kMaxFrames = 2048;
 inline constexpr std::uint32_t kSlotCount = 4;
 inline constexpr std::uint32_t kMaxParameters = 256;
 inline constexpr std::size_t kParameterTitleBytes = 64;
 inline constexpr std::size_t kParameterUnitsBytes = 32;
+inline constexpr std::size_t kPluginNameBytes = 128;
 
 enum class SlotState : long {
     Free = 0,
@@ -100,7 +101,8 @@ struct alignas(64) SharedAudioRegion {
     volatile long editor_request_generation = 0;
     volatile long editor_applied_generation = 0;
     volatile long editor_status = static_cast<long>(EditorStatus::Unknown);
-    std::uint32_t reserved[1]{};
+    std::uint32_t latency_samples = 0;
+    char plugin_name[kPluginNameBytes]{};
     alignas(64) ParameterDescriptor parameters[kMaxParameters]{};
     alignas(64) AudioSlot slots[kSlotCount]{};
 };
