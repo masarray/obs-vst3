@@ -86,11 +86,13 @@ endif()
 
 if(SAFEVST3_BUILD_TESTS)
     enable_testing()
-    add_executable(protocol-layout-test tests/protocol_layout.cpp)
-    target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
-    add_test(NAME protocol-layout COMMAND protocol-layout-test)
 
     add_executable(parameter-control-test tests/parameter_control.cpp)
     target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
     add_test(NAME parameter-control COMMAND parameter-control-test)
+
+    add_executable(protocol-layout-test tests/protocol_layout.cpp)
+    target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
+    add_dependencies(protocol-layout-test parameter-control-test)
+    add_test(NAME protocol-layout COMMAND protocol-layout-test)
 endif()
