@@ -2,6 +2,8 @@ name: Release Windows
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -30,6 +32,10 @@ concurrency:
 
 jobs:
   build-package-release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release v'))
     name: Build, validate, package and release
     runs-on: windows-2022
     defaults:
@@ -45,14 +51,25 @@ jobs:
 
       - name: Resolve release inputs
         id: release
+        env:
+          RELEASE_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             $Tag = '${{ inputs.version }}'.Trim()
             $ObsVersion = '${{ inputs.obs_version }}'.Trim()
             $PreRelease = '${{ inputs.prerelease }}' -eq 'true'
           }
-          else {
+          elseif ('${{ github.ref }}'.StartsWith('refs/tags/v')) {
             $Tag = '${{ github.ref_name }}'.Trim()
+            $ObsVersion = '32.2.2'
+            $PreRelease = $Tag.Contains('-')
+          }
+          else {
+            $Match = [regex]::Match($env:RELEASE_COMMIT_MESSAGE, '^Release (v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?)')
+            if (-not $Match.Success) {
+              throw 'Main-branch release trigger did not contain a valid Release vMAJOR.MINOR.PATCH marker.'
+            }
+            $Tag = $Match.Groups[1].Value
             $ObsVersion = '32.2.2'
             $PreRelease = $Tag.Contains('-')
           }
@@ -104,20 +121,48 @@ jobs:
         run: |
           .\.github\scripts\Build-Windows.ps1 -Target x64 -Configuration Release
 
-      - name: Locate libobs CMake package
+      - name: Stage libobs development package
         id: libobs
         run: |
-          $Config = Get-ChildItem -Path '.obs-sdk\build_x64\install' -Filter 'libobsConfig.cmake' -File -Recurse | Select-Object -First 1
-          if (-not $Config) {
-            throw 'libobsConfig.cmake was not found in the pinned OBS build output.'
+          $Generated = Get-ChildItem -Path '.obs-sdk' -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '[\\/]install[\\/]' } |
+            Select-Object -First 1
+          if (-not $Generated) {
+            throw 'Generated libobsConfig.cmake was not found after the pinned OBS build.'
           }
+
+          $BuildRoot = Split-Path $Generated.Directory.FullName -Parent
+          if (-not (Test-Path (Join-Path $BuildRoot 'cmake_install.cmake'))) {
+            throw "Could not derive the OBS CMake build root from $($Generated.FullName)."
+          }
+
+          $SdkPrefix = Join-Path $env:RUNNER_TEMP 'obs-libobs-sdk'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SdkPrefix
+          cmake --install $BuildRoot --prefix $SdkPrefix --config Release --component Development
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installing the OBS Development component failed with exit code $LASTEXITCODE."
+          }
+
+          $Config = Get-ChildItem -Path $SdkPrefix -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $Config) {
+            throw 'libobsConfig.cmake was not installed by the OBS Development component.'
+          }
+          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'libobsTargets.cmake'))) {
+            throw 'Staged libobs package is incomplete: libobsTargets.cmake is missing.'
+          }
+          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'finders\Findw32-pthreads.cmake'))) {
+            throw 'Staged libobs package is incomplete: dependency finders are missing.'
+          }
+
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
-          Write-Host "Using libobs package: $($Config.FullName)"
+          "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
+          Write-Host "Using staged libobs package: $($Config.FullName)"
 
       - name: Configure OBS Safe VST3 Host
         run: |
           cmake -S . -B build/release -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }}" `
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
 
