@@ -270,12 +270,14 @@ int wmain(int argc, wchar_t** argv)
         copy_text(destination.units, kParameterUnitsBytes, source.units);
     }
 
-    // Controller presence alone does not mean the plug-in has a usable native
-    // editor. Probe createView + HWND support + a valid view size before OBS
-    // decides whether to suppress fallback parameter controls.
-    const bool native_editor_supported = NativeEditorWindow::supports(engine.edit_controller());
-    InterlockedExchange(&region->editor_status,
-                        static_cast<long>(native_editor_supported ? EditorStatus::Closed : EditorStatus::Unsupported));
+    // Never run arbitrary vendor UI code before the DSP helper is Ready. If a
+    // controller exists, editor capability remains Unknown until the user
+    // explicitly requests Open and attached(HWND) succeeds or fails. This
+    // keeps a broken/hanging GUI from preventing healthy DSP + fallback use.
+    InterlockedExchange(
+        &region->editor_status,
+        static_cast<long>(engine.edit_controller() ? EditorStatus::Unknown
+                                                    : EditorStatus::Unsupported));
     MemoryBarrier();
 
     DWORD task_index = 0;
