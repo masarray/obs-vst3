@@ -159,10 +159,12 @@ void NativeEditorWindow::hide() noexcept
 void NativeEditorWindow::close() noexcept
 {
     if (view_) {
-        view_->setFrame(nullptr);
+        // VST3 lifecycle: detach the view while its frame is still valid, then
+        // clear the frame only after removed() has completed.
         if (attached_)
             (void)view_->removed();
         attached_ = false;
+        view_->setFrame(nullptr);
     }
 
     if (window_) {
