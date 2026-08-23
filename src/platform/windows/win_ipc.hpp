@@ -7,8 +7,10 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -78,13 +80,33 @@ public:
         return region_ ? region_->latency_samples : 0;
     }
 
+    // Main-loop heartbeat. This deliberately measures the thread that owns
+    // vendor lifecycle/UI and, until S2.2, DSP processing too. A live process
+    // with an old heartbeat is therefore distinguishable from a healthy idle
+    // helper and can be replaced by the non-realtime recovery worker.
+    std::uint64_t heartbeat_age_ms() const noexcept
+    {
+        if (!region_)
+            return std::numeric_limits<std::uint64_t>::max();
+        const LONG64 raw = InterlockedCompareExchange64(
+            reinterpret_cast<volatile LONG64*>(&region_->helper_heartbeat_ms), 0, 0);
+        if (raw <= 0)
+            return std::numeric_limits<std::uint64_t>::max();
+        const std::uint64_t now = static_cast<std::uint64_t>(GetTickCount64());
+        const std::uint64_t heartbeat = static_cast<std::uint64_t>(raw);
+        return now >= heartbeat ? now - heartbeat : 0;
+    }
+
     // Non-realtime native-editor seam. The vendor UI remains entirely inside
     // the helper process; OBS only publishes an asynchronous command.
     bool open_editor() noexcept;
     bool hide_editor() noexcept;
     EditorStatus editor_status() const noexcept;
 
-    std::uint64_t deadline_misses() const noexcept { return deadline_misses_; }
+    std::uint64_t deadline_misses() const noexcept
+    {
+        return deadline_misses_.load(std::memory_order_relaxed);
+    }
 
 private:
     static std::wstring widen(const std::string& value);
@@ -107,7 +129,7 @@ private:
     StateTransferRegion* state_region_ = nullptr;
     BridgeNames names_{};
     std::uint32_t next_sequence_ = 1;
-    std::uint64_t deadline_misses_ = 0;
+    std::atomic<std::uint64_t> deadline_misses_{0};
 };
 
 class WinHostEndpoint {
