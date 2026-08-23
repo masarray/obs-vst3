@@ -4,7 +4,6 @@
 
 #include <windows.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -45,7 +44,7 @@ void complete_state(safevst3::SharedAudioRegion* region,
         SetEvent(state_event);
 }
 
-void handle_state(safevst3::WinHostEndpoint& endpoint,
+bool handle_state(safevst3::WinHostEndpoint& endpoint,
                   std::vector<std::uint8_t>& component,
                   std::vector<std::uint8_t>& controller)
 {
@@ -54,17 +53,18 @@ void handle_state(safevst3::WinHostEndpoint& endpoint,
     const long requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
     const long applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
     if (requested == applied)
-        return;
+        return false;
 
     const auto command = static_cast<safevst3::StateCommand>(
         InterlockedCompareExchange(&region->state_command, 0, 0));
     safevst3::StateStatus status = safevst3::StateStatus::Invalid;
+    bool captured = false;
 
     if (!transfer || transfer->magic != safevst3::kStateTransferMagic ||
         transfer->version != safevst3::kStateTransferVersion ||
         transfer->capacity != safevst3::kMaxStateBytes) {
         complete_state(region, endpoint.state_event(), status, requested);
-        return;
+        return false;
     }
 
     if (command == safevst3::StateCommand::Restore) {
@@ -91,12 +91,14 @@ void handle_state(safevst3::WinHostEndpoint& endpoint,
             region->state_component_bytes = static_cast<std::uint32_t>(component.size());
             region->state_controller_bytes = static_cast<std::uint32_t>(controller.size());
             status = safevst3::StateStatus::Ok;
+            captured = true;
         } else {
             status = safevst3::StateStatus::TooLarge;
         }
     }
 
     complete_state(region, endpoint.state_event(), status, requested);
+    return captured && status == safevst3::StateStatus::Ok;
 }
 
 } // namespace
@@ -114,7 +116,7 @@ int wmain(int argc, wchar_t** argv)
     BridgeNames names{get(L"--mapping"), get(L"--state-mapping"), get(L"--request-event"),
                       get(L"--dsp-event"), get(L"--response-event"), get(L"--ready-event"),
                       get(L"--state-event")};
-    const bool crash = get(L"--class-id") == L"crash";
+    const bool crash_after_capture = get(L"--class-id") == L"crash";
 
     WinHostEndpoint endpoint;
     std::string error;
@@ -131,17 +133,21 @@ int wmain(int argc, wchar_t** argv)
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Ready));
     SetEvent(endpoint.ready_event());
 
-    const ULONGLONG crash_at = crash ? GetTickCount64() + 1200 : 0;
     HANDLE handles[] = {endpoint.request_event(), endpoint.dsp_event()};
     while (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) == 0) {
         publish_heartbeat(region);
         const DWORD wait = WaitForMultipleObjects(2, handles, FALSE, 50);
         if (wait == WAIT_FAILED)
             return 3;
-        if (wait == WAIT_OBJECT_0)
-            handle_state(endpoint, component, controller);
-        if (crash && GetTickCount64() >= crash_at)
-            return 77;
+        if (wait == WAIT_OBJECT_0) {
+            const bool captured = handle_state(endpoint, component, controller);
+            if (crash_after_capture && captured) {
+                // The state completion event has already been published. Die
+                // only after the bridge has a valid checkpoint to recover.
+                Sleep(50);
+                return 77;
+            }
+        }
     }
 
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::ShuttingDown));
