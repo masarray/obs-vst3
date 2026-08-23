@@ -159,16 +159,26 @@ jobs:
             throw 'Staged OBS Development package is incomplete: w32-pthreadsConfig.cmake is missing.'
           }
 
+          $ObsDepsRoot = Join-Path '.obs-sdk' '.deps'
+          $ObsDepsPrefix = Get-ChildItem -Path $ObsDepsRoot -Directory -Filter 'obs-deps-*-x64' -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'include\simde\simde-common.h') } |
+            Select-Object -First 1
+          if (-not $ObsDepsPrefix) {
+            throw 'OBS public dependency prefix containing include\simde\simde-common.h was not found.'
+          }
+
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
           "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
+          "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT
           Write-Host "Using staged libobs package: $($Config.FullName)"
           Write-Host "Using staged w32-pthreads package: $($W32PthreadsConfig.FullName)"
+          Write-Host "Using OBS public dependency prefix: $($ObsDepsPrefix.FullName)"
 
       - name: Configure OBS Safe VST3 Host
         run: |
           cmake -S . -B build/release -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
-            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }}" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }}" `
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
 
