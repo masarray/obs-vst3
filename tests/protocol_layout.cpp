@@ -6,7 +6,7 @@
 int main()
 {
     using namespace safevst3;
-    static_assert(kProtocolVersion == 5);
+    static_assert(kProtocolVersion == 6);
     static_assert(kSlotCount >= 4);
     static_assert(kMaxFrames >= 1024);
     static_assert(kMaxParameters >= 128);
@@ -26,6 +26,8 @@ int main()
     assert(region.latency_samples == 0);
     assert(region.helper_heartbeat_ms == 0);
     assert(region.helper_progress_generation == 0);
+    assert(region.dsp_heartbeat_ms == 0);
+    assert(region.dsp_progress_generation == 0);
     assert(region.plugin_name[0] == '\0');
     assert(region.editor_command == static_cast<long>(EditorCommand::None));
     assert(region.editor_status == static_cast<long>(EditorStatus::Unknown));
