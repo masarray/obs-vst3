@@ -10,8 +10,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -47,8 +49,8 @@ struct Filter {
     std::string class_id;
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
-    double deadline_fraction = 0.70;
-    bool enabled = true;
+    std::atomic<double> deadline_fraction{0.70};
+    std::atomic<bool> enabled{true};
 };
 
 std::filesystem::path module_binary_dir()
@@ -175,7 +177,7 @@ void populate_plugin_list(obs_property_t* list)
 
     for (const auto& entry : entries) {
         std::string display = entry.name;
-        const auto filename = std::filesystem::u8path(entry.path).filename().u8string();
+        const auto filename = std::filesystem::u8path(entry.path).filename().string();
         if (!filename.empty())
             display += "  [" + filename + "]";
         const std::string value = entry.path + "\t" + entry.class_id;
@@ -209,25 +211,21 @@ void restart_bridge(Filter* filter)
         return;
     std::lock_guard restart_lock(filter->restart_mutex);
 
-    bool enabled = false;
     std::string path;
     std::string class_id;
-    std::uint32_t sample_rate = 0;
-    std::uint32_t channels = 0;
     {
         std::lock_guard config_lock(filter->config_mutex);
-        enabled = filter->enabled;
         path = filter->path;
         class_id = filter->class_id;
-        sample_rate = filter->sample_rate;
-        channels = filter->channels;
     }
 
-    if (!enabled || path.empty()) {
+    if (!filter->enabled.load(std::memory_order_relaxed) || path.empty()) {
         std::atomic_store_explicit(&filter->bridge, std::shared_ptr<WinObsBridge>{}, std::memory_order_release);
         return;
     }
 
+    const auto sample_rate = filter->sample_rate;
+    const auto channels = filter->channels;
     if (channels == 0 || channels > safevst3::kMaxChannels) {
         blog(LOG_WARNING, "[obs-safe-vst3] public trial supports mono/stereo only; current OBS layout has %u channels", channels);
         std::atomic_store_explicit(&filter->bridge, std::shared_ptr<WinObsBridge>{}, std::memory_order_release);
@@ -281,11 +279,11 @@ void filter_update(void* data, obs_data_t* settings)
 
     {
         std::lock_guard lock(filter->config_mutex);
-        filter->enabled = obs_data_get_bool(settings, kEnabled);
-        filter->deadline_fraction = obs_data_get_double(settings, kDeadline);
         filter->path = std::move(path);
         filter->class_id = std::move(class_id);
     }
+    filter->enabled.store(obs_data_get_bool(settings, kEnabled), std::memory_order_relaxed);
+    filter->deadline_fraction.store(obs_data_get_double(settings, kDeadline), std::memory_order_relaxed);
     restart_bridge(filter);
 }
 
@@ -308,12 +306,12 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
             if (stop.stop_requested())
                 break;
 
-            bool should_run = false;
+            bool has_path = false;
             {
                 std::lock_guard lock(filter->config_mutex);
-                should_run = filter->enabled && !filter->path.empty();
+                has_path = !filter->path.empty();
             }
-            if (!should_run)
+            if (!filter->enabled.load(std::memory_order_relaxed) || !has_path)
                 continue;
 
             auto bridge = std::atomic_load_explicit(&filter->bridge, std::memory_order_acquire);
@@ -353,17 +351,7 @@ obs_properties_t* filter_properties(void*)
 obs_audio_data* filter_audio(void* data, obs_audio_data* audio)
 {
     auto* filter = static_cast<Filter*>(data);
-    if (!filter || !audio)
-        return audio;
-
-    bool enabled = false;
-    double deadline = 0.70;
-    {
-        std::lock_guard lock(filter->config_mutex);
-        enabled = filter->enabled;
-        deadline = filter->deadline_fraction;
-    }
-    if (!enabled)
+    if (!filter || !audio || !filter->enabled.load(std::memory_order_relaxed))
         return audio;
 
     auto bridge = std::atomic_load_explicit(&filter->bridge, std::memory_order_acquire);
@@ -382,6 +370,7 @@ obs_audio_data* filter_audio(void* data, obs_audio_data* audio)
     }
 
     // Timeout/error intentionally keeps the original OBS buffer untouched (dry fail-open).
+    const double deadline = filter->deadline_fraction.load(std::memory_order_relaxed);
     (void)bridge->process(planes, filter->channels, audio->frames, deadline);
     return audio;
 }
