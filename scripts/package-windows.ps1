@@ -60,9 +60,10 @@ Copy-Item $ScannerExe (Join-Path $InstallerPayload 'obs-safe-vst3-scanner.exe')
 Copy-Item $LocaleFile (Join-Path $InstallerPayload 'en-US.ini')
 
 $Readme = @"
-OBS Safe VST3 Host v$Version - Public Trial / Portable install
-==============================================================
+OBS Safe VST3 Host v$Version - Native OBS-like VST3 Recovery Preview
+=====================================================================
 
+QUICK INSTALL
 1. Close OBS Studio completely.
 2. Extract THIS ZIP directly into the OBS Studio root folder.
 3. Verify these files exist:
@@ -70,19 +71,32 @@ OBS Safe VST3 Host v$Version - Public Trial / Portable install
    obs-plugins\64bit\obs-safe-vst3-host.exe
    obs-plugins\64bit\obs-safe-vst3-scanner.exe
    data\obs-plugins\obs-safe-vst3\locale\en-US.ini
-4. Start OBS Studio and add: VST 3.x Plug-in (Safe Host).
-5. Click Rescan Installed VST3 Plug-ins, then choose a plug-in from the list.
+4. Start OBS Studio and add: VST 3.x Plug-in.
+5. Click Rescan Installed Plug-ins.
+6. Select an effect from Installed VST 3 Plug-in, or select Browse / Custom VST3...
+   and browse to a development/non-standard bundle.
+7. Confirm the status becomes:
+   <plug-in name> - Ready - <N> samples latency
+8. Click Open Plug-in Interface to open the vendor's real VST3 editor.
 
-The scanner probes every VST3 bundle in a separate process, so a bad plug-in scan
-cannot directly crash OBS. The VST3 DSP itself also runs in a separate helper.
-If that helper crashes, the filter fails open to dry audio and attempts recovery.
+RECOVERED PREVIEW FEATURES
+- Installed VST3 discovery and isolated per-candidate scanner probing.
+- Native vendor VST3 editor hosted by obs-safe-vst3-host.exe, not obs64.exe.
+- Plug-in name and reported latency status in the OBS properties panel.
+- Native editor control gestures bridged to the VST3 processor.
+- Generic parameter controls appear as fallback only when native editor is unavailable.
+- Automatic isolated-helper recovery attempt.
+- Dry fail-open audio if the helper crashes, exits or misses the internal realtime budget.
 
-PUBLIC TRIAL LIMITATIONS
+CURRENT PREVIEW LIMITATIONS
 - Windows x64 only.
 - Mono/stereo float32 effects only.
-- Native VST3 editor and generic parameter controls are NOT in this trial yet.
-- Full VST3 state/preset persistence is NOT in this trial yet.
-- Sidechain, instruments/MIDI and arbitrary multichannel are not supported yet.
+- Full VST3 component/controller state-blob persistence is not complete yet.
+- Complete restartComponent() reconfiguration, sidechain, instruments/MIDI and arbitrary
+  multichannel are not supported yet.
+
+The scanner and VST3 DSP run outside OBS. Crash isolation is not a malware sandbox;
+only load plug-ins you trust.
 
 For a normal OBS Studio installation, use the Smart Installer from GitHub Releases.
 To uninstall this manual package, close OBS and run UNINSTALL-MANUAL.cmd from the OBS root.
