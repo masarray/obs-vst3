@@ -28,6 +28,10 @@ bool save(obs_source_t* source,
           const PluginStateSnapshot& snapshot,
           std::string& error);
 
+void discard(obs_source_t* source,
+             const std::string& vst_path,
+             const std::string& class_id) noexcept;
+
 } // namespace safevst3::obsstate
 
 #endif
