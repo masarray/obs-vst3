@@ -41,6 +41,12 @@ if(WIN32)
     )
     target_link_libraries(safevst3_vst3_hosting_runtime PUBLIC sdk_hosting sdk)
     target_compile_definitions(safevst3_vst3_hosting_runtime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        # Steinberg's SMTG_CPP20 detection reads __cplusplus. MSVC reports the
+        # legacy value unless /Zc:__cplusplus is enabled, which otherwise sends
+        # module_win32.cpp down its pre-C++20 generic_u8string() branch.
+        target_compile_options(safevst3_vst3_hosting_runtime PRIVATE /Zc:__cplusplus)
+    endif()
 
     add_library(safevst3_win_ipc STATIC src/platform/windows/win_ipc.cpp)
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
