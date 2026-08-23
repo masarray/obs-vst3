@@ -6,7 +6,9 @@
 namespace safevst3 {
 
 inline constexpr std::uint32_t kProtocolMagic = 0x3356534Fu; // "OSV3"
-inline constexpr std::uint32_t kProtocolVersion = 3;
+inline constexpr std::uint32_t kProtocolVersion = 4;
+inline constexpr std::uint32_t kStateTransferMagic = 0x3154534Fu; // "OST1"
+inline constexpr std::uint32_t kStateTransferVersion = 1;
 inline constexpr std::uint32_t kMaxChannels = 2;
 inline constexpr std::uint32_t kMaxFrames = 2048;
 inline constexpr std::uint32_t kSlotCount = 4;
@@ -14,6 +16,7 @@ inline constexpr std::uint32_t kMaxParameters = 256;
 inline constexpr std::size_t kParameterTitleBytes = 64;
 inline constexpr std::size_t kParameterUnitsBytes = 32;
 inline constexpr std::size_t kPluginNameBytes = 128;
+inline constexpr std::size_t kMaxStateBytes = 16u * 1024u * 1024u;
 
 enum class SlotState : long {
     Free = 0,
@@ -48,6 +51,20 @@ enum class EditorStatus : long {
     Open = 2,
     Unsupported = 3,
     Error = 4,
+};
+
+enum class StateCommand : long {
+    None = 0,
+    Capture = 1,
+    Restore = 2,
+};
+
+enum class StateStatus : long {
+    Idle = 0,
+    Ok = 1,
+    TooLarge = 2,
+    Invalid = 3,
+    VstError = 4,
 };
 
 enum ParameterFlags : std::uint32_t {
@@ -101,14 +118,30 @@ struct alignas(64) SharedAudioRegion {
     volatile long editor_request_generation = 0;
     volatile long editor_applied_generation = 0;
     volatile long editor_status = static_cast<long>(EditorStatus::Unknown);
+    volatile long state_command = static_cast<long>(StateCommand::None);
+    volatile long state_request_generation = 0;
+    volatile long state_applied_generation = 0;
+    volatile long state_status = static_cast<long>(StateStatus::Idle);
+    volatile long state_dirty_generation = 0;
+    std::uint32_t state_component_bytes = 0;
+    std::uint32_t state_controller_bytes = 0;
     std::uint32_t latency_samples = 0;
     char plugin_name[kPluginNameBytes]{};
     alignas(64) ParameterDescriptor parameters[kMaxParameters]{};
     alignas(64) AudioSlot slots[kSlotCount]{};
 };
 
+struct alignas(64) StateTransferRegion {
+    std::uint32_t magic = kStateTransferMagic;
+    std::uint32_t version = kStateTransferVersion;
+    std::uint32_t capacity = static_cast<std::uint32_t>(kMaxStateBytes);
+    std::uint32_t reserved = 0;
+    alignas(64) std::uint8_t payload[kMaxStateBytes]{};
+};
+
 static_assert(alignof(ParameterDescriptor) >= 64);
 static_assert(alignof(SharedAudioRegion) >= 64);
+static_assert(alignof(StateTransferRegion) >= 64);
 static_assert(kMaxChannels == 2, "Public preview intentionally supports mono/stereo only");
 
 } // namespace safevst3
