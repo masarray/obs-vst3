@@ -69,9 +69,14 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
                          const std::string& class_id,
                          std::uint32_t sample_rate,
                          std::uint32_t channels,
-                         std::string& error)
+                         std::string& error,
+                         std::stop_token cancel)
 {
     stop();
+    if (cancel.stop_requested()) {
+        error = "VST3 helper startup cancelled";
+        return false;
+    }
     if (channels == 0 || channels > kMaxChannels) {
         error = "P0 supports mono/stereo only";
         return false;
@@ -112,6 +117,12 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
         return false;
     }
 
+    if (cancel.stop_requested()) {
+        error = "VST3 helper startup cancelled";
+        stop();
+        return false;
+    }
+
     std::wstring command = quote(helper.wstring()) +
         L" --mapping " + quote(names_.mapping) +
         L" --request-event " + quote(names_.request_event) +
@@ -133,8 +144,40 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     SetPriorityClass(process_.hProcess, HIGH_PRIORITY_CLASS);
     ResumeThread(process_.hThread);
 
-    const DWORD wait = WaitForSingleObject(ready_event_, 5000);
-    if (wait != WAIT_OBJECT_0 || region_->host_status != static_cast<long>(HostStatus::Ready)) {
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    HANDLE wait_handles[] = {ready_event_, process_.hProcess};
+    while (true) {
+        if (cancel.stop_requested()) {
+            error = "VST3 helper startup cancelled";
+            abort();
+            return false;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline)
+            break;
+        const DWORD remaining = static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, 50));
+        const DWORD wait = WaitForMultipleObjects(2, wait_handles, FALSE, remaining);
+        if (wait == WAIT_OBJECT_0)
+            break;
+        if (wait == WAIT_OBJECT_0 + 1) {
+            error = "VST3 helper exited before becoming ready";
+            stop();
+            return false;
+        }
+        if (wait == WAIT_FAILED) {
+            error = win_error("WaitForMultipleObjects");
+            stop();
+            return false;
+        }
+    }
+
+    if (cancel.stop_requested()) {
+        error = "VST3 helper startup cancelled";
+        abort();
+        return false;
+    }
+    if (region_->host_status != static_cast<long>(HostStatus::Ready)) {
         std::ostringstream os;
         os << "VST3 helper did not become ready";
         if (region_)
@@ -168,6 +211,13 @@ void WinObsBridge::stop() noexcept
     if (request_event_) CloseHandle(request_event_);
     if (mapping_) CloseHandle(mapping_);
     ready_event_ = response_event_ = request_event_ = mapping_ = nullptr;
+}
+
+void WinObsBridge::abort() noexcept
+{
+    if (process_.hProcess)
+        TerminateProcess(process_.hProcess, ERROR_CANCELLED);
+    stop();
 }
 
 bool WinObsBridge::running() const noexcept

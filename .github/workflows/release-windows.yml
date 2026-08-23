@@ -2,6 +2,8 @@ name: Release Windows
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -30,6 +32,10 @@ concurrency:
 
 jobs:
   build-package-release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release v'))
     name: Build, validate, package and release
     runs-on: windows-2022
     defaults:
@@ -45,14 +51,25 @@ jobs:
 
       - name: Resolve release inputs
         id: release
+        env:
+          RELEASE_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             $Tag = '${{ inputs.version }}'.Trim()
             $ObsVersion = '${{ inputs.obs_version }}'.Trim()
             $PreRelease = '${{ inputs.prerelease }}' -eq 'true'
           }
-          else {
+          elseif ('${{ github.ref }}'.StartsWith('refs/tags/v')) {
             $Tag = '${{ github.ref_name }}'.Trim()
+            $ObsVersion = '32.2.2'
+            $PreRelease = $Tag.Contains('-')
+          }
+          else {
+            $Match = [regex]::Match($env:RELEASE_COMMIT_MESSAGE, '^Release (v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?)')
+            if (-not $Match.Success) {
+              throw 'Main-branch release trigger did not contain a valid Release vMAJOR.MINOR.PATCH marker.'
+            }
+            $Tag = $Match.Groups[1].Value
             $ObsVersion = '32.2.2'
             $PreRelease = $Tag.Contains('-')
           }
@@ -76,7 +93,7 @@ jobs:
           "### Windows release plan" >> $env:GITHUB_STEP_SUMMARY
           "- Release: ``$Tag``" >> $env:GITHUB_STEP_SUMMARY
           "- OBS/libobs baseline: ``$ObsVersion``" >> $env:GITHUB_STEP_SUMMARY
-          "- Smart Installer + portable ZIP + SHA-256 checksums" >> $env:GITHUB_STEP_SUMMARY
+          "- Smart Installer + portable ZIP + isolated scanner + SHA-256 checksums" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Run portable protocol tests
         run: |
@@ -88,6 +105,15 @@ jobs:
         run: |
           git clone --branch "${{ steps.release.outputs.obs_version }}" --depth 1 --recurse-submodules --shallow-submodules https://github.com/obsproject/obs-studio.git .obs-sdk
 
+      - name: Adapt OBS preset to hosted VS2022
+        working-directory: .obs-sdk
+        run: |
+          $Path = 'CMakePresets.json'
+          $Text = Get-Content $Path -Raw
+          $Text = $Text.Replace('Visual Studio 18 2026', 'Visual Studio 17 2022')
+          $Text = $Text.Replace('x64,version=10.0.26100.0', 'x64')
+          Set-Content -Path $Path -Value $Text -Encoding UTF8
+
       - name: Build pinned OBS/libobs SDK
         working-directory: .obs-sdk
         env:
@@ -95,26 +121,70 @@ jobs:
         run: |
           .\.github\scripts\Build-Windows.ps1 -Target x64 -Configuration Release
 
-      - name: Locate libobs CMake package
+      - name: Stage libobs development package
         id: libobs
         run: |
-          $Config = Get-ChildItem -Path '.obs-sdk\build_x64\install' -Filter 'libobsConfig.cmake' -File -Recurse | Select-Object -First 1
-          if (-not $Config) {
-            throw 'libobsConfig.cmake was not found in the pinned OBS build output.'
+          $Generated = Get-ChildItem -Path '.obs-sdk' -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '[\\/]install[\\/]' } |
+            Select-Object -First 1
+          if (-not $Generated) {
+            throw 'Generated libobsConfig.cmake was not found after the pinned OBS build.'
           }
+
+          $BuildRoot = Split-Path $Generated.Directory.FullName -Parent
+          if (-not (Test-Path (Join-Path $BuildRoot 'cmake_install.cmake'))) {
+            throw "Could not derive the OBS CMake build root from $($Generated.FullName)."
+          }
+
+          $SdkPrefix = Join-Path $env:RUNNER_TEMP 'obs-libobs-sdk'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SdkPrefix
+          cmake --install $BuildRoot --prefix $SdkPrefix --config Release --component Development
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installing the OBS Development component failed with exit code $LASTEXITCODE."
+          }
+
+          $Config = Get-ChildItem -Path $SdkPrefix -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $Config) {
+            throw 'libobsConfig.cmake was not installed by the OBS Development component.'
+          }
+          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'libobsTargets.cmake'))) {
+            throw 'Staged libobs package is incomplete: libobsTargets.cmake is missing.'
+          }
+          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'finders\FindSIMDe.cmake'))) {
+            throw 'Staged libobs package is incomplete: FindSIMDe.cmake is missing.'
+          }
+
+          $W32PthreadsConfig = Get-ChildItem -Path $SdkPrefix -Filter 'w32-pthreadsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $W32PthreadsConfig) {
+            throw 'Staged OBS Development package is incomplete: w32-pthreadsConfig.cmake is missing.'
+          }
+
+          $ObsDepsRoot = Join-Path '.obs-sdk' '.deps'
+          $ObsDepsPrefix = Get-ChildItem -Path $ObsDepsRoot -Directory -Filter 'obs-deps-*-x64' -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'include\simde\simde-common.h') } |
+            Select-Object -First 1
+          if (-not $ObsDepsPrefix) {
+            throw 'OBS public dependency prefix containing include\simde\simde-common.h was not found.'
+          }
+
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
-          Write-Host "Using libobs package: $($Config.FullName)"
+          "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
+          "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Using staged libobs package: $($Config.FullName)"
+          Write-Host "Using staged w32-pthreads package: $($W32PthreadsConfig.FullName)"
+          Write-Host "Using OBS public dependency prefix: $($ObsDepsPrefix.FullName)"
 
       - name: Configure OBS Safe VST3 Host
         run: |
           cmake -S . -B build/release -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }}" `
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
 
-      - name: Build plugin, helper and tests
+      - name: Build plugin, helper, scanner and tests
         run: |
-          cmake --build build/release --config Release --target obs-safe-vst3 obs-safe-vst3-host protocol-layout-test --parallel
+          cmake --build build/release --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
 
       - name: Run Windows tests
         run: ctest --test-dir build/release -C Release --output-on-failure
@@ -123,10 +193,23 @@ jobs:
         run: |
           $Dll = Get-ChildItem build/release -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
           $Host = Get-ChildItem build/release -Filter 'obs-safe-vst3-host.exe' -File -Recurse | Select-Object -First 1
+          $Scanner = Get-ChildItem build/release -Filter 'obs-safe-vst3-scanner.exe' -File -Recurse | Select-Object -First 1
           if (-not $Dll) { throw 'obs-safe-vst3.dll was not built.' }
           if (-not $Host) { throw 'obs-safe-vst3-host.exe was not built.' }
-          Write-Host "Plugin: $($Dll.FullName)"
-          Write-Host "Host:   $($Host.FullName)"
+          if (-not $Scanner) { throw 'obs-safe-vst3-scanner.exe was not built.' }
+          Write-Host "Plugin:  $($Dll.FullName)"
+          Write-Host "Host:    $($Host.FullName)"
+          Write-Host "Scanner: $($Scanner.FullName)"
+
+          $ScanCache = Join-Path $env:RUNNER_TEMP 'scanner-smoke.tsv'
+          Remove-Item -Force -ErrorAction SilentlyContinue $ScanCache
+          $ScanProcess = Start-Process -FilePath $Scanner.FullName -ArgumentList '--scan-to', "`"$ScanCache`"" -Wait -PassThru
+          if ($ScanProcess.ExitCode -ne 0) {
+            throw "Scanner smoke test failed with exit code $($ScanProcess.ExitCode)."
+          }
+          if (-not (Test-Path $ScanCache)) {
+            throw 'Scanner smoke test did not create a cache file.'
+          }
 
       - name: Ensure Inno Setup 6
         id: inno
@@ -164,6 +247,7 @@ jobs:
           $Expected = @(
             'obs-plugins\64bit\obs-safe-vst3.dll',
             'obs-plugins\64bit\obs-safe-vst3-host.exe',
+            'obs-plugins\64bit\obs-safe-vst3-scanner.exe',
             'data\obs-plugins\obs-safe-vst3\locale\en-US.ini',
             'README-FIRST.txt',
             'UNINSTALL-MANUAL.cmd'
@@ -193,6 +277,7 @@ jobs:
           $Expected = @(
             'obs-plugins\64bit\obs-safe-vst3.dll',
             'obs-plugins\64bit\obs-safe-vst3-host.exe',
+            'obs-plugins\64bit\obs-safe-vst3-scanner.exe',
             'data\obs-plugins\obs-safe-vst3\locale\en-US.ini'
           )
           foreach ($Relative in $Expected) {
@@ -212,6 +297,9 @@ jobs:
           }
           if (Test-Path (Join-Path $SyntheticObs 'obs-plugins\64bit\obs-safe-vst3.dll')) {
             throw 'Uninstaller did not remove the plugin DLL from the custom OBS tree.'
+          }
+          if (Test-Path (Join-Path $SyntheticObs 'obs-plugins\64bit\obs-safe-vst3-scanner.exe')) {
+            throw 'Uninstaller did not remove the isolated scanner from the custom OBS tree.'
           }
 
       - name: Upload workflow artifacts

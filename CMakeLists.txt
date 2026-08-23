@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(obs-safe-vst3 VERSION 0.1.0 LANGUAGES C CXX)
+project(obs-safe-vst3 VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,7 +9,7 @@ option(SAFEVST3_BUILD_OBS_PLUGIN "Build the OBS module when libobs is available"
 option(SAFEVST3_BUILD_TESTS "Build protocol/layout tests" ON)
 
 if(NOT WIN32)
-    message(STATUS "P0 runtime is Windows x86-64 only. Building portable tests only.")
+    message(STATUS "Public-trial runtime is Windows x86-64 only. Building portable tests only.")
 endif()
 
 add_library(safevst3_protocol INTERFACE)
@@ -32,6 +32,22 @@ if(WIN32)
     )
     FetchContent_MakeAvailable(vst3sdk)
 
+    # sdk_hosting deliberately contains the platform-neutral hosting core only.
+    # Module::create and PlugProvider live in separate SDK translation units, so
+    # include the exact Windows/runtime implementations needed by our host.
+    add_library(safevst3_vst3_hosting_runtime STATIC
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
+    )
+    target_link_libraries(safevst3_vst3_hosting_runtime PUBLIC sdk_hosting sdk)
+    target_compile_definitions(safevst3_vst3_hosting_runtime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        # Steinberg's SMTG_CPP20 detection reads __cplusplus. MSVC reports the
+        # legacy value unless /Zc:__cplusplus is enabled, which otherwise sends
+        # module_win32.cpp down its pre-C++20 generic_u8string() branch.
+        target_compile_options(safevst3_vst3_hosting_runtime PRIVATE /Zc:__cplusplus)
+    endif()
+
     add_library(safevst3_win_ipc STATIC src/platform/windows/win_ipc.cpp)
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
@@ -42,8 +58,12 @@ if(WIN32)
         src/host/vst3_engine.cpp
     )
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(obs-safe-vst3-host PRIVATE safevst3_win_ipc sdk_hosting sdk Avrt)
+    target_link_libraries(obs-safe-vst3-host PRIVATE safevst3_win_ipc safevst3_vst3_hosting_runtime Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+    add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
+    target_link_libraries(obs-safe-vst3-scanner PRIVATE safevst3_vst3_hosting_runtime)
+    target_compile_definitions(obs-safe-vst3-scanner PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     if(SAFEVST3_BUILD_OBS_PLUGIN)
         find_package(libobs CONFIG QUIET)
@@ -57,9 +77,12 @@ if(WIN32)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     $<TARGET_FILE:obs-safe-vst3-host>
                     $<TARGET_FILE_DIR:obs-safe-vst3>
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:obs-safe-vst3-scanner>
+                    $<TARGET_FILE_DIR:obs-safe-vst3>
             )
         else()
-            message(WARNING "libobs CMake package not found; helper will build, OBS module will be skipped. Set libobs_DIR to OBS's CMake package directory.")
+            message(WARNING "libobs CMake package not found; helper/scanner will build, OBS module will be skipped. Set libobs_DIR to OBS's CMake package directory.")
         endif()
     endif()
 endif()

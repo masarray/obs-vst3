@@ -35,6 +35,7 @@ function Find-BuildFile {
 
 $PluginDll = Find-BuildFile 'obs-safe-vst3.dll'
 $HostExe = Find-BuildFile 'obs-safe-vst3-host.exe'
+$ScannerExe = Find-BuildFile 'obs-safe-vst3-scanner.exe'
 $LocaleFile = Join-Path $RepoRoot 'data\locale\en-US.ini'
 if (-not (Test-Path $LocaleFile)) {
     throw "Locale file not found: $LocaleFile"
@@ -50,27 +51,40 @@ New-Item -ItemType Directory -Force -Path $PortableBin, $PortableLocale, $Instal
 
 Copy-Item $PluginDll (Join-Path $PortableBin 'obs-safe-vst3.dll')
 Copy-Item $HostExe (Join-Path $PortableBin 'obs-safe-vst3-host.exe')
+Copy-Item $ScannerExe (Join-Path $PortableBin 'obs-safe-vst3-scanner.exe')
 Copy-Item $LocaleFile (Join-Path $PortableLocale 'en-US.ini')
 
 Copy-Item $PluginDll (Join-Path $InstallerPayload 'obs-safe-vst3.dll')
 Copy-Item $HostExe (Join-Path $InstallerPayload 'obs-safe-vst3-host.exe')
+Copy-Item $ScannerExe (Join-Path $InstallerPayload 'obs-safe-vst3-scanner.exe')
 Copy-Item $LocaleFile (Join-Path $InstallerPayload 'en-US.ini')
 
 $Readme = @"
-OBS Safe VST3 Host v$Version - Manual / Portable install
-=========================================================
+OBS Safe VST3 Host v$Version - Public Trial / Portable install
+==============================================================
 
 1. Close OBS Studio completely.
 2. Extract THIS ZIP directly into the OBS Studio root folder.
-3. After extraction, verify these files exist:
+3. Verify these files exist:
    obs-plugins\64bit\obs-safe-vst3.dll
    obs-plugins\64bit\obs-safe-vst3-host.exe
+   obs-plugins\64bit\obs-safe-vst3-scanner.exe
    data\obs-plugins\obs-safe-vst3\locale\en-US.ini
-4. Start OBS Studio and add the Safe VST3 audio filter.
+4. Start OBS Studio and add: VST 3.x Plug-in (Safe Host).
+5. Click Rescan Installed VST3 Plug-ins, then choose a plug-in from the list.
 
-This ZIP is intended for portable/custom OBS installations and advanced users.
+The scanner probes every VST3 bundle in a separate process, so a bad plug-in scan
+cannot directly crash OBS. The VST3 DSP itself also runs in a separate helper.
+If that helper crashes, the filter fails open to dry audio and attempts recovery.
+
+PUBLIC TRIAL LIMITATIONS
+- Windows x64 only.
+- Mono/stereo float32 effects only.
+- Native VST3 editor and generic parameter controls are NOT in this trial yet.
+- Full VST3 state/preset persistence is NOT in this trial yet.
+- Sidechain, instruments/MIDI and arbitrary multichannel are not supported yet.
+
 For a normal OBS Studio installation, use the Smart Installer from GitHub Releases.
-
 To uninstall this manual package, close OBS and run UNINSTALL-MANUAL.cmd from the OBS root.
 "@
 Set-Content -Path (Join-Path $PortableStage 'README-FIRST.txt') -Value $Readme -Encoding UTF8
@@ -88,6 +102,7 @@ if not errorlevel 1 (
 )
 del /Q "obs-plugins\64bit\obs-safe-vst3.dll" 2>NUL
 del /Q "obs-plugins\64bit\obs-safe-vst3-host.exe" 2>NUL
+del /Q "obs-plugins\64bit\obs-safe-vst3-scanner.exe" 2>NUL
 rmdir /S /Q "data\obs-plugins\obs-safe-vst3" 2>NUL
 echo OBS Safe VST3 Host manual files removed.
 pause

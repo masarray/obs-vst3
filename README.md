@@ -1,222 +1,189 @@
 # OBS Safe VST3 Host
 
-**Use modern VST3 audio effects in OBS Studio without loading the VST3 binary inside the OBS process.**
+**Crash-isolated VST3 audio-effect hosting for OBS Studio.**
 
-[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11&logoColor=white)](https://github.com/masarray/obs-safe-vst3-host/releases)
-[![Public Preview](https://img.shields.io/badge/status-public%20preview-f59e0b)](https://github.com/masarray/obs-safe-vst3-host/releases)
+[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11&logoColor=white)](https://github.com/masarray/obs-vst3/releases)
+[![Public Trial](https://img.shields.io/badge/status-public%20trial-f59e0b)](https://github.com/masarray/obs-vst3/releases)
 [![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-22c55e)](LICENSE)
-[![Open source](https://img.shields.io/badge/source-open-8b5cf6)](https://github.com/masarray/obs-safe-vst3-host)
 
-> **Current public release: v0.3.0-preview.2 — Windows x64 Public Preview.**  
-> Recommended for real-world testing, streaming setups, and feedback. It is not being presented as universally compatible or final/stable yet.
+> **Current target: v0.2.0-preview.1 — Windows x64 Public Trial.**
+> This release is for compatibility and reliability testing. It is not a full replacement for mature in-process hosts yet.
 
-## The simple explanation
+## Why this project exists
 
-OBS has a built-in VST2 filter, but many newer audio plug-ins are VST3-only. OBS Safe VST3 Host adds a **VST 3.x Plug-in** audio filter and runs the third-party VST3 in a separate helper process.
+OBS can host VST2 filters directly, but many current audio plug-ins are VST3-only. Loading a third-party audio plug-in inside `obs64.exe` also means a bad plug-in can potentially take OBS down with it.
 
-That separation matters: if a VST3 plug-in crashes or stops responding, it does not run inside the OBS process. The host is designed to keep OBS alive and fall back to the original dry audio when processing fails or misses its realtime deadline.
+OBS Safe VST3 Host keeps the third-party VST3 outside the OBS process:
 
-**You do not need to understand VST3 internals, IPC, or DSP threading to use it.**
+```text
+OBS Studio (obs64.exe)
+        │
+        │ bounded shared-memory audio
+        ▼
+obs-safe-vst3-host.exe
+        │
+        ▼
+third-party VST3 effect
+```
+
+If the helper crashes, exits, or misses the realtime processing deadline, the OBS filter leaves the original dry audio buffer untouched instead of waiting indefinitely. The public trial also attempts to restart a failed helper automatically.
+
+## New in Public Trial 1
+
+- **Installed VST3 list** instead of requiring users to type a Class ID.
+- **Rescan Installed VST3 Plug-ins** button.
+- **Out-of-process scanner** (`obs-safe-vst3-scanner.exe`).
+- Each `.vst3` bundle is probed in its **own scanner process** with a timeout, so one broken plug-in should not directly crash OBS or abort the whole architecture boundary.
+- **Custom VST3 bundle** path remains available for non-standard installations.
+- **Automatic helper recovery attempt** after a VST3/helper crash.
+- Realtime callback remains bounded and fails open to dry audio.
+- Smart Installer and portable ZIP both include the host and scanner.
+- Release CI builds the real OBS module against **OBS/libobs 32.2.2**.
+
+## Important limitations
+
+This is intentionally a **public trial**, not a stable/full-featured VST host.
+
+| Capability | v0.2.0-preview.1 |
+|---|---|
+| Windows x64 | ✅ |
+| VST3 audio effects | ✅ trial |
+| Installed VST3 discovery | ✅ |
+| Scanner crash isolation | ✅ |
+| Runtime VST3 process isolation | ✅ |
+| Dry fail-open on timeout/failure | ✅ |
+| Automatic helper restart attempt | ✅ |
+| Mono / stereo | ✅ |
+| Float32 processing | ✅ |
+| Native VST3 editor / vendor GUI | ❌ next phase |
+| Generic parameter controls | ❌ next phase |
+| Full VST3 state/preset persistence | ❌ next phase |
+| Sidechain | ❌ |
+| Instruments / MIDI | ❌ |
+| Arbitrary multichannel | ❌ |
+| Linux/macOS package | ❌ |
+
+**Because editor/parameter bridging is not in this trial yet, this build is primarily for testing plug-in discovery, loading, audio processing, crash isolation and compatibility.** Do not treat it as a production daily-driver host yet.
 
 ## Download
 
-### Recommended — Windows Smart Installer
+### Recommended: Smart Installer
 
-Download the newest **Setup x64** file from:
+From [GitHub Releases](https://github.com/masarray/obs-vst3/releases), download:
 
-**[GitHub Releases →](https://github.com/masarray/obs-safe-vst3-host/releases)**
+`OBS-Safe-VST3-Host-v0.2.0-preview.1-Setup-x64.exe`
 
-For the current public preview, the recommended file is:
+For a normal OBS installation, Setup installs to OBS's modern ProgramData plug-in layout. It also:
 
-`OBS-Safe-VST3-Host-v0.3.0-preview.2-Setup-x64.exe`
+- requires administrator permission;
+- checks that OBS is closed;
+- offers a validated Custom / Portable OBS mode;
+- registers a normal Windows uninstaller.
 
-The installer asks you to confirm the exact OBS Studio folder you actually use, installs the plug-in to the correct OBS directories, checks that OBS is closed before copying files, and registers a normal Windows uninstaller.
+### OBS Portable / manual install
 
-### Portable / manual install
+Download:
 
-Advanced users and portable OBS installations can use:
+`OBS-Safe-VST3-Host-v0.2.0-preview.1-Windows-x64-Portable.zip`
 
-`OBS-Safe-VST3-Host-v0.3.0-preview.2-Windows-x64-Portable.zip`
-
-The portable package contains the OBS module, isolated VST3 host, scanner, locale files, install/uninstall scripts, and SHA-256 checksums.
-
-## Install in 3 steps
-
-1. **Close OBS Studio.**
-2. Run the downloaded **Setup x64** installer and confirm the OBS Studio folder you really launch.
-3. Open OBS → choose your microphone/audio source → **Filters** → **+** → **VST 3.x Plug-in**.
-
-Then choose a plug-in from **Installed VST 3 Plug-in**, use **Rescan Installed Plug-ins** when needed, or browse to a custom `.vst3` bundle. For plug-ins with their own GUI, click **Open Plug-in Interface**.
-
-That is the normal workflow. No manual Class ID, deadline tuning, or developer settings should be required in the current preview.
-
-## What you should see in OBS
-
-The current UI uses beginner-facing controls such as:
-
-- **Installed VST 3 Plug-in**
-- **Rescan Installed Plug-ins**
-- **Browse / Custom VST3**
-- **Open Plug-in Interface**
-- **Plug-in Controls** as a fallback when the VST3 has no graphical editor
-
-### If you still see old controls
-
-If the properties panel shows old fields such as **Enabled**, **VST3 Class ID**, or **Live deadline fraction**, OBS is loading an older development copy.
-
-Re-run the current Preview 2 installer, confirm the exact OBS Studio folder you launch, and let Setup remove known legacy project-owned copies that can shadow the new module.
-
-An existing filter instance name on the left can still say something like `Safe VST3 Host (P1)` because OBS saves instance names in the scene. You can rename or re-add that filter. The **right-side properties** are what identify the current build.
-
-## “Windows Defender / SmartScreen says Unknown publisher. Is it malware?”
-
-The current public-preview installer is **not yet Authenticode code-signed**, so Windows SmartScreen can show an **Unknown publisher** or reputation warning on some PCs. That warning is about publisher identity/reputation; by itself it is not a malware verdict.
-
-This project does **not** ask you to disable Microsoft Defender, antivirus, or SmartScreen.
-
-For the safest install path:
-
-1. Download only from this repository's official **GitHub Releases** page.
-2. Download the published `SHA256SUMS.txt` beside the release.
-3. Verify your file before running it:
-
-```powershell
-Get-FileHash .\OBS-Safe-VST3-Host-v0.3.0-preview.2-Setup-x64.exe -Algorithm SHA256
-```
-
-4. Compare the result with the checksum published by the same GitHub Release.
-5. If the file origin or checksum does not match, **do not run it**.
-
-For Preview 2, GitHub currently publishes the Setup SHA-256 as:
+Close OBS and extract the ZIP directly into the OBS portable root. The package contains:
 
 ```text
-5e4fda9798a864d0db4bb072c9006f4cbe5afa6c131fa81ab5fc201841d7b1e4
+obs-plugins/64bit/obs-safe-vst3.dll
+obs-plugins/64bit/obs-safe-vst3-host.exe
+obs-plugins/64bit/obs-safe-vst3-scanner.exe
+data/obs-plugins/obs-safe-vst3/locale/en-US.ini
+README-FIRST.txt
+UNINSTALL-MANUAL.cmd
 ```
 
-If a future release has a different filename, use that release's own `SHA256SUMS.txt` instead of this older value.
+## First test
 
-## Why this host is different
+1. Close OBS and install the public trial.
+2. Start OBS Studio.
+3. Open an audio source → **Filters** → **+** → **VST 3.x Plug-in (Safe Host)**.
+4. Click **Rescan Installed VST3 Plug-ins**.
+5. Choose a VST3 effect from **Installed VST 3 Plug-in**.
+6. Watch/listen for processing and check the OBS log if the plug-in fails to start.
 
-### VST3 code stays outside OBS
+The scanner checks standard Windows VST3 locations. Use **Custom VST3 bundle (optional)** for a non-standard `.vst3` location.
 
-The third-party VST3 module is loaded by `obs-safe-vst3-host.exe`, not directly by `obs64.exe`.
+## What to report during the trial
 
-```text
-OBS Studio
-   │
-   │ bounded shared-memory audio
-   ▼
-OBS Safe VST3 Host helper process
-   │
-   ▼
-Your VST3 audio effect
-```
-
-Control/state/editor traffic is kept separate from the realtime audio path. If the helper exits or a block misses its bounded deadline, the OBS filter is designed to leave the original dry audio buffer untouched instead of waiting forever.
-
-### Crash isolation is not a malware sandbox
-
-The separate process helps contain plug-in crashes and hangs. It does **not** make an untrusted VST3 safe. Only load VST3 plug-ins you trust.
-
-## Compatibility
-
-| Item | Public Preview status |
-|---|---|
-| Windows x64 | ✅ Supported target |
-| VST3 audio effects | ✅ Supported |
-| Mono / stereo | ✅ Supported |
-| Float32 processing | ✅ Supported |
-| Plug-in native GUI | ✅ Supported when the VST3 provides one |
-| Automatic installed-VST3 discovery | ✅ Included in current preview |
-| VST2 | ➖ Use OBS's existing VST2 filter instead |
-| VST3 instruments / MIDI | ❌ Not supported |
-| 32-bit VST3 | ❌ Not supported |
-| Sidechain | ❌ Not yet |
-| Arbitrary multichannel buses | ❌ Not yet |
-| Linux public package | ❌ Not included in this Windows preview |
-| Full DAW-style cross-source PDC | ❌ Not yet |
-
-The release pipeline is validated against **OBS/libobs 31.1.1**. Compatibility with the huge VST3 ecosystem varies by vendor, GUI technology, licensing system, and plug-in behavior, which is why the project remains a Public Preview.
-
-## What has actually been tested automatically
-
-The Windows release pipeline does more than compile the project. Current automated acceptance includes:
-
-- real `libobs` module loading and registration;
-- a real Steinberg ADelay VST3 fixture;
-- Steinberg Validator with **57 tests passed, 0 failed** for the fixture;
-- parameter changes reaching DSP processing;
-- real audio processing;
-- component/controller state round-trip;
-- repeated audio-slot processing;
-- forced helper-process termination;
-- dry fail-open behavior after helper termination;
-- crash-isolated scanner tests, including malformed/crashing probes;
-- Smart Installer compilation and synthetic OBS install smoke testing;
-- release SHA-256 generation.
-
-Automation cannot represent every commercial/free VST3 in the world. Representative desktop testing remains important, especially for native editors, licensing systems, dynamic latency, long sessions, and unusual plug-in behavior.
-
-## Troubleshooting
-
-### The filter does not appear
-
-- Confirm you are using **Windows x64 OBS Studio**.
-- Close OBS and run the newest Setup again.
-- Confirm the installer path is the same OBS installation you actually launch.
-- Start OBS again and check **Filters → + → VST 3.x Plug-in**.
-
-### My VST3 is not in the installed list
-
-- Click **Rescan Installed Plug-ins**.
-- Confirm the plug-in is a **64-bit VST3 audio effect**, not VST2 or an instrument-only VST3.
-- Use **Browse / Custom VST3** for a non-standard installation location.
-
-### The plug-in has no graphical interface
-
-Some VST3 effects do not provide a native editor. The host can show **Plug-in Controls** as a generic parameter fallback.
-
-### OBS shows the old P1/P0-style panel
-
-You almost certainly have an older copy being loaded from another OBS installation or a legacy plug-in location. Re-run the newest installer and confirm the exact OBS root you launch.
-
-### A plug-in crashes or stops processing
-
-The isolation boundary is designed so the VST3/helper failure does not become an in-process OBS crash. The affected processing can fall back to dry audio. Automatic restart/recovery policy is still being developed, so you may need to reload the filter or restart OBS after a failed third-party plug-in.
-
-### Still stuck?
-
-Open an issue and include:
+Please open an issue and include:
 
 - OBS version;
 - Windows version;
-- VST3 plug-in name + version;
-- whether the plug-in GUI opens;
-- what you expected vs what happened;
-- relevant OBS log excerpt if available.
+- VST3 name and version;
+- whether it appears in the scan list;
+- whether audio processing starts;
+- whether the helper restarts after a failure;
+- relevant OBS log lines beginning with `[obs-safe-vst3]`.
 
-**[Report a problem →](https://github.com/masarray/obs-safe-vst3-host/issues)**
+Useful reports include both **works** and **does not work** results. A compatibility matrix is one of the main goals of this trial.
 
-## For developers and technical reviewers
+## Safety model
 
-The beginner-facing README intentionally keeps implementation detail out of the first-use path. Engineering documentation remains available separately:
+### Runtime isolation
+
+The VST3 binary is loaded by `obs-safe-vst3-host.exe`, not `obs64.exe`. Audio crosses a fixed shared-memory bridge. OBS waits only for a bounded fraction of the current audio block duration.
+
+### Scanner isolation
+
+The scanner enumerates installed `.vst3` bundles, then probes each bundle in a separate short-lived child process. A probe that hangs is terminated after its timeout and skipped.
+
+### Not a malware sandbox
+
+Process isolation is for crash/hang containment. It does **not** make untrusted plug-ins safe. Only load VST3 software you trust.
+
+## SmartScreen / Unknown publisher
+
+The public-trial binaries are not Authenticode-signed yet, so Windows may show **Unknown publisher** or a SmartScreen reputation warning.
+
+Do not disable Defender or SmartScreen just for this project. Download only from this repository's Releases page and verify the accompanying `SHA256SUMS.txt` when you want to confirm file integrity.
+
+Example:
+
+```powershell
+Get-FileHash .\OBS-Safe-VST3-Host-v0.2.0-preview.1-Setup-x64.exe -Algorithm SHA256
+```
+
+## Engineering direction
+
+The next major phase after this public trial is:
+
+1. parameter/control IPC;
+2. generic parameter fallback UI;
+3. native VST3 editor hosted by the isolated helper;
+4. component/controller state persistence;
+5. restore state after automatic helper restart;
+6. latency-change handling and broader compatibility tests.
+
+The project deliberately stays focused on being a **simple and crash-resistant VST3 filter for OBS** rather than becoming a full DAW, MIDI workstation or routing graph.
+
+Architecture notes:
 
 - [P1 architecture](docs/P1_ARCHITECTURE.md)
-- [P0 architecture / original isolation spike](docs/P0-ARCHITECTURE.md)
+- [Original P0 isolation architecture](docs/P0-ARCHITECTURE.md)
 - [Windows installation notes](INSTALL-WINDOWS.txt)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
-- [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
-Core realtime design principles include a fixed shared-memory audio ring, bounded waits, no VST3 binary in the OBS process, a dedicated helper DSP thread, and dry fail-open behavior.
+## Build and automated validation
 
-## Project status
+CI currently validates:
 
-**v0.3.0-preview.2 is a public preview, not a universal “stable” claim.**
+- portable protocol layout tests on Linux;
+- Windows isolated host build;
+- Windows isolated scanner build and smoke execution;
+- real OBS module compilation against pinned OBS/libobs 32.2.2;
+- Windows protocol tests;
+- release binary presence;
+- portable package layout;
+- Smart Installer install/uninstall against a synthetic portable OBS tree;
+- SHA-256 generation.
 
-The project is deliberately conservative about that label because VST3 compatibility is not just “does it compile?” — it includes vendor GUIs, licensing, state persistence, latency changes, long sessions, malformed plug-ins, and failure behavior while OBS is live.
-
-If it works with your VST3, please report the plug-in name/version. Real compatibility reports are valuable for building a trustworthy compatibility matrix.
+This does **not** prove compatibility with every commercial/free VST3. Real plug-in reports are still essential.
 
 ## License and trademarks
 
@@ -224,4 +191,4 @@ Project code: **GPL-3.0-or-later**. See [LICENSE](LICENSE).
 
 The Steinberg VST3 SDK used by the build is MIT-licensed; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-VST is a trademark of Steinberg Media Technologies GmbH. OBS is a trademark of its respective owners. This is an independent open-source project and is not endorsed by Steinberg or the OBS Project.
+VST is a trademark of Steinberg Media Technologies GmbH. OBS is a trademark of its respective owners. This independent open-source project is not endorsed by Steinberg or the OBS Project.
