@@ -42,13 +42,17 @@ if(WIN32)
         target_compile_options(safevst3_vst3_hosting_runtime PRIVATE /Zc:__cplusplus)
     endif()
 
-    add_library(safevst3_win_ipc STATIC src/platform/windows/win_ipc.cpp)
+    add_library(safevst3_win_ipc STATIC
+        src/platform/windows/win_ipc.cpp
+        src/platform/windows/editor_ipc.cpp
+    )
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
     target_compile_definitions(safevst3_win_ipc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-host
         src/host/main.cpp
+        src/host/native_editor.cpp
         src/host/vst3_engine.cpp
     )
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
