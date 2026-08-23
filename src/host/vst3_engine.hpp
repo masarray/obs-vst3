@@ -54,8 +54,13 @@ public:
     bool process(AudioSlot& slot) noexcept;
 
     bool queue_parameter(std::uint32_t id, double normalized) noexcept;
+    bool queue_parameter_from_controller(std::uint32_t id, double normalized) noexcept;
     bool flush_parameter_changes() noexcept;
+    void refresh_parameter_values() noexcept;
     std::size_t take_parameter_updates(EngineParameterUpdate* destination, std::size_t capacity) noexcept;
+
+    void set_component_handler(Steinberg::Vst::IComponentHandler* handler) noexcept;
+    Steinberg::Vst::IEditController* edit_controller() const noexcept { return controller_.get(); }
 
     const std::string& plugin_name() const noexcept { return plugin_name_; }
     std::uint32_t latency_samples() const noexcept { return latency_samples_; }
@@ -64,6 +69,7 @@ public:
 private:
     bool configure_buses(std::uint32_t channels, std::string& error);
     bool enumerate_parameters(std::string& error);
+    bool queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept;
     bool apply_pending_parameter_changes(Steinberg::Vst::ProcessData& data) noexcept;
     void finish_parameter_changes() noexcept;
     void capture_output_parameter_changes() noexcept;
