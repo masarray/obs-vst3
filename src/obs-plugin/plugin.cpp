@@ -74,6 +74,10 @@ struct Filter {
     std::stop_source shutdown_source;
     std::string path;
     std::string class_id;
+    // Protected by restart_mutex. These fields describe the helper that is
+    // actually published, not the possibly newer identity selected in the UI.
+    std::string bridge_path;
+    std::string bridge_class_id;
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
     std::atomic<std::uint32_t> observed_state_generation{0};
@@ -173,10 +177,20 @@ void stop_retired_bridge_reaper()
     reap_retired_bridges();
 }
 
-void publish_bridge_locked(Filter* filter, std::unique_ptr<WinObsBridge> next)
+void publish_bridge_locked(Filter* filter,
+                           std::unique_ptr<WinObsBridge> next,
+                           const std::string& path = {},
+                           const std::string& class_id = {})
 {
     auto previous = std::move(filter->bridge_owner);
     filter->bridge_owner = std::move(next);
+    if (filter->bridge_owner) {
+        filter->bridge_path = path;
+        filter->bridge_class_id = class_id;
+    } else {
+        filter->bridge_path.clear();
+        filter->bridge_class_id.clear();
+    }
     filter->rt_state->active.store(filter->bridge_owner.get(), std::memory_order_seq_cst);
     retire_bridge(std::move(previous), filter->rt_state);
 }
@@ -403,6 +417,8 @@ bool capture_bridge_state(Filter* filter,
     std::lock_guard restart_lock(filter->restart_mutex);
     if (!filter->bridge_owner || !filter->bridge_owner->running())
         return false;
+    if (filter->bridge_path != path || filter->bridge_class_id != class_id)
+        return false;
 
     const std::uint32_t dirty = filter->bridge_owner->state_dirty_generation();
     if (!force && dirty == filter->saved_state_generation.load(std::memory_order_acquire))
@@ -540,7 +556,7 @@ void restart_bridge(Filter* filter)
          static_cast<unsigned>(bridge->parameters().size()),
          static_cast<unsigned>(bridge->parameter_total_count()),
          restored_exact_state ? "restored" : "parameter-fallback");
-    publish_bridge_locked(filter, std::move(bridge));
+    publish_bridge_locked(filter, std::move(bridge), path, class_id);
 }
 
 bool bridge_running(Filter* filter)
@@ -587,8 +603,10 @@ void apply_current_parameter_settings(Filter* filter, obs_data_t* settings)
     const std::string scope = safevst3::obsparam::parameter_scope(path, class_id);
 
     std::lock_guard restart_lock(filter->restart_mutex);
-    if (filter->bridge_owner && filter->bridge_owner->running())
+    if (filter->bridge_owner && filter->bridge_owner->running() &&
+        filter->bridge_path == path && filter->bridge_class_id == class_id) {
         safevst3::obsparam::apply_parameter_settings(*filter->bridge_owner, settings, scope);
+    }
 }
 
 const char* filter_name(void*) { return obs_module_text("SafeVST3Filter"); }
@@ -781,7 +799,8 @@ obs_properties_t* filter_properties(void* data)
     std::uint32_t latency_samples = 0;
     {
         std::lock_guard restart_lock(filter->restart_mutex);
-        running = filter->bridge_owner && filter->bridge_owner->running();
+        running = filter->bridge_owner && filter->bridge_owner->running() &&
+                  filter->bridge_path == path && filter->bridge_class_id == class_id;
         if (running) {
             plugin_name = filter->bridge_owner->plugin_name();
             latency_samples = filter->bridge_owner->latency_samples();
