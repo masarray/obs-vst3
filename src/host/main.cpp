@@ -495,25 +495,16 @@ public:
 
     bool start(std::string& error)
     {
-        paused_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        resumed_event_ = CreateEventW(nullptr, TRUE, TRUE, nullptr);
-        if (!paused_event_ || !resumed_event_) {
-            if (resumed_event_)
-                CloseHandle(resumed_event_);
-            if (paused_event_)
-                CloseHandle(paused_event_);
-            resumed_event_ = nullptr;
-            paused_event_ = nullptr;
-            error = "Failed to create DSP pause/resume acknowledgement events";
+        transition_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!transition_event_) {
+            error = "Failed to create DSP transition acknowledgement event";
             return false;
         }
         try {
             thread_ = std::jthread([this](std::stop_token stop) { run(stop); });
         } catch (...) {
-            CloseHandle(resumed_event_);
-            CloseHandle(paused_event_);
-            resumed_event_ = nullptr;
-            paused_event_ = nullptr;
+            CloseHandle(transition_event_);
+            transition_event_ = nullptr;
             error = "Failed to start dedicated DSP worker";
             return false;
         }
@@ -524,57 +515,74 @@ public:
     {
         if (thread_.joinable()) {
             thread_.request_stop();
-            pause_requested_.store(false, std::memory_order_release);
             if (dsp_event_)
                 SetEvent(dsp_event_);
+            if (transition_event_)
+                SetEvent(transition_event_);
             thread_ = std::jthread{};
         }
-        if (resumed_event_) {
-            CloseHandle(resumed_event_);
-            resumed_event_ = nullptr;
-        }
-        if (paused_event_) {
-            CloseHandle(paused_event_);
-            paused_event_ = nullptr;
+        if (transition_event_) {
+            CloseHandle(transition_event_);
+            transition_event_ = nullptr;
         }
     }
 
     bool pause(DWORD timeout_ms) noexcept
     {
-        if (!thread_.joinable() || !paused_event_ || !resumed_event_)
+        if (!thread_.joinable() || !transition_event_)
             return false;
 
-        if (WaitForSingleObject(resumed_event_, timeout_ms) != WAIT_OBJECT_0)
-            return false;
-
-        ResetEvent(paused_event_);
-        ResetEvent(resumed_event_);
-        pause_requested_.store(true, std::memory_order_release);
-        resume_ack_pending_.store(true, std::memory_order_release);
-        SetEvent(dsp_event_);
-        if (WaitForSingleObject(paused_event_, timeout_ms) == WAIT_OBJECT_0)
+        const std::uint32_t generation = request_transition(true);
+        if (wait_for_transition(generation, timeout_ms))
             return true;
 
-        pause_requested_.store(false, std::memory_order_release);
-        SetEvent(dsp_event_);
+        // Supersede a timed-out pause with a newer Running generation. If the
+        // worker returns late from vendor processing it can only acknowledge
+        // the newest generation; it cannot enter the obsolete pause afterward.
+        (void)request_transition(false);
         return false;
     }
 
     bool resume(DWORD timeout_ms) noexcept
     {
-        if (!thread_.joinable() || !resumed_event_)
+        if (!thread_.joinable() || !transition_event_)
             return false;
-        pause_requested_.store(false, std::memory_order_release);
-        if (dsp_event_)
-            SetEvent(dsp_event_);
-        return WaitForSingleObject(resumed_event_, timeout_ms) == WAIT_OBJECT_0;
+        const std::uint32_t generation = request_transition(false);
+        return wait_for_transition(generation, timeout_ms);
     }
 
 private:
-    void acknowledge_resume_if_needed() noexcept
+    std::uint32_t request_transition(bool paused) noexcept
     {
-        if (resume_ack_pending_.exchange(false, std::memory_order_acq_rel) && resumed_event_)
-            SetEvent(resumed_event_);
+        desired_paused_.store(paused, std::memory_order_relaxed);
+        const std::uint32_t generation =
+            next_transition_generation_.fetch_add(1u, std::memory_order_relaxed);
+        requested_transition_generation_.store(generation, std::memory_order_release);
+        if (dsp_event_)
+            SetEvent(dsp_event_);
+        return generation;
+    }
+
+    bool wait_for_transition(std::uint32_t generation, DWORD timeout_ms) noexcept
+    {
+        const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+        while (acknowledged_transition_generation_.load(std::memory_order_acquire) != generation) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline)
+                return false;
+            const DWORD remaining = static_cast<DWORD>(deadline - now);
+            const DWORD wait = WaitForSingleObject(transition_event_, remaining);
+            if (wait == WAIT_FAILED)
+                return false;
+        }
+        return true;
+    }
+
+    void acknowledge_transition(std::uint32_t generation) noexcept
+    {
+        acknowledged_transition_generation_.store(generation, std::memory_order_release);
+        if (transition_event_)
+            SetEvent(transition_event_);
     }
 
     void run(std::stop_token stop) noexcept
@@ -584,37 +592,67 @@ private:
         if (mmcss)
             AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
 
+        std::uint32_t acknowledged =
+            acknowledged_transition_generation_.load(std::memory_order_relaxed);
         publish_dsp_heartbeat(region_);
-        if (resumed_event_)
-            SetEvent(resumed_event_);
 
         while (!stop.stop_requested() &&
                InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
-            if (!pause_requested_.load(std::memory_order_acquire))
-                acknowledge_resume_if_needed();
+            const std::uint32_t requested =
+                requested_transition_generation_.load(std::memory_order_acquire);
+            if (requested != acknowledged) {
+                const bool want_pause = desired_paused_.load(std::memory_order_relaxed);
+                if (!want_pause) {
+                    acknowledged = requested;
+                    acknowledge_transition(acknowledged);
+                } else {
+                    // Drain/flush the same processing frontier as before, but
+                    // re-check the generation before acknowledging Paused. A
+                    // newer Running request therefore cancels a slow pause
+                    // before the worker can publish a stale pause ACK.
+                    bool feedback_pending = false;
+                    (void)drain_processor_commands(
+                        region_, engine_, control_to_dsp_, kParameterTransferCapacity);
+                    if (!engine_.flush_parameter_changes())
+                        InterlockedExchange(&region_->last_error, 2);
+                    feedback_pending |= enqueue_processor_feedback(
+                        region_, engine_, dsp_to_control_, feedback_resync_required_);
+                    if (feedback_pending && control_event_)
+                        SetEvent(control_event_);
 
-            if (pause_requested_.load(std::memory_order_acquire)) {
-                bool feedback_pending = false;
-                (void)drain_processor_commands(
-                    region_, engine_, control_to_dsp_, kParameterTransferCapacity);
-                if (!engine_.flush_parameter_changes())
-                    InterlockedExchange(&region_->last_error, 2);
-                feedback_pending |= enqueue_processor_feedback(
-                    region_, engine_, dsp_to_control_, feedback_resync_required_);
-                if (feedback_pending && control_event_)
-                    SetEvent(control_event_);
+                    const std::uint32_t frontier_generation =
+                        requested_transition_generation_.load(std::memory_order_acquire);
+                    const bool frontier_paused = desired_paused_.load(std::memory_order_relaxed);
+                    if (frontier_generation != requested || !frontier_paused)
+                        continue;
 
-                const ULONGLONG pause_started = GetTickCount64();
-                SetEvent(paused_event_);
-                while (!stop.stop_requested() &&
-                       pause_requested_.load(std::memory_order_acquire)) {
-                    if (GetTickCount64() - pause_started <= kPausedHeartbeatGraceMs)
-                        publish_dsp_heartbeat(region_);
-                    WaitForSingleObject(dsp_event_, 100);
+                    acknowledged = requested;
+                    acknowledge_transition(acknowledged);
+                    ULONGLONG pause_started = GetTickCount64();
+
+                    while (!stop.stop_requested() &&
+                           InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
+                        const std::uint32_t latest =
+                            requested_transition_generation_.load(std::memory_order_acquire);
+                        if (latest != acknowledged) {
+                            const bool latest_paused =
+                                desired_paused_.load(std::memory_order_relaxed);
+                            acknowledged = latest;
+                            acknowledge_transition(acknowledged);
+                            if (!latest_paused)
+                                break;
+                            // A newer Paused request while already paused is
+                            // satisfied in place and starts a fresh intentional
+                            // heartbeat grace interval.
+                            pause_started = GetTickCount64();
+                        }
+
+                        if (GetTickCount64() - pause_started <= kPausedHeartbeatGraceMs)
+                            publish_dsp_heartbeat(region_);
+                        WaitForSingleObject(dsp_event_, 100);
+                    }
+                    continue;
                 }
-                ResetEvent(paused_event_);
-                acknowledge_resume_if_needed();
-                continue;
             }
 
             publish_dsp_heartbeat(region_);
@@ -666,9 +704,8 @@ private:
             publish_dsp_heartbeat(region_);
         }
 
-        acknowledge_resume_if_needed();
-        if (resumed_event_)
-            SetEvent(resumed_event_);
+        if (transition_event_)
+            SetEvent(transition_event_);
         if (mmcss)
             AvRevertMmThreadCharacteristics(mmcss);
     }
@@ -681,10 +718,11 @@ private:
     HANDLE dsp_event_ = nullptr;
     HANDLE control_event_ = nullptr;
     HANDLE response_event_ = nullptr;
-    HANDLE paused_event_ = nullptr;
-    HANDLE resumed_event_ = nullptr;
-    std::atomic<bool> pause_requested_{false};
-    std::atomic<bool> resume_ack_pending_{false};
+    HANDLE transition_event_ = nullptr;
+    std::atomic<bool> desired_paused_{false};
+    std::atomic<std::uint32_t> requested_transition_generation_{0};
+    std::atomic<std::uint32_t> acknowledged_transition_generation_{0};
+    std::atomic<std::uint32_t> next_transition_generation_{1};
     std::jthread thread_;
 };
 
