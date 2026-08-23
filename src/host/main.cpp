@@ -532,13 +532,13 @@ public:
         if (!thread_.joinable() || !transition_event_)
             return false;
 
-        const std::uint32_t generation = request_transition(true);
-        if (wait_for_transition(generation, timeout_ms))
+        const std::uint64_t token = request_transition(true);
+        if (wait_for_transition(token, timeout_ms))
             return true;
 
-        // Supersede a timed-out pause with a newer Running generation. If the
-        // worker returns late from vendor processing it can only acknowledge
-        // the newest generation; it cannot enter the obsolete pause afterward.
+        // Supersede a timed-out pause with a newer Running token. If the worker
+        // returns late from vendor processing it can only acknowledge the newest
+        // token; it cannot enter the obsolete pause afterward.
         (void)request_transition(false);
         return false;
     }
@@ -547,26 +547,33 @@ public:
     {
         if (!thread_.joinable() || !transition_event_)
             return false;
-        const std::uint32_t generation = request_transition(false);
-        return wait_for_transition(generation, timeout_ms);
+        const std::uint64_t token = request_transition(false);
+        return wait_for_transition(token, timeout_ms);
     }
 
 private:
-    std::uint32_t request_transition(bool paused) noexcept
+    static constexpr std::uint64_t kPausedTokenBit = 1u;
+
+    static bool token_requests_pause(std::uint64_t token) noexcept
     {
-        desired_paused_.store(paused, std::memory_order_relaxed);
-        const std::uint32_t generation =
-            next_transition_generation_.fetch_add(1u, std::memory_order_relaxed);
-        requested_transition_generation_.store(generation, std::memory_order_release);
-        if (dsp_event_)
-            SetEvent(dsp_event_);
-        return generation;
+        return (token & kPausedTokenBit) != 0;
     }
 
-    bool wait_for_transition(std::uint32_t generation, DWORD timeout_ms) noexcept
+    std::uint64_t request_transition(bool paused) noexcept
+    {
+        const std::uint64_t generation =
+            next_transition_generation_.fetch_add(1u, std::memory_order_relaxed);
+        const std::uint64_t token = (generation << 1u) | (paused ? kPausedTokenBit : 0u);
+        requested_transition_.store(token, std::memory_order_release);
+        if (dsp_event_)
+            SetEvent(dsp_event_);
+        return token;
+    }
+
+    bool wait_for_transition(std::uint64_t token, DWORD timeout_ms) noexcept
     {
         const ULONGLONG deadline = GetTickCount64() + timeout_ms;
-        while (acknowledged_transition_generation_.load(std::memory_order_acquire) != generation) {
+        while (acknowledged_transition_.load(std::memory_order_acquire) != token) {
             const ULONGLONG now = GetTickCount64();
             if (now >= deadline)
                 return false;
@@ -578,9 +585,9 @@ private:
         return true;
     }
 
-    void acknowledge_transition(std::uint32_t generation) noexcept
+    void acknowledge_transition(std::uint64_t token) noexcept
     {
-        acknowledged_transition_generation_.store(generation, std::memory_order_release);
+        acknowledged_transition_.store(token, std::memory_order_release);
         if (transition_event_)
             SetEvent(transition_event_);
     }
@@ -592,24 +599,23 @@ private:
         if (mmcss)
             AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
 
-        std::uint32_t acknowledged =
-            acknowledged_transition_generation_.load(std::memory_order_relaxed);
+        std::uint64_t acknowledged = acknowledged_transition_.load(std::memory_order_relaxed);
         publish_dsp_heartbeat(region_);
 
         while (!stop.stop_requested() &&
                InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
-            const std::uint32_t requested =
-                requested_transition_generation_.load(std::memory_order_acquire);
+            const std::uint64_t requested = requested_transition_.load(std::memory_order_acquire);
             if (requested != acknowledged) {
-                const bool want_pause = desired_paused_.load(std::memory_order_relaxed);
-                if (!want_pause) {
+                if (!token_requests_pause(requested)) {
+                    // At the outer-loop frontier the worker is already Running;
+                    // acknowledge exactly the token it observed.
                     acknowledged = requested;
                     acknowledge_transition(acknowledged);
                 } else {
-                    // Drain/flush the same processing frontier as before, but
-                    // re-check the generation before acknowledging Paused. A
-                    // newer Running request therefore cancels a slow pause
-                    // before the worker can publish a stale pause ACK.
+                    // Drain/flush the same processing frontier as before, then
+                    // re-check the exact packed token before acknowledging
+                    // Paused. A newer token therefore supersedes this request
+                    // without generation/state tearing.
                     bool feedback_pending = false;
                     (void)drain_processor_commands(
                         region_, engine_, control_to_dsp_, kParameterTransferCapacity);
@@ -620,36 +626,43 @@ private:
                     if (feedback_pending && control_event_)
                         SetEvent(control_event_);
 
-                    const std::uint32_t frontier_generation =
-                        requested_transition_generation_.load(std::memory_order_acquire);
-                    const bool frontier_paused = desired_paused_.load(std::memory_order_relaxed);
-                    if (frontier_generation != requested || !frontier_paused)
+                    if (requested_transition_.load(std::memory_order_acquire) != requested)
                         continue;
 
                     acknowledged = requested;
                     acknowledge_transition(acknowledged);
                     ULONGLONG pause_started = GetTickCount64();
+                    std::uint64_t running_to_ack = 0;
 
                     while (!stop.stop_requested() &&
                            InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
-                        const std::uint32_t latest =
-                            requested_transition_generation_.load(std::memory_order_acquire);
+                        const std::uint64_t latest =
+                            requested_transition_.load(std::memory_order_acquire);
                         if (latest != acknowledged) {
-                            const bool latest_paused =
-                                desired_paused_.load(std::memory_order_relaxed);
-                            acknowledged = latest;
-                            acknowledge_transition(acknowledged);
-                            if (!latest_paused)
+                            if (!token_requests_pause(latest)) {
+                                // Leave the paused loop first; only then publish
+                                // the Running ACK so it cannot be mistaken for a
+                                // state the worker has not actually reached yet.
+                                running_to_ack = latest;
                                 break;
-                            // A newer Paused request while already paused is
+                            }
+
+                            // A newer Paused token while already paused is
                             // satisfied in place and starts a fresh intentional
                             // heartbeat grace interval.
+                            acknowledged = latest;
+                            acknowledge_transition(acknowledged);
                             pause_started = GetTickCount64();
                         }
 
                         if (GetTickCount64() - pause_started <= kPausedHeartbeatGraceMs)
                             publish_dsp_heartbeat(region_);
                         WaitForSingleObject(dsp_event_, 100);
+                    }
+
+                    if (running_to_ack != 0) {
+                        acknowledged = running_to_ack;
+                        acknowledge_transition(acknowledged);
                     }
                     continue;
                 }
@@ -719,10 +732,9 @@ private:
     HANDLE control_event_ = nullptr;
     HANDLE response_event_ = nullptr;
     HANDLE transition_event_ = nullptr;
-    std::atomic<bool> desired_paused_{false};
-    std::atomic<std::uint32_t> requested_transition_generation_{0};
-    std::atomic<std::uint32_t> acknowledged_transition_generation_{0};
-    std::atomic<std::uint32_t> next_transition_generation_{1};
+    std::atomic<std::uint64_t> requested_transition_{0};
+    std::atomic<std::uint64_t> acknowledged_transition_{0};
+    std::atomic<std::uint64_t> next_transition_generation_{1};
     std::jthread thread_;
 };
 
