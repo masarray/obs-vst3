@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "common/protocol.hpp"
+#include "common/state_snapshot.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
@@ -52,6 +53,9 @@ public:
               std::string& error);
     void close() noexcept;
     bool process(AudioSlot& slot) noexcept;
+
+    bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
+    bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
 
     bool queue_parameter(std::uint32_t id, double normalized) noexcept;
     bool queue_parameter_from_controller(std::uint32_t id, double normalized) noexcept;
