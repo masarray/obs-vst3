@@ -377,7 +377,6 @@ int wmain(int argc, wchar_t** argv)
             pump_windows_messages();
 
         handle_editor_command(region, engine, editor);
-        handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
 
         bool parameter_edits = false;
         for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
@@ -431,6 +430,10 @@ int wmain(int argc, wchar_t** argv)
         }
         if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
             region->last_error = 3;
+
+        // State commands run after this control cycle's parameter/process work
+        // so getState() cannot snapshot one edit behind the visible controller.
+        handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
 
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,
