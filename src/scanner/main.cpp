@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -28,6 +29,18 @@ std::wstring quote(const std::wstring& value)
         out += c;
     }
     out += L"\"";
+    return out;
+}
+
+std::string utf8(const std::wstring& value)
+{
+    if (value.empty())
+        return {};
+    const int needed = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    if (needed <= 0)
+        return {};
+    std::string out(static_cast<std::size_t>(needed), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), needed, nullptr, nullptr);
     return out;
 }
 
@@ -108,7 +121,8 @@ std::vector<fs::path> discover_bundles()
 int probe(const fs::path& plugin, const fs::path& output)
 {
     std::string error;
-    auto module = VST3::Hosting::Module::create(plugin.u8string(), error);
+    const std::string plugin_utf8 = utf8(plugin.wstring());
+    auto module = VST3::Hosting::Module::create(plugin_utf8, error);
     if (!module) {
         std::cerr << error << '\n';
         return 3;
@@ -125,7 +139,7 @@ int probe(const fs::path& plugin, const fs::path& output)
             continue;
         found = true;
         out << sanitize(info.name()) << '\t'
-            << sanitize(plugin.u8string()) << '\t'
+            << sanitize(plugin_utf8) << '\t'
             << sanitize(info.ID().toString()) << '\n';
     }
     return found ? 0 : 5;
