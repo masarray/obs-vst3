@@ -253,14 +253,15 @@ bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
     if (native_overrides.empty())
         return true;
     if (native_overrides.overflowed()) {
+        // The exact latest values for >capacity distinct rejected edits cannot
+        // be proven complete. ComponentHandler requests helper shutdown on that
+        // extreme condition so the outer S2 watchdog recreates a clean process
+        // from the last-known-good checkpoint instead of leaving it poisoned.
         if (region)
             InterlockedExchange(&region->last_error, 15);
         return false;
     }
 
-    // Preserve legitimate DSP-originated changes for every parameter that did
-    // not lose a native edit. Only feedback for explicitly overridden IDs is
-    // superseded by the newer controller value captured below.
     drain_controller_feedback_preserving_native_overrides(
         region, engine, feedback, native_overrides);
 
@@ -385,6 +386,28 @@ public:
                                               Steinberg::Vst::ParamValue value) override
     {
         const safevst3::EngineParameterUpdate update{static_cast<std::uint32_t>(id), value};
+
+        // Once an ID has a retained native override, every newer edit for that
+        // same ID must update the mailbox even if the main ring has space again;
+        // otherwise an older retained value could overwrite a later ring value
+        // at the next paused reconciliation.
+        if (native_overrides_.contains(update.id)) {
+            const bool retained = native_overrides_.record(update);
+            publish_parameter_value(region_, update.id, value);
+            if (region_) {
+                InterlockedIncrement(&region_->state_dirty_generation);
+                InterlockedExchange(&region_->last_error, retained ? 6 : 15);
+            }
+            if (!retained && region_)
+                InterlockedExchange(&region_->shutdown_requested, 1);
+            if (dsp_event_)
+                SetEvent(dsp_event_);
+            if (control_event_)
+                SetEvent(control_event_);
+            edit_pending_.store(true, std::memory_order_release);
+            return retained ? Steinberg::kResultOk : Steinberg::kResultFalse;
+        }
+
         if (!control_to_dsp_.push(update)) {
             const bool retained = native_overrides_.record(update);
             publish_parameter_value(region_, update.id, value);
@@ -392,6 +415,8 @@ public:
                 InterlockedIncrement(&region_->state_dirty_generation);
                 InterlockedExchange(&region_->last_error, retained ? 6 : 15);
             }
+            if (!retained && region_)
+                InterlockedExchange(&region_->shutdown_requested, 1);
             if (dsp_event_)
                 SetEvent(dsp_event_);
             if (control_event_)
@@ -591,8 +616,6 @@ private:
                 continue;
             }
 
-            if (resumed_event_)
-                SetEvent(resumed_event_);
             publish_dsp_heartbeat(region_);
             const DWORD wait = WaitForSingleObject(dsp_event_, 250);
             if (stop.stop_requested())
@@ -906,8 +929,6 @@ int wmain(int argc, wchar_t** argv)
                 }
             }
         } else {
-            // A failed native delivery only supersedes feedback for the same
-            // parameter IDs. Preserve and apply unrelated DSP changes now.
             drain_controller_feedback_preserving_native_overrides(
                 region, engine, dsp_to_control, native_overrides);
         }
