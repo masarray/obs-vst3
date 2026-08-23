@@ -19,6 +19,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <thread>
 
 #pragma comment(lib, "Avrt.lib")
 
@@ -68,7 +69,7 @@ void copy_text(char* destination, std::size_t capacity, const std::string& value
     destination[count] = '\0';
 }
 
-void publish_heartbeat(safevst3::SharedAudioRegion* region) noexcept
+void publish_control_heartbeat(safevst3::SharedAudioRegion* region) noexcept
 {
     if (!region)
         return;
@@ -76,6 +77,16 @@ void publish_heartbeat(safevst3::SharedAudioRegion* region) noexcept
         reinterpret_cast<volatile LONG64*>(&region->helper_heartbeat_ms),
         static_cast<LONG64>(GetTickCount64()));
     InterlockedIncrement(&region->helper_progress_generation);
+}
+
+void publish_dsp_heartbeat(safevst3::SharedAudioRegion* region) noexcept
+{
+    if (!region)
+        return;
+    InterlockedExchange64(
+        reinterpret_cast<volatile LONG64*>(&region->dsp_heartbeat_ms),
+        static_cast<LONG64>(GetTickCount64()));
+    InterlockedIncrement(&region->dsp_progress_generation);
 }
 
 void publish_parameter_value(safevst3::SharedAudioRegion* region,
@@ -95,10 +106,11 @@ void publish_parameter_value(safevst3::SharedAudioRegion* region,
     }
 }
 
-void enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
+bool enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
                                 safevst3::Vst3Engine& engine,
                                 ParameterQueue& feedback) noexcept
 {
+    bool queued_any = false;
     std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
     const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
     for (std::size_t i = 0; i < count; ++i) {
@@ -107,7 +119,9 @@ void enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
                 InterlockedExchange(&region->last_error, 4);
             break;
         }
+        queued_any = true;
     }
+    return queued_any;
 }
 
 bool drain_processor_commands(safevst3::SharedAudioRegion* region,
@@ -137,10 +151,21 @@ void drain_controller_feedback(safevst3::SharedAudioRegion* region,
     }
 }
 
+void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
+                                   safevst3::Vst3Engine& engine) noexcept
+{
+    std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
+    const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
+    for (std::size_t i = 0; i < count; ++i)
+        publish_parameter_value(region, updates[i].id, updates[i].normalized);
+}
+
 class ComponentHandler final : public Steinberg::Vst::IComponentHandler {
 public:
-    ComponentHandler(safevst3::SharedAudioRegion* region, ParameterQueue& control_to_dsp)
-        : region_(region), control_to_dsp_(control_to_dsp)
+    ComponentHandler(safevst3::SharedAudioRegion* region,
+                     ParameterQueue& control_to_dsp,
+                     HANDLE dsp_event)
+        : region_(region), control_to_dsp_(control_to_dsp), dsp_event_(dsp_event)
     {
     }
 
@@ -161,6 +186,8 @@ public:
         publish_parameter_value(region_, update.id, value);
         if (region_)
             InterlockedIncrement(&region_->state_dirty_generation);
+        if (dsp_event_)
+            SetEvent(dsp_event_);
         edit_pending_.store(true, std::memory_order_release);
         return Steinberg::kResultOk;
     }
@@ -208,8 +235,161 @@ public:
 private:
     safevst3::SharedAudioRegion* region_ = nullptr;
     ParameterQueue& control_to_dsp_;
+    HANDLE dsp_event_ = nullptr;
     std::atomic<bool> edit_pending_{false};
     std::atomic<Steinberg::int32> restart_flags_{0};
+};
+
+class DspWorker {
+public:
+    DspWorker(safevst3::SharedAudioRegion* region,
+              safevst3::Vst3Engine& engine,
+              ParameterQueue& control_to_dsp,
+              ParameterQueue& dsp_to_control,
+              HANDLE dsp_event,
+              HANDLE control_event,
+              HANDLE response_event)
+        : region_(region), engine_(engine), control_to_dsp_(control_to_dsp),
+          dsp_to_control_(dsp_to_control), dsp_event_(dsp_event),
+          control_event_(control_event), response_event_(response_event)
+    {
+    }
+
+    ~DspWorker() { stop(); }
+
+    bool start(std::string& error)
+    {
+        paused_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!paused_event_) {
+            error = "Failed to create DSP pause acknowledgement event";
+            return false;
+        }
+        try {
+            thread_ = std::jthread([this](std::stop_token stop) { run(stop); });
+        } catch (...) {
+            CloseHandle(paused_event_);
+            paused_event_ = nullptr;
+            error = "Failed to start dedicated DSP worker";
+            return false;
+        }
+        return true;
+    }
+
+    void stop() noexcept
+    {
+        if (thread_.joinable()) {
+            thread_.request_stop();
+            pause_requested_.store(false, std::memory_order_release);
+            if (dsp_event_)
+                SetEvent(dsp_event_);
+            thread_ = std::jthread{};
+        }
+        if (paused_event_) {
+            CloseHandle(paused_event_);
+            paused_event_ = nullptr;
+        }
+    }
+
+    bool pause(DWORD timeout_ms) noexcept
+    {
+        if (!thread_.joinable() || !paused_event_)
+            return false;
+        pause_requested_.store(true, std::memory_order_release);
+        SetEvent(dsp_event_);
+        return WaitForSingleObject(paused_event_, timeout_ms) == WAIT_OBJECT_0;
+    }
+
+    void resume() noexcept
+    {
+        pause_requested_.store(false, std::memory_order_release);
+        if (paused_event_)
+            ResetEvent(paused_event_);
+        if (dsp_event_)
+            SetEvent(dsp_event_);
+    }
+
+private:
+    void run(std::stop_token stop) noexcept
+    {
+        DWORD task_index = 0;
+        HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
+        if (mmcss)
+            AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
+
+        publish_dsp_heartbeat(region_);
+        while (!stop.stop_requested() &&
+               InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
+            if (pause_requested_.load(std::memory_order_acquire)) {
+                SetEvent(paused_event_);
+                while (!stop.stop_requested() &&
+                       pause_requested_.load(std::memory_order_acquire)) {
+                    publish_dsp_heartbeat(region_);
+                    WaitForSingleObject(dsp_event_, 100);
+                }
+                if (paused_event_)
+                    ResetEvent(paused_event_);
+                continue;
+            }
+
+            publish_dsp_heartbeat(region_);
+            const DWORD wait = WaitForSingleObject(dsp_event_, 250);
+            if (stop.stop_requested())
+                break;
+            if (wait == WAIT_FAILED) {
+                InterlockedExchange(&region_->last_error, 7);
+                break;
+            }
+            if (wait == WAIT_TIMEOUT)
+                continue;
+
+            const bool parameter_edits = drain_processor_commands(region_, engine_, control_to_dsp_);
+            bool processed_any = false;
+            bool feedback_queued = false;
+
+            for (std::uint32_t i = 0; i < safevst3::kSlotCount; ++i) {
+                auto& slot = region_->slots[i];
+                if (InterlockedCompareExchange(&slot.state,
+                                               static_cast<long>(safevst3::SlotState::Processing),
+                                               static_cast<long>(safevst3::SlotState::Ready)) !=
+                    static_cast<long>(safevst3::SlotState::Ready))
+                    continue;
+
+                processed_any = true;
+                const bool ok = engine_.process(slot);
+                feedback_queued |= enqueue_processor_feedback(region_, engine_, dsp_to_control_);
+                InterlockedExchange(&slot.result,
+                                    static_cast<long>(ok ? safevst3::ProcessResult::Ok
+                                                        : safevst3::ProcessResult::VstProcessError));
+                MemoryBarrier();
+                InterlockedExchange(&slot.state, static_cast<long>(safevst3::SlotState::Done));
+                SetEvent(response_event_);
+            }
+
+            if (parameter_edits && !processed_any) {
+                if (!engine_.flush_parameter_changes())
+                    InterlockedExchange(&region_->last_error, 2);
+                feedback_queued |= enqueue_processor_feedback(region_, engine_, dsp_to_control_);
+            }
+
+            if (feedback_queued && control_event_)
+                SetEvent(control_event_);
+            publish_dsp_heartbeat(region_);
+        }
+
+        if (mmcss)
+            AvRevertMmThreadCharacteristics(mmcss);
+    }
+
+    safevst3::SharedAudioRegion* region_ = nullptr;
+    safevst3::Vst3Engine& engine_;
+    ParameterQueue& control_to_dsp_;
+    ParameterQueue& dsp_to_control_;
+    HANDLE dsp_event_ = nullptr;
+    HANDLE control_event_ = nullptr;
+    HANDLE response_event_ = nullptr;
+    HANDLE paused_event_ = nullptr;
+    std::atomic<bool> pause_requested_{false};
+    std::jthread thread_;
 };
 
 void handle_editor_command(safevst3::SharedAudioRegion* region,
@@ -257,11 +437,20 @@ void handle_editor_command(safevst3::SharedAudioRegion* region,
     InterlockedExchange(&region->editor_applied_generation, requested);
 }
 
+void complete_state_failure(safevst3::SharedAudioRegion* region, HANDLE state_event) noexcept
+{
+    const long requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
+    InterlockedExchange(&region->state_status, static_cast<long>(safevst3::StateStatus::VstError));
+    InterlockedExchange(&region->state_command, static_cast<long>(safevst3::StateCommand::None));
+    InterlockedExchange(&region->state_applied_generation, requested);
+    if (state_event)
+        SetEvent(state_event);
+}
+
 void handle_state_command(safevst3::SharedAudioRegion* region,
                           safevst3::StateTransferRegion* transfer,
                           safevst3::Vst3Engine& engine,
-                          HANDLE state_event,
-                          ParameterQueue& dsp_to_control)
+                          HANDLE state_event)
 {
     const long requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
     const long applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
@@ -311,7 +500,7 @@ void handle_state_command(safevst3::SharedAudioRegion* region,
                 transfer->payload + static_cast<std::ptrdiff_t>(component_bytes + controller_bytes));
             if (engine.restore_state(snapshot, error)) {
                 region->latency_samples = engine.latency_samples();
-                enqueue_processor_feedback(region, engine, dsp_to_control);
+                publish_engine_updates_direct(region, engine);
                 status = safevst3::StateStatus::Ok;
             } else {
                 status = safevst3::StateStatus::VstError;
@@ -351,7 +540,8 @@ int wmain(int argc, wchar_t** argv)
     };
 
     BridgeNames names{get(L"--mapping"), get(L"--state-mapping"), get(L"--request-event"),
-                      get(L"--response-event"), get(L"--ready-event"), get(L"--state-event")};
+                      get(L"--dsp-event"), get(L"--response-event"), get(L"--ready-event"),
+                      get(L"--state-event")};
     const std::wstring vst_path_w = get(L"--vst");
     const std::string class_id = narrow(get(L"--class-id"));
 
@@ -377,7 +567,7 @@ int wmain(int argc, wchar_t** argv)
 
     ParameterQueue control_to_dsp;
     ParameterQueue dsp_to_control;
-    ComponentHandler component_handler(region, control_to_dsp);
+    ComponentHandler component_handler(region, control_to_dsp, endpoint.dsp_event());
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
 
@@ -399,131 +589,108 @@ int wmain(int argc, wchar_t** argv)
         copy_text(destination.units, kParameterUnitsBytes, source.units);
     }
 
-    // Never run arbitrary vendor UI code before the DSP helper is Ready. If a
-    // controller exists, editor capability remains Unknown until the user
-    // explicitly requests Open and attached(HWND) succeeds or fails. This
-    // keeps a broken/hanging GUI from preventing healthy DSP + fallback use.
     InterlockedExchange(
         &region->editor_status,
         static_cast<long>(engine.edit_controller() ? EditorStatus::Unknown
                                                     : EditorStatus::Unsupported));
     MemoryBarrier();
 
-    DWORD task_index = 0;
-    HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
-    if (mmcss)
-        AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
+    DspWorker dsp(region, engine, control_to_dsp, dsp_to_control,
+                  endpoint.dsp_event(), endpoint.request_event(), endpoint.response_event());
+    if (!dsp.start(error)) {
+        region->last_error = 8;
+        InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Error));
+        SetEvent(endpoint.ready_event());
+        std::cerr << error << '\n';
+        return 4;
+    }
 
-    publish_heartbeat(region);
+    publish_control_heartbeat(region);
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Ready));
     SetEvent(endpoint.ready_event());
 
     HANDLE request_handle = endpoint.request_event();
     while (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) == 0) {
-        // Wake periodically even when OBS is idle. If this main/helper thread
-        // becomes stuck inside vendor DSP/UI/lifecycle code, this heartbeat
-        // stops and the OBS-side watchdog can distinguish a hang from idleness.
-        publish_heartbeat(region);
+        publish_control_heartbeat(region);
         const DWORD wait = MsgWaitForMultipleObjectsEx(1, &request_handle, 250,
                                                        QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (wait == WAIT_FAILED)
             break;
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
-        if (wait == WAIT_TIMEOUT) {
-            drain_controller_feedback(region, engine, dsp_to_control);
-            publish_heartbeat(region);
-            continue;
-        }
 
         if (wait == WAIT_OBJECT_0 + 1)
             pump_windows_messages();
 
-        handle_editor_command(region, engine, editor);
+        drain_controller_feedback(region, engine, dsp_to_control);
 
-        // Control thread produces normalized parameter messages only. It no
-        // longer mutates processor-owned queues directly; the same queue will
-        // be consumed by the dedicated DSP worker in the next tracer step.
-        for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
-            auto& descriptor = region->parameters[i];
-            const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
-            const long applied = InterlockedCompareExchange(&descriptor.applied_generation, 0, 0);
-            if (generation == applied)
-                continue;
+        if (wait != WAIT_TIMEOUT) {
+            handle_editor_command(region, engine, editor);
 
-            const auto raw_bits = InterlockedCompareExchange64(
-                reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
-            const double value = bits_to_double(static_cast<std::int64_t>(raw_bits));
-            const EngineParameterUpdate update{descriptor.id,
-                normalize_parameter_value(value, descriptor.step_count)};
-            if (engine.set_controller_parameter(update.id, update.normalized) &&
-                control_to_dsp.push(update)) {
-                publish_parameter_value(region, update.id, update.normalized);
-                InterlockedIncrement(&region->state_dirty_generation);
-            } else {
-                InterlockedExchange(&region->last_error, 6);
+            for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
+                auto& descriptor = region->parameters[i];
+                const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
+                const long applied = InterlockedCompareExchange(&descriptor.applied_generation, 0, 0);
+                if (generation == applied)
+                    continue;
+
+                const auto raw_bits = InterlockedCompareExchange64(
+                    reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
+                const double value = bits_to_double(static_cast<std::int64_t>(raw_bits));
+                const EngineParameterUpdate update{descriptor.id,
+                    normalize_parameter_value(value, descriptor.step_count)};
+                if (engine.set_controller_parameter(update.id, update.normalized) &&
+                    control_to_dsp.push(update)) {
+                    publish_parameter_value(region, update.id, update.normalized);
+                    InterlockedIncrement(&region->state_dirty_generation);
+                    SetEvent(endpoint.dsp_event());
+                } else {
+                    InterlockedExchange(&region->last_error, 6);
+                }
+                InterlockedExchange(&descriptor.applied_generation, generation);
             }
-            InterlockedExchange(&descriptor.applied_generation, generation);
         }
 
         (void)component_handler.take_edit_pending();
-        const bool processor_parameter_edits = drain_processor_commands(region, engine, control_to_dsp);
-
-        bool processed_any = false;
-        for (std::uint32_t i = 0; i < kSlotCount; ++i) {
-            auto& slot = region->slots[i];
-            if (InterlockedCompareExchange(&slot.state,
-                                           static_cast<long>(SlotState::Processing),
-                                           static_cast<long>(SlotState::Ready)) != static_cast<long>(SlotState::Ready))
-                continue;
-
-            processed_any = true;
-            const bool ok = engine.process(slot);
-            enqueue_processor_feedback(region, engine, dsp_to_control);
-            InterlockedExchange(&slot.result, static_cast<long>(ok ? ProcessResult::Ok : ProcessResult::VstProcessError));
-            MemoryBarrier();
-            InterlockedExchange(&slot.state, static_cast<long>(SlotState::Done));
-            SetEvent(endpoint.response_event());
-        }
-
-        if (processor_parameter_edits && !processed_any) {
-            if (!engine.flush_parameter_changes())
-                region->last_error = 2;
-            enqueue_processor_feedback(region, engine, dsp_to_control);
-        }
-
-        // Processor feedback crosses the opposite bounded queue before vendor
-        // controller/UI state is touched. Today this drains on the same thread;
-        // after the DSP move this remains the control-thread consumer.
-        drain_controller_feedback(region, engine, dsp_to_control);
 
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         if ((restart_flags & Steinberg::Vst::kParamValuesChanged) != 0) {
-            engine.refresh_parameter_values();
-            enqueue_processor_feedback(region, engine, dsp_to_control);
-            drain_controller_feedback(region, engine, dsp_to_control);
+            if (dsp.pause(2000)) {
+                engine.refresh_parameter_values();
+                publish_engine_updates_direct(region, engine);
+                dsp.resume();
+            } else {
+                InterlockedExchange(&region->last_error, 9);
+            }
         }
         if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
             region->last_error = 3;
 
-        // State commands run after this control cycle's parameter/process work
-        // so getState() cannot snapshot one edit behind the visible controller.
-        handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event(), dsp_to_control);
-        drain_controller_feedback(region, engine, dsp_to_control);
+        const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
+        const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
+        if (state_requested != state_applied) {
+            if (dsp.pause(2000)) {
+                handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
+                dsp.resume();
+            } else {
+                complete_state_failure(region, endpoint.state_event());
+                InterlockedExchange(&region->last_error, 10);
+            }
+        }
 
+        drain_controller_feedback(region, engine, dsp_to_control);
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,
                                 static_cast<long>(editor.visible() ? EditorStatus::Open : EditorStatus::Closed));
         }
-        publish_heartbeat(region);
+        publish_control_heartbeat(region);
     }
 
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::ShuttingDown));
+    dsp.stop();
     editor.close();
     engine.set_component_handler(nullptr);
     engine.close();
-    if (mmcss)
-        AvRevertMmThreadCharacteristics(mmcss);
     return 0;
 }
 
