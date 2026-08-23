@@ -266,7 +266,14 @@ bool Vst3Engine::queue_parameter_impl(std::uint32_t id, double normalized, bool 
         return false;
 
     EngineParameter* parameter = find_parameter(id);
-    if (!parameter || (parameter->flags & (ParameterReadOnly | ParameterHidden)) != 0)
+    if (!parameter)
+        return false;
+
+    // Hidden/read-only flags restrict host-authored fallback controls. A native
+    // vendor editor is the plug-in's own controller UI; its performEdit() still
+    // has to be transferred by the host to the processor, even for parameters
+    // that are not meant to be exposed as generic host controls.
+    if (update_controller && (parameter->flags & (ParameterReadOnly | ParameterHidden)) != 0)
         return false;
 
     normalized = normalize_parameter_value(normalized, parameter->step_count);
