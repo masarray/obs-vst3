@@ -67,6 +67,7 @@ struct Filter {
     std::mutex config_mutex;
     std::mutex restart_mutex;
     std::jthread recovery_thread;
+    std::stop_source shutdown_source;
     std::string path;
     std::string class_id;
     std::uint32_t sample_rate = 0;
@@ -399,10 +400,14 @@ void split_selection(const std::string& selection, std::string& path, std::strin
     class_id = selection.substr(tab + 1);
 }
 
-void restart_bridge(Filter* filter, std::stop_token cancel = {})
+void restart_bridge(Filter* filter)
 {
-    if (!filter || cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return;
+    const std::stop_token cancel = filter->shutdown_source.get_token();
+    if (cancel.stop_requested())
+        return;
+
     std::lock_guard restart_lock(filter->restart_mutex);
     if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
         return;
@@ -531,7 +536,7 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
 
             if (!bridge_running(filter)) {
                 blog(LOG_WARNING, "[obs-safe-vst3] helper stopped; attempting isolated recovery");
-                restart_bridge(filter, stop);
+                restart_bridge(filter);
             }
         }
     });
@@ -545,6 +550,7 @@ void filter_destroy(void* data)
         return;
 
     filter->shutting_down.store(true, std::memory_order_release);
+    filter->shutdown_source.request_stop();
     filter->enabled.store(false, std::memory_order_release);
     filter->recovery_thread.request_stop();
     filter->recovery_thread = std::jthread{};
