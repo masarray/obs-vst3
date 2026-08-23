@@ -57,8 +57,15 @@ public:
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
     bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
 
+    // Transitional combined seam retained for callers outside the S2 helper.
+    // S2 helper code uses the explicit controller/processor ownership methods
+    // below so moving process() to its own thread does not introduce cross-
+    // thread IEditController calls.
     bool queue_parameter(std::uint32_t id, double normalized) noexcept;
     bool queue_parameter_from_controller(std::uint32_t id, double normalized) noexcept;
+    bool set_controller_parameter(std::uint32_t id, double normalized) noexcept;
+    bool queue_processor_parameter(std::uint32_t id, double normalized) noexcept;
+
     bool flush_parameter_changes() noexcept;
     void refresh_parameter_values() noexcept;
     std::size_t take_parameter_updates(EngineParameterUpdate* destination, std::size_t capacity) noexcept;
