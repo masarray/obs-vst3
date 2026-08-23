@@ -1,5 +1,8 @@
 /build/
 /out/
+/dist/
+/.obs-sdk/
+/installer/windows/payload/
 /.vs/
 /.vscode/
 /.idea/
