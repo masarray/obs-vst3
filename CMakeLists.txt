@@ -32,6 +32,16 @@ if(WIN32)
     )
     FetchContent_MakeAvailable(vst3sdk)
 
+    # sdk_hosting deliberately contains the platform-neutral hosting core only.
+    # Module::create and PlugProvider live in separate SDK translation units, so
+    # include the exact Windows/runtime implementations needed by our host.
+    add_library(safevst3_vst3_hosting_runtime STATIC
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
+    )
+    target_link_libraries(safevst3_vst3_hosting_runtime PUBLIC sdk_hosting sdk)
+    target_compile_definitions(safevst3_vst3_hosting_runtime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
     add_library(safevst3_win_ipc STATIC src/platform/windows/win_ipc.cpp)
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
@@ -42,11 +52,11 @@ if(WIN32)
         src/host/vst3_engine.cpp
     )
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(obs-safe-vst3-host PRIVATE safevst3_win_ipc sdk_hosting sdk Avrt)
+    target_link_libraries(obs-safe-vst3-host PRIVATE safevst3_win_ipc safevst3_vst3_hosting_runtime Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
-    target_link_libraries(obs-safe-vst3-scanner PRIVATE sdk_hosting sdk)
+    target_link_libraries(obs-safe-vst3-scanner PRIVATE safevst3_vst3_hosting_runtime)
     target_compile_definitions(obs-safe-vst3-scanner PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     if(SAFEVST3_BUILD_OBS_PLUGIN)
