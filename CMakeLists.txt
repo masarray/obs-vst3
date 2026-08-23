@@ -45,6 +45,7 @@ if(WIN32)
     add_library(safevst3_win_ipc STATIC
         src/platform/windows/win_ipc.cpp
         src/platform/windows/editor_ipc.cpp
+        src/platform/windows/state_ipc.cpp
     )
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
