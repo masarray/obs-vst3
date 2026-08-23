@@ -26,6 +26,8 @@
 namespace {
 
 constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
+constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
+constexpr std::size_t kMaxPausedHostCatchupPasses = 4;
 constexpr ULONGLONG kPausedHeartbeatGraceMs = 2000;
 using ParameterQueue = safevst3::SpscRing<safevst3::EngineParameterUpdate, kParameterTransferCapacity>;
 
@@ -34,7 +36,7 @@ std::string narrow(const std::wstring& value)
     if (value.empty()) return {};
     const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
     std::string out(static_cast<std::size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, value.data(), size, out.data(), size, nullptr, nullptr);
     return out;
 }
 
@@ -116,14 +118,8 @@ bool enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
     std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
     const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
     for (std::size_t i = 0; i < count; ++i) {
-        // The shared mirror is latest-value storage and is safe to update from
-        // DSP with an interlocked write. Even if the bounded feedback queue is
-        // saturated by a long control/UI stall, OBS never regresses its value.
         publish_parameter_value(region, updates[i].id, updates[i].normalized);
         if (!feedback.push(updates[i])) {
-            // Never block realtime and never silently lose the semantic update.
-            // The control thread will pause DSP and replay engine.parameters()
-            // into IEditController once it resumes.
             resync_required.store(true, std::memory_order_release);
             if (region)
                 InterlockedExchange(&region->last_error, 4);
@@ -135,20 +131,19 @@ bool enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
     return notify_control;
 }
 
-bool drain_processor_commands(safevst3::SharedAudioRegion* region,
-                              safevst3::Vst3Engine& engine,
-                              ParameterQueue& commands) noexcept
+std::size_t drain_processor_commands(safevst3::SharedAudioRegion* region,
+                                     safevst3::Vst3Engine& engine,
+                                     ParameterQueue& commands,
+                                     std::size_t max_commands) noexcept
 {
-    bool applied_any = false;
+    std::size_t drained = 0;
     safevst3::EngineParameterUpdate update{};
-    while (commands.pop(update)) {
-        if (engine.queue_processor_parameter(update.id, update.normalized)) {
-            applied_any = true;
-        } else if (region) {
+    while (drained < max_commands && commands.pop(update)) {
+        ++drained;
+        if (!engine.queue_processor_parameter(update.id, update.normalized) && region)
             InterlockedExchange(&region->last_error, 5);
-        }
     }
-    return applied_any;
+    return drained;
 }
 
 void drain_controller_feedback(safevst3::SharedAudioRegion* region,
@@ -169,26 +164,34 @@ void discard_controller_feedback(ParameterQueue& feedback) noexcept
     }
 }
 
-void reconcile_controller_feedback_after_pause(safevst3::SharedAudioRegion* region,
-                                               safevst3::Vst3Engine& engine,
-                                               ParameterQueue& feedback,
-                                               std::atomic<bool>& resync_required) noexcept
+void sync_engine_mirror_to_controller(safevst3::SharedAudioRegion* region,
+                                      safevst3::Vst3Engine& engine) noexcept
 {
-    // DSP is paused: no producer can mutate the engine parameter mirror or add
-    // new feedback while this transaction runs. Apply queued feedback first so
-    // old queue entries can never overwrite the authoritative full resync.
-    drain_controller_feedback(region, engine, feedback);
-    if (!resync_required.exchange(false, std::memory_order_acq_rel))
-        return;
-
     for (const auto& parameter : engine.parameters()) {
         (void)engine.set_controller_parameter(parameter.id, parameter.current_normalized);
         publish_parameter_value(region, parameter.id, parameter.current_normalized);
     }
 }
 
+void reconcile_controller_feedback_after_pause(safevst3::SharedAudioRegion* region,
+                                               safevst3::Vst3Engine& engine,
+                                               ParameterQueue& feedback,
+                                               std::atomic<bool>& resync_required) noexcept
+{
+    drain_controller_feedback(region, engine, feedback);
+    if (!resync_required.exchange(false, std::memory_order_acq_rel))
+        return;
+    sync_engine_mirror_to_controller(region, engine);
+}
+
 void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
-                                   safevst3::Vst3Engine& engine) noexcept;
+                                   safevst3::Vst3Engine& engine) noexcept
+{
+    std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
+    const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
+    for (std::size_t i = 0; i < count; ++i)
+        publish_parameter_value(region, updates[i].id, updates[i].normalized);
+}
 
 bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
                                         safevst3::Vst3Engine& engine,
@@ -198,11 +201,6 @@ bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
     if (!native_resync_required.load(std::memory_order_acquire))
         return true;
 
-    // A rejected performEdit means IEditController already owns a value newer
-    // than the saturated control->DSP ring. Do not apply older DSP feedback to
-    // the controller first. Snapshot controller values into the engine mirror,
-    // discard stale queued feedback, then replay that complete latest-value
-    // mirror to the paused processor.
     engine.refresh_parameter_values();
     discard_controller_feedback(feedback);
 
@@ -212,15 +210,8 @@ bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
             queued_all = false;
     }
     const bool flushed = engine.flush_parameter_changes();
-
-    // flush may itself produce canonical processor feedback. Clear its compact
-    // update buffer into the shared mirror, then make the controller match the
-    // final processor-owned mirror before allowing state capture.
     publish_engine_updates_direct(region, engine);
-    for (const auto& parameter : engine.parameters()) {
-        (void)engine.set_controller_parameter(parameter.id, parameter.current_normalized);
-        publish_parameter_value(region, parameter.id, parameter.current_normalized);
-    }
+    sync_engine_mirror_to_controller(region, engine);
 
     if (queued_all && flushed) {
         native_resync_required.store(false, std::memory_order_release);
@@ -231,13 +222,79 @@ bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
     return false;
 }
 
-void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
-                                   safevst3::Vst3Engine& engine) noexcept
+bool catch_up_pending_host_parameters_after_pause(safevst3::SharedAudioRegion* region,
+                                                  safevst3::Vst3Engine& engine) noexcept
 {
-    std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
-    const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
-    for (std::size_t i = 0; i < count; ++i)
-        publish_parameter_value(region, updates[i].id, updates[i].normalized);
+    if (!region)
+        return false;
+
+    const std::uint32_t count = std::min(region->parameter_count, safevst3::kMaxParameters);
+    for (std::size_t pass = 0; pass < kMaxPausedHostCatchupPasses; ++pass) {
+        std::array<long, safevst3::kMaxParameters> ack_generations{};
+        std::array<bool, safevst3::kMaxParameters> touched{};
+        bool queued_any = false;
+        bool queue_ok = true;
+
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto& descriptor = region->parameters[i];
+            const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
+            const long applied = InterlockedCompareExchange(&descriptor.applied_generation, 0, 0);
+            if (generation == applied)
+                continue;
+
+            const auto raw_bits = InterlockedCompareExchange64(
+                reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
+            const double value = safevst3::normalize_parameter_value(
+                bits_to_double(static_cast<std::int64_t>(raw_bits)), descriptor.step_count);
+
+            if (!engine.set_controller_parameter(descriptor.id, value) ||
+                !engine.queue_processor_parameter(descriptor.id, value)) {
+                queue_ok = false;
+                continue;
+            }
+
+            publish_parameter_value(region, descriptor.id, value);
+            ack_generations[i] = generation;
+            touched[i] = true;
+            queued_any = true;
+        }
+
+        if (queued_any) {
+            const bool flushed = engine.flush_parameter_changes();
+            publish_engine_updates_direct(region, engine);
+            sync_engine_mirror_to_controller(region, engine);
+            if (!flushed)
+                queue_ok = false;
+        }
+
+        if (!queue_ok) {
+            InterlockedExchange(&region->last_error, 12);
+            return false;
+        }
+
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (!touched[i])
+                continue;
+            InterlockedExchange(&region->parameters[i].applied_generation, ack_generations[i]);
+            InterlockedIncrement(&region->state_dirty_generation);
+        }
+
+        MemoryBarrier();
+        bool pending = false;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto& descriptor = region->parameters[i];
+            if (InterlockedCompareExchange(&descriptor.pending_generation, 0, 0) !=
+                InterlockedCompareExchange(&descriptor.applied_generation, 0, 0)) {
+                pending = true;
+                break;
+            }
+        }
+        if (!pending)
+            return true;
+    }
+
+    InterlockedExchange(&region->last_error, 12);
+    return false;
 }
 
 class ComponentHandler final : public Steinberg::Vst::IComponentHandler {
@@ -263,9 +320,6 @@ public:
     {
         const safevst3::EngineParameterUpdate update{static_cast<std::uint32_t>(id), value};
         if (!control_to_dsp_.push(update)) {
-            // The controller has already accepted this native edit. Preserve it
-            // as the source of truth and schedule a paused full controller->DSP
-            // resync instead of dropping the user's newest value.
             native_resync_required_.store(true, std::memory_order_release);
             publish_parameter_value(region_, update.id, value);
             if (region_) {
@@ -359,14 +413,23 @@ public:
     bool start(std::string& error)
     {
         paused_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        if (!paused_event_) {
-            error = "Failed to create DSP pause acknowledgement event";
+        resumed_event_ = CreateEventW(nullptr, TRUE, TRUE, nullptr);
+        if (!paused_event_ || !resumed_event_) {
+            if (resumed_event_)
+                CloseHandle(resumed_event_);
+            if (paused_event_)
+                CloseHandle(paused_event_);
+            resumed_event_ = nullptr;
+            paused_event_ = nullptr;
+            error = "Failed to create DSP pause/resume acknowledgement events";
             return false;
         }
         try {
             thread_ = std::jthread([this](std::stop_token stop) { run(stop); });
         } catch (...) {
+            CloseHandle(resumed_event_);
             CloseHandle(paused_event_);
+            resumed_event_ = nullptr;
             paused_event_ = nullptr;
             error = "Failed to start dedicated DSP worker";
             return false;
@@ -383,6 +446,10 @@ public:
                 SetEvent(dsp_event_);
             thread_ = std::jthread{};
         }
+        if (resumed_event_) {
+            CloseHandle(resumed_event_);
+            resumed_event_ = nullptr;
+        }
         if (paused_event_) {
             CloseHandle(paused_event_);
             paused_event_ = nullptr;
@@ -391,29 +458,34 @@ public:
 
     bool pause(DWORD timeout_ms) noexcept
     {
-        if (!thread_.joinable() || !paused_event_)
+        if (!thread_.joinable() || !paused_event_ || !resumed_event_)
             return false;
+
+        // Never issue a second pause while the worker is still unwinding the
+        // previous one. This closes the lost false->true transition race.
+        if (WaitForSingleObject(resumed_event_, timeout_ms) != WAIT_OBJECT_0)
+            return false;
+
+        ResetEvent(paused_event_);
+        ResetEvent(resumed_event_);
         pause_requested_.store(true, std::memory_order_release);
         SetEvent(dsp_event_);
         if (WaitForSingleObject(paused_event_, timeout_ms) == WAIT_OBJECT_0)
             return true;
 
-        // A DSP that cannot acknowledge pause is likely stuck in vendor code.
-        // Never leave a latent pause request behind if the control operation
-        // gives up; if DSP returns before watchdog replacement, it may continue.
         pause_requested_.store(false, std::memory_order_release);
-        ResetEvent(paused_event_);
         SetEvent(dsp_event_);
         return false;
     }
 
-    void resume() noexcept
+    bool resume(DWORD timeout_ms) noexcept
     {
+        if (!thread_.joinable() || !resumed_event_)
+            return false;
         pause_requested_.store(false, std::memory_order_release);
-        if (paused_event_)
-            ResetEvent(paused_event_);
         if (dsp_event_)
             SetEvent(dsp_event_);
+        return WaitForSingleObject(resumed_event_, timeout_ms) == WAIT_OBJECT_0;
     }
 
 private:
@@ -425,19 +497,19 @@ private:
             AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
 
         publish_dsp_heartbeat(region_);
+        if (resumed_event_)
+            SetEvent(resumed_event_);
+
         while (!stop.stop_requested() &&
                InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
             if (pause_requested_.load(std::memory_order_acquire)) {
-                // Drain and flush every control->DSP edit before acknowledging
-                // pause. This preserves S1's invariant that getState() cannot
-                // capture one knob edit behind the visible controller.
                 bool feedback_pending = false;
-                if (drain_processor_commands(region_, engine_, control_to_dsp_)) {
-                    if (!engine_.flush_parameter_changes())
-                        InterlockedExchange(&region_->last_error, 2);
-                    feedback_pending |= enqueue_processor_feedback(
-                        region_, engine_, dsp_to_control_, feedback_resync_required_);
-                }
+                (void)drain_processor_commands(
+                    region_, engine_, control_to_dsp_, kParameterTransferCapacity);
+                if (!engine_.flush_parameter_changes())
+                    InterlockedExchange(&region_->last_error, 2);
+                feedback_pending |= enqueue_processor_feedback(
+                    region_, engine_, dsp_to_control_, feedback_resync_required_);
                 if (feedback_pending && control_event_)
                     SetEvent(control_event_);
 
@@ -445,18 +517,18 @@ private:
                 SetEvent(paused_event_);
                 while (!stop.stop_requested() &&
                        pause_requested_.load(std::memory_order_acquire)) {
-                    // State/lifecycle calls are allowed a short grace window.
-                    // If vendor control code hangs beyond it, stop refreshing
-                    // DSP heartbeat so the outer watchdog can replace helper.
                     if (GetTickCount64() - pause_started <= kPausedHeartbeatGraceMs)
                         publish_dsp_heartbeat(region_);
                     WaitForSingleObject(dsp_event_, 100);
                 }
-                if (paused_event_)
-                    ResetEvent(paused_event_);
+                ResetEvent(paused_event_);
+                if (resumed_event_)
+                    SetEvent(resumed_event_);
                 continue;
             }
 
+            if (resumed_event_)
+                SetEvent(resumed_event_);
             publish_dsp_heartbeat(region_);
             const DWORD wait = WaitForSingleObject(dsp_event_, 250);
             if (stop.stop_requested())
@@ -468,10 +540,8 @@ private:
             if (wait == WAIT_TIMEOUT)
                 continue;
 
-            const bool parameter_edits = drain_processor_commands(region_, engine_, control_to_dsp_);
             bool processed_any = false;
             bool feedback_pending = false;
-
             for (std::uint32_t i = 0; i < safevst3::kSlotCount; ++i) {
                 auto& slot = region_->slots[i];
                 if (InterlockedCompareExchange(&slot.state,
@@ -492,18 +562,27 @@ private:
                 SetEvent(response_event_);
             }
 
-            if (parameter_edits && !processed_any) {
+            // Audio is serviced before control traffic. Only a bounded number of
+            // commands can run in one wake, preventing a knob/automation burst
+            // from monopolizing the DSP worker ahead of Ready audio slots.
+            const std::size_t drained = drain_processor_commands(
+                region_, engine_, control_to_dsp_, kMaxProcessorCommandsPerWake);
+            if (drained > 0 && !processed_any) {
                 if (!engine_.flush_parameter_changes())
                     InterlockedExchange(&region_->last_error, 2);
                 feedback_pending |= enqueue_processor_feedback(
                     region_, engine_, dsp_to_control_, feedback_resync_required_);
             }
+            if (drained == kMaxProcessorCommandsPerWake && dsp_event_)
+                SetEvent(dsp_event_);
 
             if (feedback_pending && control_event_)
                 SetEvent(control_event_);
             publish_dsp_heartbeat(region_);
         }
 
+        if (resumed_event_)
+            SetEvent(resumed_event_);
         if (mmcss)
             AvRevertMmThreadCharacteristics(mmcss);
     }
@@ -517,6 +596,7 @@ private:
     HANDLE control_event_ = nullptr;
     HANDLE response_event_ = nullptr;
     HANDLE paused_event_ = nullptr;
+    HANDLE resumed_event_ = nullptr;
     std::atomic<bool> pause_requested_{false};
     std::jthread thread_;
 };
@@ -752,17 +832,14 @@ int wmain(int argc, wchar_t** argv)
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
 
-        // A native edit rejected by the full control->DSP ring makes the
-        // controller the authoritative latest-value source. Until that paused
-        // resync succeeds, applying queued DSP feedback could overwrite the
-        // user's newer controller value, so leave feedback untouched.
         if (!native_resync_required.load(std::memory_order_acquire)) {
             drain_controller_feedback(region, engine, dsp_to_control);
             if (feedback_resync_required.load(std::memory_order_acquire)) {
                 if (dsp.pause(2000)) {
                     reconcile_controller_feedback_after_pause(
                         region, engine, dsp_to_control, feedback_resync_required);
-                    dsp.resume();
+                    if (!dsp.resume(2000))
+                        InterlockedExchange(&region->last_error, 14);
                 } else {
                     InterlockedExchange(&region->last_error, 11);
                 }
@@ -775,10 +852,16 @@ int wmain(int argc, wchar_t** argv)
         bool native_resync_failed = false;
         if (native_resync_required.load(std::memory_order_acquire)) {
             if (dsp.pause(2000)) {
-                if (!reconcile_native_edits_after_pause(
-                        region, engine, dsp_to_control, native_resync_required))
+                if (reconcile_native_edits_after_pause(
+                        region, engine, dsp_to_control, native_resync_required)) {
+                    feedback_resync_required.store(false, std::memory_order_release);
+                } else {
                     native_resync_failed = true;
-                dsp.resume();
+                }
+                if (!dsp.resume(2000)) {
+                    native_resync_failed = true;
+                    InterlockedExchange(&region->last_error, 14);
+                }
             } else {
                 native_resync_failed = true;
                 InterlockedExchange(&region->last_error, 13);
@@ -789,9 +872,6 @@ int wmain(int argc, wchar_t** argv)
             handle_editor_command(region, engine, editor);
 
         bool pending_parameter_delivery_failed = false;
-        // Always retry pending host edits, including on an idle 250 ms control
-        // tick. A temporary full control->DSP ring therefore cannot strand an
-        // unacknowledged generation until some unrelated future UI event.
         for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
             auto& descriptor = region->parameters[i];
             const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
@@ -811,8 +891,6 @@ int wmain(int argc, wchar_t** argv)
                 InterlockedExchange(&descriptor.applied_generation, generation);
                 SetEvent(endpoint.dsp_event());
             } else {
-                // Do not acknowledge an edit the processor never received.
-                // The unchanged generation makes the next control tick retry.
                 pending_parameter_delivery_failed = true;
                 InterlockedExchange(&region->last_error, 6);
             }
@@ -827,7 +905,8 @@ int wmain(int argc, wchar_t** argv)
                     region, engine, dsp_to_control, feedback_resync_required);
                 engine.refresh_parameter_values();
                 publish_engine_updates_direct(region, engine);
-                dsp.resume();
+                if (!dsp.resume(2000))
+                    InterlockedExchange(&region->last_error, 14);
             } else {
                 InterlockedExchange(&region->last_error, 9);
             }
@@ -838,22 +917,42 @@ int wmain(int argc, wchar_t** argv)
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
         const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
         if (state_requested != state_applied) {
-            if (pending_parameter_delivery_failed || native_resync_failed ||
-                native_resync_required.load(std::memory_order_acquire)) {
-                // Never serialize a component/controller pair while any visible
-                // host/native edit is still waiting for processor delivery. OBS
-                // treats this failure as transient and preserves S1 LKG state.
+            if (native_resync_failed || native_resync_required.load(std::memory_order_acquire)) {
                 complete_state_failure(region, endpoint.state_event());
                 InterlockedExchange(&region->last_error, 12);
             } else if (dsp.pause(2000)) {
-                // A block already in flight may have produced final processor
-                // feedback just before pause acknowledgement. Apply it to the
-                // controller before getState(), so component/controller blobs
-                // represent the same exact processing frontier.
-                reconcile_controller_feedback_after_pause(
-                    region, engine, dsp_to_control, feedback_resync_required);
-                handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
-                dsp.resume();
+                bool frontier_ok = true;
+
+                // A late native overflow must win over queued DSP feedback.
+                if (native_resync_required.load(std::memory_order_acquire)) {
+                    frontier_ok = reconcile_native_edits_after_pause(
+                        region, engine, dsp_to_control, native_resync_required);
+                    if (frontier_ok)
+                        feedback_resync_required.store(false, std::memory_order_release);
+                } else {
+                    reconcile_controller_feedback_after_pause(
+                        region, engine, dsp_to_control, feedback_resync_required);
+                }
+
+                // Re-read host pending/applied generations while the processor
+                // is stopped. This closes the scan->state race: any edit already
+                // visible at the capture frontier is applied directly and
+                // flushed before getState(). Rapidly changing frontiers fail
+                // transiently instead of producing a stale exact snapshot.
+                if (frontier_ok)
+                    frontier_ok = catch_up_pending_host_parameters_after_pause(region, engine);
+                if (native_resync_required.load(std::memory_order_acquire))
+                    frontier_ok = false;
+
+                if (frontier_ok) {
+                    handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
+                } else {
+                    complete_state_failure(region, endpoint.state_event());
+                    InterlockedExchange(&region->last_error, 12);
+                }
+
+                if (!dsp.resume(2000))
+                    InterlockedExchange(&region->last_error, 14);
             } else {
                 complete_state_failure(region, endpoint.state_event());
                 InterlockedExchange(&region->last_error, 10);
