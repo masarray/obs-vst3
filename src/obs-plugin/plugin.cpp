@@ -19,6 +19,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 OBS_DECLARE_MODULE()
@@ -40,9 +41,20 @@ struct ScanEntry {
     std::string class_id;
 };
 
+struct BridgeRtState {
+    std::atomic<WinObsBridge*> active{nullptr};
+    std::atomic<std::uint32_t> readers{0};
+};
+
+static_assert(std::atomic<WinObsBridge*>::is_always_lock_free,
+              "OBS realtime bridge publication requires lock-free pointer atomics");
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
+              "OBS realtime bridge reclamation requires lock-free reader counters");
+
 struct Filter {
     obs_source_t* context = nullptr;
-    std::shared_ptr<WinObsBridge> bridge;
+    std::unique_ptr<WinObsBridge> bridge_owner;
+    std::shared_ptr<BridgeRtState> rt_state = std::make_shared<BridgeRtState>();
     std::mutex config_mutex;
     std::mutex restart_mutex;
     std::jthread recovery_thread;
@@ -54,33 +66,44 @@ struct Filter {
     std::atomic<bool> enabled{true};
 };
 
-// A bridge destructor can wait for the helper process, so an OBS realtime audio
-// callback must never become the final owner of a bridge that has been replaced.
-// Retired bridges stay quarantined here until no callback/recovery thread holds
-// another reference; destruction then happens only from a non-realtime thread.
+struct RetiredBridge {
+    std::unique_ptr<WinObsBridge> bridge;
+    std::shared_ptr<BridgeRtState> state;
+};
+
+// Bridge teardown can wait for or terminate the helper process. Ownership is
+// therefore retained outside the OBS realtime callback. The audio thread sees
+// only a lock-free raw pointer plus a lock-free reader counter; the module-level
+// reaper destroys an old bridge only after all readers that could have observed
+// it have exited.
 std::mutex retired_bridges_mutex;
-std::vector<std::shared_ptr<WinObsBridge>> retired_bridges;
+std::vector<RetiredBridge> retired_bridges;
 std::jthread retired_bridge_reaper;
 
-void retire_bridge(std::shared_ptr<WinObsBridge> bridge)
+void retire_bridge(std::unique_ptr<WinObsBridge> bridge, std::shared_ptr<BridgeRtState> state)
 {
-    if (!bridge)
+    if (!bridge || !state)
         return;
     std::lock_guard lock(retired_bridges_mutex);
-    retired_bridges.push_back(std::move(bridge));
+    retired_bridges.push_back({std::move(bridge), std::move(state)});
+}
+
+void retain_retired_state(std::shared_ptr<BridgeRtState> state)
+{
+    if (!state)
+        return;
+    std::lock_guard lock(retired_bridges_mutex);
+    retired_bridges.push_back({{}, std::move(state)});
 }
 
 void reap_retired_bridges()
 {
-    std::vector<std::shared_ptr<WinObsBridge>> ready_to_destroy;
+    std::vector<RetiredBridge> ready_to_destroy;
     {
         std::lock_guard lock(retired_bridges_mutex);
         auto it = retired_bridges.begin();
         while (it != retired_bridges.end()) {
-            // Once removed from filter->bridge, no new realtime references can
-            // appear. use_count()==1 therefore means this quarantine is the sole
-            // remaining owner and it is safe to destroy off the audio thread.
-            if (it->use_count() == 1) {
+            if (it->state->readers.load(std::memory_order_acquire) == 0) {
                 ready_to_destroy.push_back(std::move(*it));
                 it = retired_bridges.erase(it);
             } else {
@@ -88,6 +111,7 @@ void reap_retired_bridges()
             }
         }
     }
+    // Destruct helper bridges outside the quarantine mutex and off the audio thread.
     ready_to_destroy.clear();
 }
 
@@ -96,10 +120,6 @@ void start_retired_bridge_reaper()
     if (retired_bridge_reaper.joinable())
         return;
 
-    // This reaper lives for the entire OBS module lifetime, not for any one
-    // filter. A callback delayed by the scheduler can therefore release its
-    // bridge at any later point and the helper will still be reaped off the
-    // realtime thread, even after the final filter instance was destroyed.
     retired_bridge_reaper = std::jthread([](std::stop_token stop) {
         while (!stop.stop_requested()) {
             reap_retired_bridges();
@@ -114,16 +134,40 @@ void stop_retired_bridge_reaper()
 {
     retired_bridge_reaper.request_stop();
     retired_bridge_reaper = std::jthread{};
-    // OBS unload occurs after source instances are gone, so one final
-    // non-realtime pass releases anything that became ready during shutdown.
     reap_retired_bridges();
 }
 
-void publish_bridge(Filter* filter, std::shared_ptr<WinObsBridge> next)
+// Caller holds restart_mutex. Ownership never enters the audio thread.
+void publish_bridge_locked(Filter* filter, std::unique_ptr<WinObsBridge> next)
 {
-    auto previous = std::atomic_exchange_explicit(&filter->bridge, std::move(next), std::memory_order_acq_rel);
-    retire_bridge(std::move(previous));
+    auto previous = std::move(filter->bridge_owner);
+    filter->bridge_owner = std::move(next);
+    filter->rt_state->active.store(filter->bridge_owner.get(), std::memory_order_release);
+    retire_bridge(std::move(previous), filter->rt_state);
 }
+
+class AudioBridgeRead {
+public:
+    explicit AudioBridgeRead(BridgeRtState* state) noexcept : state_(state)
+    {
+        if (!state_)
+            return;
+        state_->readers.fetch_add(1, std::memory_order_acq_rel);
+        bridge_ = state_->active.load(std::memory_order_acquire);
+    }
+
+    ~AudioBridgeRead()
+    {
+        if (state_)
+            state_->readers.fetch_sub(1, std::memory_order_release);
+    }
+
+    WinObsBridge* get() const noexcept { return bridge_; }
+
+private:
+    BridgeRtState* state_ = nullptr;
+    WinObsBridge* bridge_ = nullptr;
+};
 
 std::filesystem::path module_binary_dir()
 {
@@ -283,11 +327,13 @@ void split_selection(const std::string& selection, std::string& path, std::strin
     class_id = selection.substr(tab + 1);
 }
 
-void restart_bridge(Filter* filter)
+void restart_bridge(Filter* filter, std::stop_token cancel = {})
 {
-    if (!filter)
+    if (!filter || cancel.stop_requested())
         return;
     std::lock_guard restart_lock(filter->restart_mutex);
+    if (cancel.stop_requested())
+        return;
 
     std::string path;
     std::string class_id;
@@ -298,7 +344,7 @@ void restart_bridge(Filter* filter)
     }
 
     if (!filter->enabled.load(std::memory_order_relaxed) || path.empty()) {
-        publish_bridge(filter, {});
+        publish_bridge_locked(filter, {});
         return;
     }
 
@@ -306,27 +352,40 @@ void restart_bridge(Filter* filter)
     const auto channels = filter->channels;
     if (channels == 0 || channels > safevst3::kMaxChannels) {
         blog(LOG_WARNING, "[obs-safe-vst3] public trial supports mono/stereo only; current OBS layout has %u channels", channels);
-        publish_bridge(filter, {});
+        publish_bridge_locked(filter, {});
         return;
     }
 
-    auto bridge = std::make_shared<WinObsBridge>();
+    auto bridge = std::make_unique<WinObsBridge>();
     std::string error;
     const auto helper = helper_path();
     if (helper.empty() || !std::filesystem::exists(helper)) {
         blog(LOG_ERROR, "[obs-safe-vst3] helper executable not found next to plugin binary");
-        publish_bridge(filter, {});
+        publish_bridge_locked(filter, {});
         return;
     }
 
-    if (!bridge->start(helper, std::filesystem::u8path(path), class_id, sample_rate, channels, error)) {
+    if (!bridge->start(helper, std::filesystem::u8path(path), class_id, sample_rate, channels, error, cancel)) {
+        if (cancel.stop_requested())
+            return;
         blog(LOG_ERROR, "[obs-safe-vst3] failed to start isolated VST3 host: %s", error.c_str());
-        publish_bridge(filter, {});
+        publish_bridge_locked(filter, {});
+        return;
+    }
+
+    if (cancel.stop_requested() || !filter->enabled.load(std::memory_order_relaxed)) {
+        bridge->abort();
         return;
     }
 
     blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s", path.c_str());
-    publish_bridge(filter, std::move(bridge));
+    publish_bridge_locked(filter, std::move(bridge));
+}
+
+bool bridge_running(Filter* filter)
+{
+    std::lock_guard restart_lock(filter->restart_mutex);
+    return filter->bridge_owner && filter->bridge_owner->running();
 }
 
 const char* filter_name(void*) { return obs_module_text("SafeVST3Filter"); }
@@ -384,8 +443,6 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
             if (stop.stop_requested())
                 break;
 
-            reap_retired_bridges();
-
             bool has_path = false;
             {
                 std::lock_guard lock(filter->config_mutex);
@@ -394,13 +451,11 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
             if (!filter->enabled.load(std::memory_order_relaxed) || !has_path)
                 continue;
 
-            auto bridge = std::atomic_load_explicit(&filter->bridge, std::memory_order_acquire);
-            if (!bridge || !bridge->running()) {
+            if (!bridge_running(filter)) {
                 blog(LOG_WARNING, "[obs-safe-vst3] helper stopped; attempting isolated recovery");
-                restart_bridge(filter);
+                restart_bridge(filter, stop);
             }
         }
-        reap_retired_bridges();
     });
     return filter;
 }
@@ -414,10 +469,14 @@ void filter_destroy(void* data)
     filter->enabled.store(false, std::memory_order_release);
     filter->recovery_thread.request_stop();
     filter->recovery_thread = std::jthread{};
-    publish_bridge(filter, {});
 
-    // The module-level reaper outlives every filter. Reap anything already ready
-    // here, while delayed realtime references remain quarantined for a later pass.
+    {
+        std::lock_guard restart_lock(filter->restart_mutex);
+        publish_bridge_locked(filter, {});
+    }
+    // Retain the lock-free read state until every in-flight audio guard exits,
+    // even if the active bridge was already null when destruction began.
+    retain_retired_state(filter->rt_state);
     reap_retired_bridges();
     delete filter;
 }
@@ -442,7 +501,8 @@ obs_audio_data* filter_audio(void* data, obs_audio_data* audio)
     if (!filter || !audio || !filter->enabled.load(std::memory_order_relaxed))
         return audio;
 
-    auto bridge = std::atomic_load_explicit(&filter->bridge, std::memory_order_acquire);
+    AudioBridgeRead read(filter->rt_state.get());
+    WinObsBridge* bridge = read.get();
     if (!bridge || !bridge->running())
         return audio;
     if (audio->frames == 0 || audio->frames > safevst3::kMaxFrames)
