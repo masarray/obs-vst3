@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "common/parameter_utils.hpp"
+#include "common/spsc_ring.hpp"
 #include "host/native_editor.hpp"
 #include "host/vst3_engine.hpp"
 #include "platform/windows/win_ipc.hpp"
@@ -22,6 +23,10 @@
 #pragma comment(lib, "Avrt.lib")
 
 namespace {
+
+constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
+using ParameterQueue = safevst3::SpscRing<safevst3::EngineParameterUpdate, kParameterTransferCapacity>;
+
 std::string narrow(const std::wstring& value)
 {
     if (value.empty()) return {};
@@ -90,21 +95,52 @@ void publish_parameter_value(safevst3::SharedAudioRegion* region,
     }
 }
 
-void publish_parameter_feedback(safevst3::SharedAudioRegion* region, safevst3::Vst3Engine& engine) noexcept
+void enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
+                                safevst3::Vst3Engine& engine,
+                                ParameterQueue& feedback) noexcept
 {
-    if (!region)
-        return;
-
     std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
     const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
-    for (std::size_t i = 0; i < count; ++i)
-        publish_parameter_value(region, updates[i].id, updates[i].normalized);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (!feedback.push(updates[i])) {
+            if (region)
+                InterlockedExchange(&region->last_error, 4);
+            break;
+        }
+    }
+}
+
+bool drain_processor_commands(safevst3::SharedAudioRegion* region,
+                              safevst3::Vst3Engine& engine,
+                              ParameterQueue& commands) noexcept
+{
+    bool applied_any = false;
+    safevst3::EngineParameterUpdate update{};
+    while (commands.pop(update)) {
+        if (engine.queue_processor_parameter(update.id, update.normalized)) {
+            applied_any = true;
+        } else if (region) {
+            InterlockedExchange(&region->last_error, 5);
+        }
+    }
+    return applied_any;
+}
+
+void drain_controller_feedback(safevst3::SharedAudioRegion* region,
+                               safevst3::Vst3Engine& engine,
+                               ParameterQueue& feedback) noexcept
+{
+    safevst3::EngineParameterUpdate update{};
+    while (feedback.pop(update)) {
+        (void)engine.set_controller_parameter(update.id, update.normalized);
+        publish_parameter_value(region, update.id, update.normalized);
+    }
 }
 
 class ComponentHandler final : public Steinberg::Vst::IComponentHandler {
 public:
-    ComponentHandler(safevst3::Vst3Engine& engine, safevst3::SharedAudioRegion* region)
-        : engine_(engine), region_(region)
+    ComponentHandler(safevst3::SharedAudioRegion* region, ParameterQueue& control_to_dsp)
+        : region_(region), control_to_dsp_(control_to_dsp)
     {
     }
 
@@ -116,9 +152,13 @@ public:
     Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id,
                                               Steinberg::Vst::ParamValue value) override
     {
-        if (!engine_.queue_parameter_from_controller(static_cast<std::uint32_t>(id), value))
+        const safevst3::EngineParameterUpdate update{static_cast<std::uint32_t>(id), value};
+        if (!control_to_dsp_.push(update)) {
+            if (region_)
+                InterlockedExchange(&region_->last_error, 6);
             return Steinberg::kResultFalse;
-        publish_parameter_value(region_, static_cast<std::uint32_t>(id), value);
+        }
+        publish_parameter_value(region_, update.id, value);
         if (region_)
             InterlockedIncrement(&region_->state_dirty_generation);
         edit_pending_.store(true, std::memory_order_release);
@@ -166,8 +206,8 @@ public:
     Steinberg::uint32 PLUGIN_API release() override { return 1000; }
 
 private:
-    safevst3::Vst3Engine& engine_;
     safevst3::SharedAudioRegion* region_ = nullptr;
+    ParameterQueue& control_to_dsp_;
     std::atomic<bool> edit_pending_{false};
     std::atomic<Steinberg::int32> restart_flags_{0};
 };
@@ -220,7 +260,8 @@ void handle_editor_command(safevst3::SharedAudioRegion* region,
 void handle_state_command(safevst3::SharedAudioRegion* region,
                           safevst3::StateTransferRegion* transfer,
                           safevst3::Vst3Engine& engine,
-                          HANDLE state_event)
+                          HANDLE state_event,
+                          ParameterQueue& dsp_to_control)
 {
     const long requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
     const long applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
@@ -270,7 +311,7 @@ void handle_state_command(safevst3::SharedAudioRegion* region,
                 transfer->payload + static_cast<std::ptrdiff_t>(component_bytes + controller_bytes));
             if (engine.restore_state(snapshot, error)) {
                 region->latency_samples = engine.latency_samples();
-                publish_parameter_feedback(region, engine);
+                enqueue_processor_feedback(region, engine, dsp_to_control);
                 status = safevst3::StateStatus::Ok;
             } else {
                 status = safevst3::StateStatus::VstError;
@@ -334,7 +375,9 @@ int wmain(int argc, wchar_t** argv)
     copy_text(region->plugin_name, kPluginNameBytes, engine.plugin_name());
     region->latency_samples = engine.latency_samples();
 
-    ComponentHandler component_handler(engine, region);
+    ParameterQueue control_to_dsp;
+    ParameterQueue dsp_to_control;
+    ComponentHandler component_handler(region, control_to_dsp);
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
 
@@ -388,6 +431,7 @@ int wmain(int argc, wchar_t** argv)
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
         if (wait == WAIT_TIMEOUT) {
+            drain_controller_feedback(region, engine, dsp_to_control);
             publish_heartbeat(region);
             continue;
         }
@@ -397,7 +441,9 @@ int wmain(int argc, wchar_t** argv)
 
         handle_editor_command(region, engine, editor);
 
-        bool parameter_edits = false;
+        // Control thread produces normalized parameter messages only. It no
+        // longer mutates processor-owned queues directly; the same queue will
+        // be consumed by the dedicated DSP worker in the next tracer step.
         for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
             auto& descriptor = region->parameters[i];
             const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
@@ -408,16 +454,20 @@ int wmain(int argc, wchar_t** argv)
             const auto raw_bits = InterlockedCompareExchange64(
                 reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
             const double value = bits_to_double(static_cast<std::int64_t>(raw_bits));
-            if (engine.queue_parameter(descriptor.id, value)) {
-                publish_parameter_value(region, descriptor.id,
-                    normalize_parameter_value(value, descriptor.step_count));
+            const EngineParameterUpdate update{descriptor.id,
+                normalize_parameter_value(value, descriptor.step_count)};
+            if (engine.set_controller_parameter(update.id, update.normalized) &&
+                control_to_dsp.push(update)) {
+                publish_parameter_value(region, update.id, update.normalized);
                 InterlockedIncrement(&region->state_dirty_generation);
-                parameter_edits = true;
+            } else {
+                InterlockedExchange(&region->last_error, 6);
             }
             InterlockedExchange(&descriptor.applied_generation, generation);
         }
 
-        const bool editor_edits = component_handler.take_edit_pending();
+        (void)component_handler.take_edit_pending();
+        const bool processor_parameter_edits = drain_processor_commands(region, engine, control_to_dsp);
 
         bool processed_any = false;
         for (std::uint32_t i = 0; i < kSlotCount; ++i) {
@@ -429,30 +479,37 @@ int wmain(int argc, wchar_t** argv)
 
             processed_any = true;
             const bool ok = engine.process(slot);
-            publish_parameter_feedback(region, engine);
+            enqueue_processor_feedback(region, engine, dsp_to_control);
             InterlockedExchange(&slot.result, static_cast<long>(ok ? ProcessResult::Ok : ProcessResult::VstProcessError));
             MemoryBarrier();
             InterlockedExchange(&slot.state, static_cast<long>(SlotState::Done));
             SetEvent(endpoint.response_event());
         }
 
-        if ((parameter_edits || editor_edits) && !processed_any) {
+        if (processor_parameter_edits && !processed_any) {
             if (!engine.flush_parameter_changes())
                 region->last_error = 2;
-            publish_parameter_feedback(region, engine);
+            enqueue_processor_feedback(region, engine, dsp_to_control);
         }
+
+        // Processor feedback crosses the opposite bounded queue before vendor
+        // controller/UI state is touched. Today this drains on the same thread;
+        // after the DSP move this remains the control-thread consumer.
+        drain_controller_feedback(region, engine, dsp_to_control);
 
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         if ((restart_flags & Steinberg::Vst::kParamValuesChanged) != 0) {
             engine.refresh_parameter_values();
-            publish_parameter_feedback(region, engine);
+            enqueue_processor_feedback(region, engine, dsp_to_control);
+            drain_controller_feedback(region, engine, dsp_to_control);
         }
         if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
             region->last_error = 3;
 
         // State commands run after this control cycle's parameter/process work
         // so getState() cannot snapshot one edit behind the visible controller.
-        handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
+        handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event(), dsp_to_control);
+        drain_controller_feedback(region, engine, dsp_to_control);
 
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,
