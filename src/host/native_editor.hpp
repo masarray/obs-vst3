@@ -19,14 +19,15 @@ public:
     NativeEditorWindow(const NativeEditorWindow&) = delete;
     NativeEditorWindow& operator=(const NativeEditorWindow&) = delete;
 
-    // Probe the same requirements used by open() without attaching a window.
-    // This prevents OBS from hiding fallback controls merely because an edit
-    // controller exists when the plug-in cannot actually supply an HWND view.
+    // Fully prove createView + HWND + IPlugFrame + attached()/removed() using
+    // a hidden helper-owned window. OBS suppresses fallback controls only when
+    // the same lifecycle used by the real editor has actually succeeded.
     static bool supports(Steinberg::Vst::IEditController* controller) noexcept;
 
     bool open(Steinberg::Vst::IEditController* controller,
               const std::string& title,
-              std::string& error);
+              std::string& error,
+              bool show_window = true);
     void hide() noexcept;
     void close() noexcept;
 
