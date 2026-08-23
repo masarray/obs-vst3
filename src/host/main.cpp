@@ -26,6 +26,7 @@
 namespace {
 
 constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
+constexpr ULONGLONG kPausedHeartbeatGraceMs = 2000;
 using ParameterQueue = safevst3::SpscRing<safevst3::EngineParameterUpdate, kParameterTransferCapacity>;
 
 std::string narrow(const std::wstring& value)
@@ -296,7 +297,16 @@ public:
             return false;
         pause_requested_.store(true, std::memory_order_release);
         SetEvent(dsp_event_);
-        return WaitForSingleObject(paused_event_, timeout_ms) == WAIT_OBJECT_0;
+        if (WaitForSingleObject(paused_event_, timeout_ms) == WAIT_OBJECT_0)
+            return true;
+
+        // A DSP that cannot acknowledge pause is likely stuck in vendor code.
+        // Never leave a latent pause request behind if the control operation
+        // gives up; if DSP returns before watchdog replacement, it may continue.
+        pause_requested_.store(false, std::memory_order_release);
+        ResetEvent(paused_event_);
+        SetEvent(dsp_event_);
+        return false;
     }
 
     void resume() noexcept
@@ -320,10 +330,27 @@ private:
         while (!stop.stop_requested() &&
                InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
             if (pause_requested_.load(std::memory_order_acquire)) {
+                // Drain and flush every control->DSP edit before acknowledging
+                // pause. This preserves S1's invariant that getState() cannot
+                // capture one knob edit behind the visible controller.
+                bool feedback_queued = false;
+                if (drain_processor_commands(region_, engine_, control_to_dsp_)) {
+                    if (!engine_.flush_parameter_changes())
+                        InterlockedExchange(&region_->last_error, 2);
+                    feedback_queued |= enqueue_processor_feedback(region_, engine_, dsp_to_control_);
+                }
+                if (feedback_queued && control_event_)
+                    SetEvent(control_event_);
+
+                const ULONGLONG pause_started = GetTickCount64();
                 SetEvent(paused_event_);
                 while (!stop.stop_requested() &&
                        pause_requested_.load(std::memory_order_acquire)) {
-                    publish_dsp_heartbeat(region_);
+                    // State/lifecycle calls are allowed a short grace window.
+                    // If vendor control code hangs beyond it, stop refreshing
+                    // DSP heartbeat so the outer watchdog can replace helper.
+                    if (GetTickCount64() - pause_started <= kPausedHeartbeatGraceMs)
+                        publish_dsp_heartbeat(region_);
                     WaitForSingleObject(dsp_event_, 100);
                 }
                 if (paused_event_)
