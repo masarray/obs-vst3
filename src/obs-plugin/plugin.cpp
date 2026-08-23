@@ -438,7 +438,12 @@ bool capture_bridge_state(Filter* filter,
     }
 
     if (!safevst3::obsstate::save(filter->context, path, class_id, snapshot, error)) {
-        blog(LOG_WARNING, "[obs-safe-vst3] could not persist exact VST3 state: %s", error.c_str());
+        // A previously saved exact snapshot is now known stale. Never leave it
+        // behind just because the replacement write failed; recovery should
+        // prefer parameter fallback over restoring the wrong historic state.
+        safevst3::obsstate::discard(filter->context, path, class_id);
+        filter->observed_state_generation.store(dirty, std::memory_order_release);
+        blog(LOG_WARNING, "[obs-safe-vst3] could not persist exact VST3 state; stale snapshot discarded: %s", error.c_str());
         return false;
     }
 
@@ -499,8 +504,6 @@ void restart_bridge(Filter* filter)
         return;
     }
 
-    auto bridge = std::make_unique<WinObsBridge>();
-    std::string error;
     const auto helper = helper_path();
     if (helper.empty() || !std::filesystem::exists(helper)) {
         blog(LOG_ERROR, "[obs-safe-vst3] helper executable not found next to plugin binary");
@@ -508,7 +511,23 @@ void restart_bridge(Filter* filter)
         return;
     }
 
-    if (!bridge->start(helper, std::filesystem::u8path(path), class_id, sample_rate, channels, error, cancel)) {
+    std::string error;
+    const auto start_candidate = [&]() -> std::unique_ptr<WinObsBridge> {
+        auto candidate = std::make_unique<WinObsBridge>();
+        error.clear();
+        if (!candidate->start(helper, std::filesystem::u8path(path), class_id,
+                              sample_rate, channels, error, cancel))
+            return {};
+        if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire) ||
+            !filter->enabled.load(std::memory_order_relaxed)) {
+            candidate->abort();
+            return {};
+        }
+        return candidate;
+    };
+
+    auto bridge = start_candidate();
+    if (!bridge) {
         if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
             return;
         blog(LOG_ERROR, "[obs-safe-vst3] failed to start isolated VST3 host: %s", error.c_str());
@@ -516,16 +535,11 @@ void restart_bridge(Filter* filter)
         return;
     }
 
-    if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire) ||
-        !filter->enabled.load(std::memory_order_relaxed)) {
-        bridge->abort();
-        return;
-    }
-
     // Restore exact opaque VST3 state before this helper is ever visible to the
     // realtime callback. Invalid snapshots are quarantined by deleting them;
     // existing normalized parameter persistence remains the fallback path.
     bool restored_exact_state = false;
+    bool restore_rejected = false;
     safevst3::PluginStateSnapshot snapshot{};
     std::string state_error;
     const auto load_result = safevst3::obsstate::load(
@@ -534,14 +548,30 @@ void restart_bridge(Filter* filter)
         if (bridge->restore_state(snapshot, state_error)) {
             restored_exact_state = true;
         } else {
+            restore_rejected = true;
             safevst3::obsstate::discard(filter->context, path, class_id);
-            blog(LOG_WARNING, "[obs-safe-vst3] saved exact VST3 state was rejected; using parameter fallback: %s",
+            blog(LOG_WARNING, "[obs-safe-vst3] saved exact VST3 state was rejected; restarting a clean helper: %s",
                  state_error.c_str());
         }
     } else if (load_result == safevst3::obsstate::LoadResult::Invalid) {
         safevst3::obsstate::discard(filter->context, path, class_id);
         blog(LOG_WARNING, "[obs-safe-vst3] saved VST3 state is invalid; using parameter fallback: %s",
              state_error.c_str());
+    }
+
+    if (restore_rejected) {
+        // setState() is vendor code and may partially mutate a component before
+        // returning failure. Never trust that process again: restart from a
+        // clean instance and only then apply the conservative fallback.
+        bridge->abort();
+        bridge = start_candidate();
+        if (!bridge) {
+            if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
+                return;
+            blog(LOG_ERROR, "[obs-safe-vst3] clean helper restart after rejected state failed: %s", error.c_str());
+            publish_bridge_locked(filter, {});
+            return;
+        }
     }
 
     if (!restored_exact_state)
