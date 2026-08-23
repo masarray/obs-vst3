@@ -14,7 +14,7 @@ namespace safevst3 {
 class NativeEditorWindow final : public Steinberg::IPlugFrame {
 public:
     NativeEditorWindow() = default;
-    ~NativeEditorWindow() override;
+    ~NativeEditorWindow();
 
     NativeEditorWindow(const NativeEditorWindow&) = delete;
     NativeEditorWindow& operator=(const NativeEditorWindow&) = delete;
