@@ -694,34 +694,36 @@ int wmain(int argc, wchar_t** argv)
             }
         }
 
-        bool pending_parameter_delivery_failed = false;
-        if (wait != WAIT_TIMEOUT) {
+        if (wait != WAIT_TIMEOUT)
             handle_editor_command(region, engine, editor);
 
-            for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
-                auto& descriptor = region->parameters[i];
-                const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
-                const long applied = InterlockedCompareExchange(&descriptor.applied_generation, 0, 0);
-                if (generation == applied)
-                    continue;
+        bool pending_parameter_delivery_failed = false;
+        // Always retry pending host edits, including on an idle 250 ms control
+        // tick. A temporary full control->DSP ring therefore cannot strand an
+        // unacknowledged generation until some unrelated future UI event.
+        for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
+            auto& descriptor = region->parameters[i];
+            const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
+            const long applied = InterlockedCompareExchange(&descriptor.applied_generation, 0, 0);
+            if (generation == applied)
+                continue;
 
-                const auto raw_bits = InterlockedCompareExchange64(
-                    reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
-                const double value = bits_to_double(static_cast<std::int64_t>(raw_bits));
-                const EngineParameterUpdate update{descriptor.id,
-                    normalize_parameter_value(value, descriptor.step_count)};
-                if (engine.set_controller_parameter(update.id, update.normalized) &&
-                    control_to_dsp.push(update)) {
-                    publish_parameter_value(region, update.id, update.normalized);
-                    InterlockedIncrement(&region->state_dirty_generation);
-                    InterlockedExchange(&descriptor.applied_generation, generation);
-                    SetEvent(endpoint.dsp_event());
-                } else {
-                    // Do not acknowledge an edit the processor never received.
-                    // The unchanged generation makes the next control cycle retry.
-                    pending_parameter_delivery_failed = true;
-                    InterlockedExchange(&region->last_error, 6);
-                }
+            const auto raw_bits = InterlockedCompareExchange64(
+                reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
+            const double value = bits_to_double(static_cast<std::int64_t>(raw_bits));
+            const EngineParameterUpdate update{descriptor.id,
+                normalize_parameter_value(value, descriptor.step_count)};
+            if (engine.set_controller_parameter(update.id, update.normalized) &&
+                control_to_dsp.push(update)) {
+                publish_parameter_value(region, update.id, update.normalized);
+                InterlockedIncrement(&region->state_dirty_generation);
+                InterlockedExchange(&descriptor.applied_generation, generation);
+                SetEvent(endpoint.dsp_event());
+            } else {
+                // Do not acknowledge an edit the processor never received.
+                // The unchanged generation makes the next control tick retry.
+                pending_parameter_delivery_failed = true;
+                InterlockedExchange(&region->last_error, 6);
             }
         }
 
@@ -740,7 +742,7 @@ int wmain(int argc, wchar_t** argv)
             }
         }
         if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
-            region->last_error = 3;
+            InterlockedExchange(&region->last_error, 3);
 
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
         const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
