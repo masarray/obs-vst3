@@ -33,6 +33,7 @@ UsePreviousAppDir=no
 [Files]
 Source: "payload\obs-safe-vst3.dll"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
 Source: "payload\obs-safe-vst3-host.exe"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
+Source: "payload\obs-safe-vst3-scanner.exe"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
 Source: "payload\en-US.ini"; DestDir: "{code:GetPluginLocaleDir}"; Flags: ignoreversion
 
 [Code]
