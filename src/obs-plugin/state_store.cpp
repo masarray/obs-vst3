@@ -141,6 +141,21 @@ bool save(obs_source_t* source,
     return true;
 }
 
+void discard(obs_source_t* source,
+             const std::string& vst_path,
+             const std::string& class_id) noexcept
+{
+    try {
+        const auto path = state_file_path(source, vst_path, class_id);
+        if (path.empty())
+            return;
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    } catch (...) {
+        // State invalidation is best-effort and must never affect OBS teardown.
+    }
+}
+
 } // namespace safevst3::obsstate
 
 #endif
