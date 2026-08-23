@@ -27,9 +27,60 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Configure helper
+      - name: Configure helper and scanner
         run: cmake -S . -B build -A x64 -DSAFEVST3_BUILD_OBS_PLUGIN=OFF -DSAFEVST3_BUILD_TESTS=ON
-      - name: Build helper
-        run: cmake --build build --config Release --target obs-safe-vst3-host protocol-layout-test --parallel
+      - name: Build helper, scanner and protocol test
+        run: cmake --build build --config Release --target obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Scanner smoke test
+        shell: pwsh
+        run: |
+          $Scanner = Get-ChildItem build -Filter 'obs-safe-vst3-scanner.exe' -File -Recurse | Select-Object -First 1
+          if (-not $Scanner) { throw 'scanner executable missing' }
+          $Cache = Join-Path $env:RUNNER_TEMP 'plugins.tsv'
+          $Process = Start-Process -FilePath $Scanner.FullName -ArgumentList '--scan-to', "`"$Cache`"" -Wait -PassThru
+          if ($Process.ExitCode -ne 0) { throw "scanner exited $($Process.ExitCode)" }
+          if (-not (Test-Path $Cache)) { throw 'scanner did not create cache' }
+
+  obs-module-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch OBS 32.2.2
+        shell: pwsh
+        run: git clone --branch 32.2.2 --depth 1 --recurse-submodules --shallow-submodules https://github.com/obsproject/obs-studio.git .obs-sdk
+
+      - name: Build OBS/libobs SDK
+        shell: pwsh
+        working-directory: .obs-sdk
+        env:
+          CI: 'true'
+        run: .\.github\scripts\Build-Windows.ps1 -Target x64 -Configuration Release
+
+      - name: Locate libobs package
+        id: libobs
+        shell: pwsh
+        run: |
+          $Config = Get-ChildItem -Path '.obs-sdk\build_x64\install' -Filter 'libobsConfig.cmake' -File -Recurse | Select-Object -First 1
+          if (-not $Config) { throw 'libobsConfig.cmake not found' }
+          "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Configure public-trial module
+        shell: pwsh
+        run: |
+          cmake -S . -B build/module -A x64 `
+            "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
+            -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
+            -DSAFEVST3_BUILD_TESTS=ON
+
+      - name: Build OBS module and runtime companions
+        shell: pwsh
+        run: cmake --build build/module --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
+
+      - name: Test module build
+        shell: pwsh
+        run: ctest --test-dir build/module -C Release --output-on-failure
