@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include "obs-plugin/parameter_controls.hpp"
 #include "platform/windows/win_ipc.hpp"
 
 #include <obs-module.h>
@@ -82,21 +83,10 @@ struct RetiredBridge {
     std::shared_ptr<BridgeRtState> state;
 };
 
-// Bridge teardown can wait for or terminate the helper process. Ownership is
-// therefore retained outside the OBS realtime callback. Audio uses a bounded
-// lock-free hazard-pointer protocol: a bridge is dereferenced only after its
-// hazard is published and the active pointer is revalidated. The non-realtime
-// reaper destroys a retired bridge only when no hazard slot names it.
 std::mutex retired_bridges_mutex;
 std::vector<RetiredBridge> retired_bridges;
 std::jthread retired_bridge_reaper;
 
-// OBS owns the callback data pointer and destroy can race an already-entered
-// audio callback before that callback executes its first instruction. There is
-// no object-local counter that can close that entry window. Keep destroyed
-// Filter tombstones alive until module unload, when OBS can no longer execute
-// this module's callbacks. Their helper bridge is still detached/reaped early,
-// so the quarantine retains only small callback-visible state.
 std::mutex retired_filters_mutex;
 std::vector<std::unique_ptr<Filter>> retired_filters;
 
@@ -135,7 +125,6 @@ void reap_retired_bridges()
             }
         }
     }
-    // Destruct helper bridges outside the quarantine mutex and off the audio thread.
     ready_to_destroy.clear();
 }
 
@@ -179,8 +168,6 @@ void stop_retired_bridge_reaper()
     reap_retired_bridges();
 }
 
-// Caller holds restart_mutex. Ownership never enters the audio thread. The
-// seq_cst publication participates in the hazard-pointer validation order.
 void publish_bridge_locked(Filter* filter, std::unique_ptr<WinObsBridge> next)
 {
     auto previous = std::move(filter->bridge_owner);
@@ -196,8 +183,6 @@ public:
         if (!state_)
             return;
 
-        // Slot acquisition is bounded: if all slots are occupied, fail open to
-        // dry audio rather than spin or block the realtime thread.
         for (auto& candidate : state_->hazards) {
             if (!candidate.claimed.test_and_set(std::memory_order_acquire)) {
                 slot_ = &candidate;
@@ -207,11 +192,6 @@ public:
         if (!slot_)
             return;
 
-        // Hazard-pointer protocol: publish the candidate before revalidating
-        // active. If publication raced replacement/reclamation, validation
-        // fails and we retry without ever dereferencing the stale candidate.
-        // Two bounded attempts are sufficient for the normal rare replacement
-        // path; repeated churn simply fails open for this audio block.
         for (int attempt = 0; attempt < 2; ++attempt) {
             WinObsBridge* candidate = state_->active.load(std::memory_order_seq_cst);
             slot_->bridge.store(candidate, std::memory_order_seq_cst);
@@ -307,12 +287,7 @@ bool run_scanner()
         return false;
     }
 
-    // The scanner parent never loads third-party code. Every VST3 candidate is
-    // probed by a child process with its own 15-second timeout, so let the parent
-    // finish the finite discovered set instead of truncating large scans at an
-    // arbitrary aggregate timeout.
     const DWORD wait = WaitForSingleObject(pi.hProcess, INFINITE);
-
     DWORD code = 1;
     if (wait == WAIT_OBJECT_0)
         GetExitCodeProcess(pi.hProcess, &code);
@@ -400,6 +375,14 @@ void split_selection(const std::string& selection, std::string& path, std::strin
     class_id = selection.substr(tab + 1);
 }
 
+std::pair<std::string, std::string> current_identity(Filter* filter)
+{
+    if (!filter)
+        return {};
+    std::lock_guard lock(filter->config_mutex);
+    return {filter->path, filter->class_id};
+}
+
 void restart_bridge(Filter* filter)
 {
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
@@ -408,17 +391,11 @@ void restart_bridge(Filter* filter)
     if (cancel.stop_requested())
         return;
 
+    const auto [path, class_id] = current_identity(filter);
+
     std::lock_guard restart_lock(filter->restart_mutex);
     if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
         return;
-
-    std::string path;
-    std::string class_id;
-    {
-        std::lock_guard config_lock(filter->config_mutex);
-        path = filter->path;
-        class_id = filter->class_id;
-    }
 
     if (!filter->enabled.load(std::memory_order_relaxed) || path.empty()) {
         publish_bridge_locked(filter, {});
@@ -428,7 +405,7 @@ void restart_bridge(Filter* filter)
     const auto sample_rate = filter->sample_rate;
     const auto channels = filter->channels;
     if (channels == 0 || channels > safevst3::kMaxChannels) {
-        blog(LOG_WARNING, "[obs-safe-vst3] public trial supports mono/stereo only; current OBS layout has %u channels", channels);
+        blog(LOG_WARNING, "[obs-safe-vst3] public preview supports mono/stereo only; current OBS layout has %u channels", channels);
         publish_bridge_locked(filter, {});
         return;
     }
@@ -456,7 +433,9 @@ void restart_bridge(Filter* filter)
         return;
     }
 
-    blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s", path.c_str());
+    blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s (%u/%u parameters exposed)",
+         path.c_str(), static_cast<unsigned>(bridge->parameters().size()),
+         static_cast<unsigned>(bridge->parameter_total_count()));
     publish_bridge_locked(filter, std::move(bridge));
 }
 
@@ -464,6 +443,31 @@ bool bridge_running(Filter* filter)
 {
     std::lock_guard restart_lock(filter->restart_mutex);
     return filter->bridge_owner && filter->bridge_owner->running();
+}
+
+void apply_current_parameter_settings(Filter* filter, obs_data_t* settings)
+{
+    if (!filter || !settings)
+        return;
+    const auto [path, class_id] = current_identity(filter);
+    if (path.empty())
+        return;
+    const std::string scope = safevst3::obsparam::parameter_scope(path, class_id);
+
+    std::lock_guard restart_lock(filter->restart_mutex);
+    if (filter->bridge_owner && filter->bridge_owner->running())
+        safevst3::obsparam::apply_parameter_settings(*filter->bridge_owner, settings, scope);
+}
+
+void reapply_source_parameter_settings(Filter* filter)
+{
+    if (!filter || !filter->context)
+        return;
+    obs_data_t* settings = obs_source_get_settings(filter->context);
+    if (!settings)
+        return;
+    apply_current_parameter_settings(filter, settings);
+    obs_data_release(settings);
 }
 
 const char* filter_name(void*) { return obs_module_text("SafeVST3Filter"); }
@@ -495,16 +499,31 @@ void filter_update(void* data, obs_data_t* settings)
         class_id = legacy_class;
     }
 
+    bool identity_changed = false;
     {
         std::lock_guard lock(filter->config_mutex);
         if (filter->shutting_down.load(std::memory_order_acquire))
             return;
-        filter->path = std::move(path);
-        filter->class_id = std::move(class_id);
+        identity_changed = filter->path != path || filter->class_id != class_id;
+        filter->path = path;
+        filter->class_id = class_id;
     }
-    filter->enabled.store(obs_data_get_bool(settings, kEnabled), std::memory_order_relaxed);
-    filter->deadline_fraction.store(obs_data_get_double(settings, kDeadline), std::memory_order_relaxed);
-    restart_bridge(filter);
+
+    const bool new_enabled = obs_data_get_bool(settings, kEnabled);
+    const bool enabled_changed = filter->enabled.exchange(new_enabled, std::memory_order_relaxed) != new_enabled;
+    filter->deadline_fraction.store(std::clamp(obs_data_get_double(settings, kDeadline), 0.10, 0.95),
+                                    std::memory_order_relaxed);
+
+    const bool needs_restart = identity_changed || enabled_changed;
+    if (needs_restart)
+        restart_bridge(filter);
+
+    // Generic controls are non-realtime. Re-sending persisted user values is
+    // intentionally idempotent and avoids storing a second state cache in OBS.
+    apply_current_parameter_settings(filter, settings);
+
+    if (needs_restart && filter->context)
+        obs_source_update_properties(filter->context);
 }
 
 void* filter_create(obs_data_t* settings, obs_source_t* context)
@@ -537,6 +556,9 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
             if (!bridge_running(filter)) {
                 blog(LOG_WARNING, "[obs-safe-vst3] helper stopped; attempting isolated recovery");
                 restart_bridge(filter);
+                reapply_source_parameter_settings(filter);
+                if (filter->context)
+                    obs_source_update_properties(filter->context);
             }
         }
     });
@@ -560,15 +582,13 @@ void filter_destroy(void* data)
         publish_bridge_locked(filter, {});
     }
 
-    // Keep the complete callback-visible Filter object valid through any audio
-    // callback that OBS had already entered but that has not yet executed its
-    // first instruction. The helper bridge itself can still be reaped promptly.
     retire_filter_until_module_unload(filter);
     reap_retired_bridges();
 }
 
-obs_properties_t* filter_properties(void*)
+obs_properties_t* filter_properties(void* data)
 {
+    auto* filter = static_cast<Filter*>(data);
     obs_properties_t* props = obs_properties_create();
     obs_properties_add_bool(props, kEnabled, obs_module_text("Enabled"));
 
@@ -578,6 +598,33 @@ obs_properties_t* filter_properties(void*)
     obs_properties_add_button(props, kRescan, obs_module_text("RescanVST3"), rescan_button);
     obs_properties_add_path(props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
     obs_properties_add_float_slider(props, kDeadline, obs_module_text("DeadlineFraction"), 0.10, 0.95, 0.05);
+
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+        return props;
+
+    const auto [path, class_id] = current_identity(filter);
+    if (path.empty())
+        return props;
+
+    std::vector<safevst3::ParameterSnapshot> parameters;
+    std::uint32_t total_parameter_count = 0;
+    {
+        std::lock_guard restart_lock(filter->restart_mutex);
+        if (filter->bridge_owner && filter->bridge_owner->running()) {
+            parameters = filter->bridge_owner->parameters();
+            total_parameter_count = filter->bridge_owner->parameter_total_count();
+        }
+    }
+
+    if (parameters.empty())
+        return props;
+
+    obs_data_t* settings = filter->context ? obs_source_get_settings(filter->context) : nullptr;
+    safevst3::obsparam::add_generic_parameter_properties(
+        props, parameters, total_parameter_count, settings,
+        safevst3::obsparam::parameter_scope(path, class_id));
+    if (settings)
+        obs_data_release(settings);
     return props;
 }
 
@@ -604,7 +651,6 @@ obs_audio_data* filter_audio(void* data, obs_audio_data* audio)
         planes[ch] = reinterpret_cast<float*>(audio->data[ch]);
     }
 
-    // Timeout/error intentionally keeps the original OBS buffer untouched (dry fail-open).
     const double deadline = filter->deadline_fraction.load(std::memory_order_relaxed);
     (void)bridge->process(planes, filter->channels, audio->frames, deadline);
     return audio;
@@ -639,21 +685,19 @@ bool obs_module_load(void)
     }
 
     obs_register_source(&source_info);
-    blog(LOG_INFO, "[obs-safe-vst3] public-trial module loaded");
+    blog(LOG_INFO, "[obs-safe-vst3] P2.1 public-preview module loaded");
     return true;
 }
 
 void obs_module_unload(void)
 {
-    // OBS no longer invokes this module's source callbacks once unload begins.
-    // Stop the bridge reaper first, then release callback tombstones.
     stop_retired_bridge_reaper();
     release_retired_filters();
 }
 
 const char* obs_module_description(void)
 {
-    return "Crash-isolated VST3 audio-effect host public trial for OBS Studio";
+    return "Crash-isolated VST3 host with generic parameter controls for OBS Studio";
 }
 
 #endif
