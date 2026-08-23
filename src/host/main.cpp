@@ -694,6 +694,7 @@ int wmain(int argc, wchar_t** argv)
             }
         }
 
+        bool pending_parameter_delivery_failed = false;
         if (wait != WAIT_TIMEOUT) {
             handle_editor_command(region, engine, editor);
 
@@ -713,11 +714,14 @@ int wmain(int argc, wchar_t** argv)
                     control_to_dsp.push(update)) {
                     publish_parameter_value(region, update.id, update.normalized);
                     InterlockedIncrement(&region->state_dirty_generation);
+                    InterlockedExchange(&descriptor.applied_generation, generation);
                     SetEvent(endpoint.dsp_event());
                 } else {
+                    // Do not acknowledge an edit the processor never received.
+                    // The unchanged generation makes the next control cycle retry.
+                    pending_parameter_delivery_failed = true;
                     InterlockedExchange(&region->last_error, 6);
                 }
-                InterlockedExchange(&descriptor.applied_generation, generation);
             }
         }
 
@@ -741,7 +745,13 @@ int wmain(int argc, wchar_t** argv)
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
         const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
         if (state_requested != state_applied) {
-            if (dsp.pause(2000)) {
+            if (pending_parameter_delivery_failed) {
+                // Never serialize a component/controller pair while a visible
+                // host edit is still waiting for processor delivery. The OBS
+                // side treats this as transient and preserves S1 last-known-good.
+                complete_state_failure(region, endpoint.state_event());
+                InterlockedExchange(&region->last_error, 12);
+            } else if (dsp.pause(2000)) {
                 // A block already in flight may have produced final processor
                 // feedback just before pause acknowledgement. Apply it to the
                 // controller before getState(), so component/controller blobs
