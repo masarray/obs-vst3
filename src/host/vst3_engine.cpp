@@ -111,9 +111,6 @@ bool Vst3Engine::enumerate_parameters(std::string& error)
         parameters_.push_back(std::move(parameter));
     }
 
-    // ParameterChanges grows dynamically when the plug-in asks for more queues.
-    // Pre-size both directions while the component is initializing so normal DSP
-    // processing does not allocate merely because a plug-in reports many parameters.
     const auto queue_capacity = static_cast<int32>(parameters_.size());
     input_parameter_changes_.setMaxParameters(queue_capacity);
     output_parameter_changes_.setMaxParameters(queue_capacity);
@@ -221,8 +218,16 @@ bool Vst3Engine::open(const std::string& path,
     return true;
 }
 
+void Vst3Engine::set_component_handler(IComponentHandler* handler) noexcept
+{
+    if (controller_)
+        (void)controller_->setComponentHandler(handler);
+}
+
 void Vst3Engine::close() noexcept
 {
+    if (controller_)
+        (void)controller_->setComponentHandler(nullptr);
     if (processor_)
         processor_->setProcessing(false);
     if (component_)
@@ -255,9 +260,9 @@ EngineParameter* Vst3Engine::find_parameter(std::uint32_t id) noexcept
     return it == parameters_.end() ? nullptr : &*it;
 }
 
-bool Vst3Engine::queue_parameter(std::uint32_t id, double normalized) noexcept
+bool Vst3Engine::queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept
 {
-    if (!controller_ || !processor_)
+    if (!processor_)
         return false;
 
     EngineParameter* parameter = find_parameter(id);
@@ -265,8 +270,10 @@ bool Vst3Engine::queue_parameter(std::uint32_t id, double normalized) noexcept
         return false;
 
     normalized = normalize_parameter_value(normalized, parameter->step_count);
-    if (controller_->setParamNormalized(static_cast<ParamID>(id), normalized) != kResultTrue)
-        return false;
+    if (update_controller) {
+        if (!controller_ || controller_->setParamNormalized(static_cast<ParamID>(id), normalized) != kResultTrue)
+            return false;
+    }
 
     int32 queue_index = 0;
     IParamValueQueue* queue = input_parameter_changes_.addParameterData(static_cast<ParamID>(id), queue_index);
@@ -278,8 +285,33 @@ bool Vst3Engine::queue_parameter(std::uint32_t id, double normalized) noexcept
         return false;
 
     parameter->current_normalized = normalized;
+    record_parameter_update(id, normalized);
     parameter_changes_pending_ = true;
     return true;
+}
+
+bool Vst3Engine::queue_parameter(std::uint32_t id, double normalized) noexcept
+{
+    return queue_parameter_impl(id, normalized, true);
+}
+
+bool Vst3Engine::queue_parameter_from_controller(std::uint32_t id, double normalized) noexcept
+{
+    return queue_parameter_impl(id, normalized, false);
+}
+
+void Vst3Engine::refresh_parameter_values() noexcept
+{
+    if (!controller_)
+        return;
+    for (auto& parameter : parameters_) {
+        const double value = normalize_parameter_value(
+            controller_->getParamNormalized(static_cast<ParamID>(parameter.id)), parameter.step_count);
+        if (value == parameter.current_normalized)
+            continue;
+        parameter.current_normalized = value;
+        record_parameter_update(parameter.id, value);
+    }
 }
 
 bool Vst3Engine::apply_pending_parameter_changes(ProcessData& data) noexcept
