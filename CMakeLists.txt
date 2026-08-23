@@ -134,13 +134,28 @@ if(SAFEVST3_BUILD_TESTS)
         target_compile_definitions(control-stall-dsp-test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
         add_dependencies(control-stall-dsp-test fake-control-stall-host)
         add_test(NAME control-stall-dsp COMMAND control-stall-dsp-test $<TARGET_FILE:fake-control-stall-host>)
+
+        add_executable(fake-stateful-host tests/fake_stateful_host.cpp)
+        target_include_directories(fake-stateful-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(fake-stateful-host PRIVATE safevst3_win_ipc)
+        target_compile_definitions(fake-stateful-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        add_executable(recovery-checkpoint-test tests/recovery_checkpoint.cpp)
+        target_include_directories(recovery-checkpoint-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(recovery-checkpoint-test PRIVATE safevst3_win_ipc)
+        target_compile_definitions(recovery-checkpoint-test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_dependencies(recovery-checkpoint-test fake-stateful-host)
+        add_test(NAME recovery-checkpoint COMMAND recovery-checkpoint-test $<TARGET_FILE:fake-stateful-host>)
     endif()
 
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
     add_dependencies(protocol-layout-test parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
-        add_dependencies(protocol-layout-test hang-watchdog-test fake-hung-host control-stall-dsp-test fake-control-stall-host)
+        add_dependencies(protocol-layout-test
+            hang-watchdog-test fake-hung-host
+            control-stall-dsp-test fake-control-stall-host
+            recovery-checkpoint-test fake-stateful-host)
     endif()
     add_test(NAME protocol-layout COMMAND protocol-layout-test)
 endif()
