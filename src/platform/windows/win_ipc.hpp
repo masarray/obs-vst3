@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <stop_token>
 #include <string>
+#include <vector>
 
 namespace safevst3 {
 
@@ -18,6 +19,16 @@ struct BridgeNames {
     std::wstring request_event;
     std::wstring response_event;
     std::wstring ready_event;
+};
+
+struct ParameterSnapshot {
+    std::uint32_t id = 0;
+    std::int32_t step_count = 0;
+    std::uint32_t flags = 0;
+    double default_normalized = 0.0;
+    double current_normalized = 0.0;
+    std::string title;
+    std::string units;
 };
 
 class WinObsBridge {
@@ -45,6 +56,12 @@ public:
                  std::uint32_t channel_count,
                  std::uint32_t frames,
                  double deadline_fraction) noexcept;
+
+    // Non-realtime control seam. Parameter writes are latest-value coalesced
+    // in shared memory and consumed asynchronously by the isolated helper.
+    std::vector<ParameterSnapshot> parameters() const;
+    bool set_parameter(std::uint32_t id, double normalized) noexcept;
+    std::uint32_t parameter_total_count() const noexcept;
 
     std::uint64_t deadline_misses() const noexcept { return deadline_misses_; }
 
