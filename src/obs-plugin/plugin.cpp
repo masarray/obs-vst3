@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include "common/recovery_policy.hpp"
 #include "obs-plugin/parameter_controls.hpp"
 #include "obs-plugin/state_store.hpp"
 #include "platform/windows/win_ipc.hpp"
@@ -18,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -45,6 +47,13 @@ struct ScanEntry {
     std::string name;
     std::string path;
     std::string class_id;
+};
+
+struct BridgeHealthSnapshot {
+    bool has_bridge = false;
+    bool process_alive = false;
+    std::uint64_t heartbeat_age_ms = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t deadline_misses = 0;
 };
 
 struct BridgeHazardSlot {
@@ -593,6 +602,23 @@ bool bridge_running(Filter* filter)
     return filter->bridge_owner && filter->bridge_owner->running();
 }
 
+BridgeHealthSnapshot read_bridge_health(Filter* filter)
+{
+    BridgeHealthSnapshot snapshot{};
+    if (!filter)
+        return snapshot;
+
+    std::lock_guard restart_lock(filter->restart_mutex);
+    if (!filter->bridge_owner)
+        return snapshot;
+
+    snapshot.has_bridge = true;
+    snapshot.process_alive = filter->bridge_owner->running();
+    snapshot.heartbeat_age_ms = filter->bridge_owner->heartbeat_age_ms();
+    snapshot.deadline_misses = filter->bridge_owner->deadline_misses();
+    return snapshot;
+}
+
 bool read_bridge_state_generation(Filter* filter, std::uint32_t& generation)
 {
     if (!filter)
@@ -723,8 +749,11 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
 
     filter_update(filter, settings);
     filter->recovery_thread = std::jthread([filter](std::stop_token stop) {
-        unsigned recovery_ticks = 0;
+        safevst3::RecoveryPolicy recovery_policy;
+        std::uint64_t previous_deadline_misses = 0;
         unsigned stable_dirty_ticks = 0;
+        unsigned deadline_pressure_ticks = 0;
+
         while (!stop.stop_requested()) {
             for (int i = 0; i < 10 && !stop.stop_requested(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -737,14 +766,58 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
                 has_path = !filter->path.empty();
             }
             if (!filter->enabled.load(std::memory_order_relaxed) || !has_path) {
-                recovery_ticks = 0;
+                recovery_policy.reset();
+                previous_deadline_misses = 0;
+                stable_dirty_ticks = 0;
+                deadline_pressure_ticks = 0;
+                continue;
+            }
+
+            const BridgeHealthSnapshot health = read_bridge_health(filter);
+            const std::uint64_t miss_delta = health.deadline_misses >= previous_deadline_misses
+                                                 ? health.deadline_misses - previous_deadline_misses
+                                                 : 0;
+            previous_deadline_misses = health.deadline_misses;
+            const std::uint64_t now_ms = static_cast<std::uint64_t>(GetTickCount64());
+            const safevst3::RecoveryDecision decision = recovery_policy.observe(
+                now_ms,
+                {health.has_bridge && health.process_alive, health.heartbeat_age_ms, miss_delta});
+
+            if (decision.restart) {
+                const char* reason = decision.health == safevst3::RecoveryHealth::Hung
+                                         ? "helper heartbeat stalled"
+                                         : "helper exited/unavailable";
+                blog(LOG_WARNING,
+                     "[obs-safe-vst3] %s; starting isolated recovery attempt %u",
+                     reason,
+                     recovery_policy.recovery_attempts() + 1u);
+                recovery_policy.record_restart_attempt(now_ms);
+                restart_bridge(filter);
+                previous_deadline_misses = 0;
+                stable_dirty_ticks = 0;
+                deadline_pressure_ticks = 0;
+                if (filter->context)
+                    obs_source_update_properties(filter->context);
+                continue;
+            }
+
+            if (decision.health == safevst3::RecoveryHealth::Backoff) {
                 stable_dirty_ticks = 0;
                 continue;
             }
 
+            if (decision.health == safevst3::RecoveryHealth::DeadlinePressure) {
+                if (++deadline_pressure_ticks == 1 || deadline_pressure_ticks % 10 == 0) {
+                    blog(LOG_WARNING,
+                         "[obs-safe-vst3] helper under realtime deadline pressure (%llu misses in last observation); keeping DSP alive",
+                         static_cast<unsigned long long>(miss_delta));
+                }
+            } else {
+                deadline_pressure_ticks = 0;
+            }
+
             std::uint32_t dirty = 0;
             if (read_bridge_state_generation(filter, dirty)) {
-                recovery_ticks = 0;
                 const std::uint32_t observed =
                     filter->observed_state_generation.load(std::memory_order_acquire);
                 if (dirty != observed) {
@@ -760,17 +833,9 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
                 } else {
                     stable_dirty_ticks = 0;
                 }
-                continue;
+            } else {
+                stable_dirty_ticks = 0;
             }
-
-            stable_dirty_ticks = 0;
-            if (++recovery_ticks < 3)
-                continue;
-            recovery_ticks = 0;
-            blog(LOG_WARNING, "[obs-safe-vst3] helper stopped; attempting isolated recovery");
-            restart_bridge(filter);
-            if (filter->context)
-                obs_source_update_properties(filter->context);
         }
     });
     return filter;
