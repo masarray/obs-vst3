@@ -253,10 +253,6 @@ bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
     if (native_overrides.empty())
         return true;
     if (native_overrides.overflowed()) {
-        // The exact latest values for >capacity distinct rejected edits cannot
-        // be proven complete. ComponentHandler requests helper shutdown on that
-        // extreme condition so the outer S2 watchdog recreates a clean process
-        // from the last-known-good checkpoint instead of leaving it poisoned.
         if (region)
             InterlockedExchange(&region->last_error, 15);
         return false;
@@ -387,10 +383,6 @@ public:
     {
         const safevst3::EngineParameterUpdate update{static_cast<std::uint32_t>(id), value};
 
-        // Once an ID has a retained native override, every newer edit for that
-        // same ID must update the mailbox even if the main ring has space again;
-        // otherwise an older retained value could overwrite a later ring value
-        // at the next paused reconciliation.
         if (native_overrides_.contains(update.id)) {
             const bool retained = native_overrides_.record(update);
             publish_parameter_value(region_, update.id, value);
@@ -558,6 +550,7 @@ public:
         ResetEvent(paused_event_);
         ResetEvent(resumed_event_);
         pause_requested_.store(true, std::memory_order_release);
+        resume_ack_pending_.store(true, std::memory_order_release);
         SetEvent(dsp_event_);
         if (WaitForSingleObject(paused_event_, timeout_ms) == WAIT_OBJECT_0)
             return true;
@@ -578,6 +571,12 @@ public:
     }
 
 private:
+    void acknowledge_resume_if_needed() noexcept
+    {
+        if (resume_ack_pending_.exchange(false, std::memory_order_acq_rel) && resumed_event_)
+            SetEvent(resumed_event_);
+    }
+
     void run(std::stop_token stop) noexcept
     {
         DWORD task_index = 0;
@@ -591,6 +590,9 @@ private:
 
         while (!stop.stop_requested() &&
                InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
+            if (!pause_requested_.load(std::memory_order_acquire))
+                acknowledge_resume_if_needed();
+
             if (pause_requested_.load(std::memory_order_acquire)) {
                 bool feedback_pending = false;
                 (void)drain_processor_commands(
@@ -611,8 +613,7 @@ private:
                     WaitForSingleObject(dsp_event_, 100);
                 }
                 ResetEvent(paused_event_);
-                if (resumed_event_)
-                    SetEvent(resumed_event_);
+                acknowledge_resume_if_needed();
                 continue;
             }
 
@@ -665,6 +666,7 @@ private:
             publish_dsp_heartbeat(region_);
         }
 
+        acknowledge_resume_if_needed();
         if (resumed_event_)
             SetEvent(resumed_event_);
         if (mmcss)
@@ -682,6 +684,7 @@ private:
     HANDLE paused_event_ = nullptr;
     HANDLE resumed_event_ = nullptr;
     std::atomic<bool> pause_requested_{false};
+    std::atomic<bool> resume_ack_pending_{false};
     std::jthread thread_;
 };
 
