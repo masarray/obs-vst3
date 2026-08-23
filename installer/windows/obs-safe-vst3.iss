@@ -43,7 +43,9 @@ var
 
 function AddSlash(const Path: String): String;
 begin
-  Result := AddBackslash(RemoveBackslashUnlessRoot(Path));
+  Result := Path;
+  if (Result <> '') and (Result[Length(Result)] <> '\') then
+    Result := Result + '\';
 end;
 
 function IsStandardMode: Boolean;
