@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -56,6 +57,26 @@ void copy_text(char* destination, std::size_t capacity, const std::string& value
     const std::size_t count = std::min(capacity - 1, value.size());
     std::memcpy(destination, value.data(), count);
     destination[count] = '\0';
+}
+
+void publish_parameter_feedback(safevst3::SharedAudioRegion* region, safevst3::Vst3Engine& engine) noexcept
+{
+    if (!region)
+        return;
+
+    std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
+    const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
+    for (std::size_t update_index = 0; update_index < count; ++update_index) {
+        const auto& update = updates[update_index];
+        for (std::uint32_t descriptor_index = 0; descriptor_index < region->parameter_count; ++descriptor_index) {
+            auto& descriptor = region->parameters[descriptor_index];
+            if (descriptor.id != update.id)
+                continue;
+            const auto bits = static_cast<LONG64>(double_to_bits(update.normalized));
+            InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&descriptor.current_value_bits), bits);
+            break;
+        }
+    }
 }
 } // namespace
 
@@ -154,14 +175,18 @@ int wmain(int argc, wchar_t** argv)
 
             processed_any = true;
             const bool ok = engine.process(slot);
+            publish_parameter_feedback(region, engine);
             InterlockedExchange(&slot.result, static_cast<long>(ok ? ProcessResult::Ok : ProcessResult::VstProcessError));
             MemoryBarrier();
             InterlockedExchange(&slot.state, static_cast<long>(SlotState::Done));
             SetEvent(endpoint.response_event());
         }
 
-        if (parameter_edits && !processed_any && !engine.flush_parameter_changes())
-            region->last_error = 2;
+        if (parameter_edits && !processed_any) {
+            if (!engine.flush_parameter_changes())
+                region->last_error = 2;
+            publish_parameter_feedback(region, engine);
+        }
 
         if (!processed_any && !parameter_edits)
             Sleep(0);
