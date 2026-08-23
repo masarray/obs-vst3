@@ -170,9 +170,6 @@ jobs:
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
           "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
           "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT
-          Write-Host "Using staged libobs package: $($Config.FullName)"
-          Write-Host "Using staged w32-pthreads package: $($W32PthreadsConfig.FullName)"
-          Write-Host "Using OBS public dependency prefix: $($ObsDepsPrefix.FullName)"
 
       - name: Configure OBS Safe VST3 Host
         run: |
@@ -191,19 +188,19 @@ jobs:
 
       - name: Verify release binaries
         run: |
-          $Dll = Get-ChildItem build/release -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
-          $Host = Get-ChildItem build/release -Filter 'obs-safe-vst3-host.exe' -File -Recurse | Select-Object -First 1
-          $Scanner = Get-ChildItem build/release -Filter 'obs-safe-vst3-scanner.exe' -File -Recurse | Select-Object -First 1
-          if (-not $Dll) { throw 'obs-safe-vst3.dll was not built.' }
-          if (-not $Host) { throw 'obs-safe-vst3-host.exe was not built.' }
-          if (-not $Scanner) { throw 'obs-safe-vst3-scanner.exe was not built.' }
-          Write-Host "Plugin:  $($Dll.FullName)"
-          Write-Host "Host:    $($Host.FullName)"
-          Write-Host "Scanner: $($Scanner.FullName)"
+          $PluginDll = Get-ChildItem build/release -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
+          $HostExe = Get-ChildItem build/release -Filter 'obs-safe-vst3-host.exe' -File -Recurse | Select-Object -First 1
+          $ScannerExe = Get-ChildItem build/release -Filter 'obs-safe-vst3-scanner.exe' -File -Recurse | Select-Object -First 1
+          if (-not $PluginDll) { throw 'obs-safe-vst3.dll was not built.' }
+          if (-not $HostExe) { throw 'obs-safe-vst3-host.exe was not built.' }
+          if (-not $ScannerExe) { throw 'obs-safe-vst3-scanner.exe was not built.' }
+          Write-Host "Plugin:  $($PluginDll.FullName)"
+          Write-Host "Host:    $($HostExe.FullName)"
+          Write-Host "Scanner: $($ScannerExe.FullName)"
 
           $ScanCache = Join-Path $env:RUNNER_TEMP 'scanner-smoke.tsv'
           Remove-Item -Force -ErrorAction SilentlyContinue $ScanCache
-          $ScanProcess = Start-Process -FilePath $Scanner.FullName -ArgumentList '--scan-to', "`"$ScanCache`"" -Wait -PassThru
+          $ScanProcess = Start-Process -FilePath $ScannerExe.FullName -ArgumentList '--scan-to', "`"$ScanCache`"" -Wait -PassThru
           if ($ScanProcess.ExitCode -ne 0) {
             throw "Scanner smoke test failed with exit code $($ScanProcess.ExitCode)."
           }
