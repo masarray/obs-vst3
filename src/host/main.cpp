@@ -187,6 +187,9 @@ void reconcile_controller_feedback_after_pause(safevst3::SharedAudioRegion* regi
     }
 }
 
+void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
+                                   safevst3::Vst3Engine& engine) noexcept;
+
 bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
                                         safevst3::Vst3Engine& engine,
                                         ParameterQueue& feedback,
@@ -518,9 +521,6 @@ private:
     std::jthread thread_;
 };
 
-void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
-                                   safevst3::Vst3Engine& engine) noexcept;
-
 void handle_editor_command(safevst3::SharedAudioRegion* region,
                            safevst3::Vst3Engine& engine,
                            safevst3::NativeEditorWindow& editor)
@@ -752,17 +752,20 @@ int wmain(int argc, wchar_t** argv)
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
 
-        // Apply processor feedback before pumping a new native UI message. That
-        // prevents older feedback from overwriting a newer performEdit value in
-        // the controller after the user gesture has already occurred.
-        drain_controller_feedback(region, engine, dsp_to_control);
-        if (feedback_resync_required.load(std::memory_order_acquire)) {
-            if (dsp.pause(2000)) {
-                reconcile_controller_feedback_after_pause(
-                    region, engine, dsp_to_control, feedback_resync_required);
-                dsp.resume();
-            } else {
-                InterlockedExchange(&region->last_error, 11);
+        // A native edit rejected by the full control->DSP ring makes the
+        // controller the authoritative latest-value source. Until that paused
+        // resync succeeds, applying queued DSP feedback could overwrite the
+        // user's newer controller value, so leave feedback untouched.
+        if (!native_resync_required.load(std::memory_order_acquire)) {
+            drain_controller_feedback(region, engine, dsp_to_control);
+            if (feedback_resync_required.load(std::memory_order_acquire)) {
+                if (dsp.pause(2000)) {
+                    reconcile_controller_feedback_after_pause(
+                        region, engine, dsp_to_control, feedback_resync_required);
+                    dsp.resume();
+                } else {
+                    InterlockedExchange(&region->last_error, 11);
+                }
             }
         }
 
@@ -857,7 +860,8 @@ int wmain(int argc, wchar_t** argv)
             }
         }
 
-        drain_controller_feedback(region, engine, dsp_to_control);
+        if (!native_resync_required.load(std::memory_order_acquire))
+            drain_controller_feedback(region, engine, dsp_to_control);
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,
                                 static_cast<long>(editor.visible() ? EditorStatus::Open : EditorStatus::Closed));
