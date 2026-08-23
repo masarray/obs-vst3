@@ -245,9 +245,6 @@ int wmain(int argc, wchar_t** argv)
         return 3;
     }
 
-    // Publish the same user-facing identity the earlier native-like build exposed:
-    // plug-in name plus its reported VST3 latency. This is status data only and
-    // never participates in the realtime callback protocol.
     copy_text(region->plugin_name, kPluginNameBytes, engine.plugin_name());
     region->latency_samples = engine.latency_samples();
 
@@ -272,8 +269,13 @@ int wmain(int argc, wchar_t** argv)
         copy_text(destination.title, kParameterTitleBytes, source.title);
         copy_text(destination.units, kParameterUnitsBytes, source.units);
     }
+
+    // Controller presence alone does not mean the plug-in has a usable native
+    // editor. Probe createView + HWND support + a valid view size before OBS
+    // decides whether to suppress fallback parameter controls.
+    const bool native_editor_supported = NativeEditorWindow::supports(engine.edit_controller());
     InterlockedExchange(&region->editor_status,
-                        static_cast<long>(engine.edit_controller() ? EditorStatus::Closed : EditorStatus::Unsupported));
+                        static_cast<long>(native_editor_supported ? EditorStatus::Closed : EditorStatus::Unsupported));
     MemoryBarrier();
 
     DWORD task_index = 0;
@@ -348,7 +350,7 @@ int wmain(int argc, wchar_t** argv)
             publish_parameter_feedback(region, engine);
         }
         if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
-            region->last_error = 3; // Deferred to a later routing/reload phase; OBS remains fail-open.
+            region->last_error = 3;
 
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,
