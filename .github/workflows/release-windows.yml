@@ -150,13 +150,19 @@ jobs:
           if (-not (Test-Path (Join-Path $Config.Directory.FullName 'libobsTargets.cmake'))) {
             throw 'Staged libobs package is incomplete: libobsTargets.cmake is missing.'
           }
-          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'finders\Findw32-pthreads.cmake'))) {
-            throw 'Staged libobs package is incomplete: dependency finders are missing.'
+          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'finders\FindSIMDe.cmake'))) {
+            throw 'Staged libobs package is incomplete: FindSIMDe.cmake is missing.'
+          }
+
+          $W32PthreadsConfig = Get-ChildItem -Path $SdkPrefix -Filter 'w32-pthreadsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $W32PthreadsConfig) {
+            throw 'Staged OBS Development package is incomplete: w32-pthreadsConfig.cmake is missing.'
           }
 
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
           "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
           Write-Host "Using staged libobs package: $($Config.FullName)"
+          Write-Host "Using staged w32-pthreads package: $($W32PthreadsConfig.FullName)"
 
       - name: Configure OBS Safe VST3 Host
         run: |
