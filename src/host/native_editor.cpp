@@ -57,6 +57,24 @@ bool NativeEditorWindow::ensure_window_class(std::string& error)
     return false;
 }
 
+bool NativeEditorWindow::supports(Steinberg::Vst::IEditController* controller) noexcept
+{
+    if (!controller)
+        return false;
+
+    Steinberg::IPlugView* view = controller->createView(Steinberg::Vst::ViewType::kEditor);
+    if (!view)
+        return false;
+
+    const bool platform_ok =
+        view->isPlatformTypeSupported(Steinberg::kPlatformTypeHWND) == Steinberg::kResultTrue;
+    Steinberg::ViewRect size{};
+    const bool size_ok = view->getSize(&size) == Steinberg::kResultTrue &&
+                         size.getWidth() > 0 && size.getHeight() > 0;
+    view->release();
+    return platform_ok && size_ok;
+}
+
 bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
                               const std::string& title,
                               std::string& error)
@@ -89,7 +107,8 @@ bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
     }
 
     Steinberg::ViewRect view_size{};
-    if (view_->getSize(&view_size) != Steinberg::kResultTrue) {
+    if (view_->getSize(&view_size) != Steinberg::kResultTrue ||
+        view_size.getWidth() <= 0 || view_size.getHeight() <= 0) {
         error = "VST3 native editor did not provide a valid size";
         view_->release();
         view_ = nullptr;
@@ -159,8 +178,6 @@ void NativeEditorWindow::hide() noexcept
 void NativeEditorWindow::close() noexcept
 {
     if (view_) {
-        // VST3 lifecycle: detach the view while its frame is still valid, then
-        // clear the frame only after removed() has completed.
         if (attached_)
             (void)view_->removed();
         attached_ = false;
