@@ -32,10 +32,11 @@ using safevst3::WinObsBridge;
 
 constexpr const char* kPluginPath = "vst3_path";
 constexpr const char* kCustomPath = "custom_vst3_path";
-constexpr const char* kClassId = "class_id"; // Backward compatibility with P0 scenes.
-constexpr const char* kEnabled = "enabled";
+constexpr const char* kClassId = "class_id"; // Backward compatibility with early scenes.
+constexpr const char* kEnabled = "enabled";  // Retained in saved settings, not exposed in normal UI.
 constexpr const char* kRescan = "rescan_vst3";
 constexpr const char* kOpenEditor = "open_plugin_ui";
+constexpr const char* kPluginStatus = "plugin_status";
 constexpr double kInternalDeadlineFraction = 0.70;
 constexpr std::size_t kBridgeHazardSlots = 8;
 
@@ -184,6 +185,7 @@ public:
         if (!state_)
             return;
 
+        // Bounded realtime acquisition. Exhaustion fails open to dry audio.
         for (auto& candidate : state_->hazards) {
             if (!candidate.claimed.test_and_set(std::memory_order_acquire)) {
                 slot_ = &candidate;
@@ -193,6 +195,8 @@ public:
         if (!slot_)
             return;
 
+        // Publish the hazard before re-validating the active pointer. Never
+        // spin indefinitely on the OBS audio callback.
         for (int attempt = 0; attempt < 2; ++attempt) {
             WinObsBridge* candidate = state_->active.load(std::memory_order_seq_cst);
             slot_->bridge.store(candidate, std::memory_order_seq_cst);
@@ -288,10 +292,16 @@ bool run_scanner()
         return false;
     }
 
-    const DWORD wait = WaitForSingleObject(pi.hProcess, INFINITE);
+    // Individual candidates already have isolated probe timeouts. Keep a
+    // whole-scan ceiling too, so a broken scanner can never hold OBS forever.
+    const DWORD wait = WaitForSingleObject(pi.hProcess, 180000);
     DWORD code = 1;
-    if (wait == WAIT_OBJECT_0)
+    if (wait == WAIT_OBJECT_0) {
         GetExitCodeProcess(pi.hProcess, &code);
+    } else if (wait == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 0xDEAD);
+        blog(LOG_WARNING, "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; previous cache kept");
+    }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
 
@@ -406,7 +416,7 @@ void restart_bridge(Filter* filter)
     const auto sample_rate = filter->sample_rate;
     const auto channels = filter->channels;
     if (channels == 0 || channels > safevst3::kMaxChannels) {
-        blog(LOG_WARNING, "[obs-safe-vst3] public preview supports mono/stereo only; current OBS layout has %u channels", channels);
+        blog(LOG_WARNING, "[obs-safe-vst3] recovery preview supports mono/stereo only; current OBS layout has %u channels", channels);
         publish_bridge_locked(filter, {});
         return;
     }
@@ -434,8 +444,9 @@ void restart_bridge(Filter* filter)
         return;
     }
 
-    blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s (%u/%u parameters exposed)",
-         path.c_str(), static_cast<unsigned>(bridge->parameters().size()),
+    blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s (%s, %u samples latency, %u/%u parameters exposed)",
+         path.c_str(), bridge->plugin_name().c_str(), bridge->latency_samples(),
+         static_cast<unsigned>(bridge->parameters().size()),
          static_cast<unsigned>(bridge->parameter_total_count()));
     publish_bridge_locked(filter, std::move(bridge));
 }
@@ -502,14 +513,18 @@ void filter_update(void* data, obs_data_t* settings)
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return;
 
-    std::string selected = obs_data_get_string(settings, kPluginPath);
-    std::string custom = obs_data_get_string(settings, kCustomPath);
-    std::string legacy_class = obs_data_get_string(settings, kClassId);
+    const std::string selected = obs_data_get_string(settings, kPluginPath);
+    const std::string custom = obs_data_get_string(settings, kCustomPath);
+    const std::string legacy_class = obs_data_get_string(settings, kClassId);
 
     std::string path;
     std::string class_id;
     split_selection(selected, path, class_id);
-    if (!custom.empty()) {
+
+    // The installed plug-in selection is authoritative. Custom/Browse is a
+    // fallback only when there is no selected scanned plug-in. This prevents a
+    // stale custom path from silently overriding the visible dropdown.
+    if (path.empty() && !custom.empty()) {
         path = custom;
         class_id = legacy_class;
     } else if (class_id.empty()) {
@@ -604,43 +619,53 @@ obs_properties_t* filter_properties(void* data)
 {
     auto* filter = static_cast<Filter*>(data);
     obs_properties_t* props = obs_properties_create();
-    obs_properties_add_bool(props, kEnabled, obs_module_text("Enabled"));
 
+    // Normal user workflow deliberately mirrors OBS's familiar VST filter:
+    // choose an installed plug-in (or Browse), see readiness/latency, open UI.
     auto* list = obs_properties_add_list(props, kPluginPath, obs_module_text("InstalledVST3"),
                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     populate_plugin_list(list);
-
-    auto* open_editor = obs_properties_add_button2(
-        props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
     obs_properties_add_button(props, kRescan, obs_module_text("RescanVST3"), rescan_button);
     obs_properties_add_path(props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
 
-    if (!filter || filter->shutting_down.load(std::memory_order_acquire)) {
-        obs_property_set_enabled(open_editor, false);
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return props;
-    }
 
     const auto [path, class_id] = current_identity(filter);
-    if (path.empty()) {
-        obs_property_set_enabled(open_editor, false);
+    if (path.empty())
         return props;
-    }
 
     std::vector<safevst3::ParameterSnapshot> parameters;
     std::uint32_t total_parameter_count = 0;
     safevst3::EditorStatus editor_status = safevst3::EditorStatus::Unknown;
+    bool running = false;
+    std::string plugin_name;
+    std::uint32_t latency_samples = 0;
     {
         std::lock_guard restart_lock(filter->restart_mutex);
-        if (filter->bridge_owner && filter->bridge_owner->running()) {
+        running = filter->bridge_owner && filter->bridge_owner->running();
+        if (running) {
+            plugin_name = filter->bridge_owner->plugin_name();
+            latency_samples = filter->bridge_owner->latency_samples();
             parameters = filter->bridge_owner->parameters();
             total_parameter_count = filter->bridge_owner->parameter_total_count();
             editor_status = filter->bridge_owner->editor_status();
-        } else {
-            obs_property_set_enabled(open_editor, false);
         }
     }
 
-    if (editor_status == safevst3::EditorStatus::Unsupported)
+    std::string status;
+    if (running) {
+        if (plugin_name.empty())
+            plugin_name = filename_utf8(path);
+        status = plugin_name + " — Ready — " + std::to_string(latency_samples) + " samples latency";
+    } else {
+        status = "Plug-in unavailable — dry audio remains active";
+    }
+    obs_properties_add_text(props, kPluginStatus, status.c_str(), OBS_TEXT_INFO);
+
+    auto* open_editor = obs_properties_add_button2(
+        props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
+    if (!running || editor_status == safevst3::EditorStatus::Unsupported)
         obs_property_set_enabled(open_editor, false);
 
     if (parameters.empty())
@@ -712,7 +737,7 @@ bool obs_module_load(void)
     }
 
     obs_register_source(&source_info);
-    blog(LOG_INFO, "[obs-safe-vst3] P2.1 public-preview module loaded");
+    blog(LOG_INFO, "[obs-safe-vst3] native-like recovery preview module loaded");
     return true;
 }
 
@@ -724,7 +749,7 @@ void obs_module_unload(void)
 
 const char* obs_module_description(void)
 {
-    return "Crash-isolated VST3 host with native vendor interface and generic fallback controls for OBS Studio";
+    return "Crash-isolated VST3 host with OBS-native workflow, vendor interface and fallback controls";
 }
 
 #endif
