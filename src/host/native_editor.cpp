@@ -62,26 +62,31 @@ bool NativeEditorWindow::supports(Steinberg::Vst::IEditController* controller) n
     if (!controller)
         return false;
 
-    Steinberg::IPlugView* view = controller->createView(Steinberg::Vst::ViewType::kEditor);
-    if (!view)
+    // Do not infer usability from controller/createView metadata alone. Some
+    // plug-ins expose a view but reject IPlugFrame or attached(HWND). Exercise
+    // the exact lifecycle in a hidden helper window, then detach immediately.
+    try {
+        NativeEditorWindow probe;
+        std::string error;
+        if (!probe.open(controller, "VST3 editor capability probe", error, false))
+            return false;
+        probe.close();
+        return true;
+    } catch (...) {
         return false;
-
-    const bool platform_ok =
-        view->isPlatformTypeSupported(Steinberg::kPlatformTypeHWND) == Steinberg::kResultTrue;
-    Steinberg::ViewRect size{};
-    const bool size_ok = view->getSize(&size) == Steinberg::kResultTrue &&
-                         size.getWidth() > 0 && size.getHeight() > 0;
-    view->release();
-    return platform_ok && size_ok;
+    }
 }
 
 bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
                               const std::string& title,
-                              std::string& error)
+                              std::string& error,
+                              bool show_window)
 {
     if (window_ && view_) {
-        ShowWindow(window_, SW_SHOWNORMAL);
-        SetForegroundWindow(window_);
+        if (show_window) {
+            ShowWindow(window_, SW_SHOWNORMAL);
+            SetForegroundWindow(window_);
+        }
         return true;
     }
 
@@ -163,9 +168,11 @@ bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
     }
     attached_ = true;
 
-    ShowWindow(window_, SW_SHOWNORMAL);
-    UpdateWindow(window_);
-    SetForegroundWindow(window_);
+    if (show_window) {
+        ShowWindow(window_, SW_SHOWNORMAL);
+        UpdateWindow(window_);
+        SetForegroundWindow(window_);
+    }
     return true;
 }
 
