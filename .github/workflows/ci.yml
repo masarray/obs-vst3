@@ -43,6 +43,41 @@ jobs:
           if ($Process.ExitCode -ne 0) { throw "scanner exited $($Process.ExitCode)" }
           if (-not (Test-Path $Cache)) { throw 'scanner did not create cache' }
 
+  installer-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare dummy installer payload
+        shell: pwsh
+        run: |
+          $Payload = 'installer\windows\payload'
+          New-Item -ItemType Directory -Force -Path $Payload, 'dist' | Out-Null
+          foreach ($Name in @('obs-safe-vst3.dll', 'obs-safe-vst3-host.exe', 'obs-safe-vst3-scanner.exe', 'en-US.ini')) {
+            Set-Content -Path (Join-Path $Payload $Name) -Value 'CI installer syntax payload' -Encoding ASCII
+          }
+      - name: Ensure Inno Setup 6
+        id: inno
+        shell: pwsh
+        run: |
+          $Candidates = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          )
+          $Iscc = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $Iscc) {
+            choco install innosetup -y --no-progress
+            $Iscc = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $Iscc) { throw 'Inno Setup 6 compiler could not be located.' }
+          "path=$Iscc" >> $env:GITHUB_OUTPUT
+      - name: Compile Smart Installer script
+        shell: pwsh
+        run: |
+          & '${{ steps.inno.outputs.path }}' '/DMyAppVersion=0.3.0-ci' 'installer\windows\obs-safe-vst3.iss'
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          $Setup = Get-ChildItem dist -Filter 'OBS-Safe-VST3-Host-v0.3.0-ci-Setup-x64.exe' -File | Select-Object -First 1
+          if (-not $Setup) { throw 'Smart Installer compiler did not produce the expected setup executable.' }
+
   obs-module-windows:
     runs-on: windows-2022
     steps:
@@ -125,7 +160,7 @@ jobs:
           Write-Host "Using staged w32-pthreads package: $($W32PthreadsConfig.FullName)"
           Write-Host "Using OBS public dependency prefix: $($ObsDepsPrefix.FullName)"
 
-      - name: Configure public-trial module
+      - name: Configure public-preview module
         shell: pwsh
         run: |
           cmake -S . -B build/module -A x64 `
