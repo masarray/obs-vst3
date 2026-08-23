@@ -118,11 +118,11 @@ bool run_scanner()
         return false;
     }
 
-    const DWORD wait = WaitForSingleObject(pi.hProcess, 120000);
-    if (wait == WAIT_TIMEOUT) {
-        TerminateProcess(pi.hProcess, 0xDEAD);
-        blog(LOG_WARNING, "[obs-safe-vst3] VST3 scan timed out after 120 seconds; previous cache kept");
-    }
+    // The scanner parent never loads third-party code. Every VST3 candidate is
+    // probed by a child process with its own 15-second timeout, so let the parent
+    // finish the finite discovered set instead of truncating large scans at an
+    // arbitrary aggregate timeout.
+    const DWORD wait = WaitForSingleObject(pi.hProcess, INFINITE);
 
     DWORD code = 1;
     if (wait == WAIT_OBJECT_0)
@@ -164,6 +164,12 @@ std::vector<ScanEntry> load_scan_cache()
     return entries;
 }
 
+std::string filename_utf8(const std::string& path_utf8)
+{
+    const auto u8 = std::filesystem::u8path(path_utf8).filename().u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+}
+
 void populate_plugin_list(obs_property_t* list)
 {
     if (!list)
@@ -177,7 +183,7 @@ void populate_plugin_list(obs_property_t* list)
 
     for (const auto& entry : entries) {
         std::string display = entry.name;
-        const auto filename = std::filesystem::u8path(entry.path).filename().string();
+        const auto filename = filename_utf8(entry.path);
         if (!filename.empty())
             display += "  [" + filename + "]";
         const std::string value = entry.path + "\t" + entry.class_id;
