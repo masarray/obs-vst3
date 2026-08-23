@@ -116,6 +116,14 @@ void copy_text(char* destination, std::size_t capacity, const std::string& value
     destination[count] = '\0';
 }
 
+void request_consistency_recovery(safevst3::SharedAudioRegion* region, long error_code) noexcept
+{
+    if (!region)
+        return;
+    InterlockedExchange(&region->last_error, error_code);
+    InterlockedExchange(&region->shutdown_requested, 1);
+}
+
 void publish_control_heartbeat(safevst3::SharedAudioRegion* region) noexcept
 {
     if (!region)
@@ -175,19 +183,33 @@ bool enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
     return notify_control;
 }
 
-std::size_t drain_processor_commands(safevst3::SharedAudioRegion* region,
-                                     safevst3::Vst3Engine& engine,
-                                     ParameterQueue& commands,
-                                     std::size_t max_commands) noexcept
-{
+struct ProcessorCommandDrainResult {
     std::size_t drained = 0;
+    bool failed = false;
+};
+
+ProcessorCommandDrainResult drain_processor_commands(safevst3::SharedAudioRegion* region,
+                                                      safevst3::Vst3Engine& engine,
+                                                      ParameterQueue& commands,
+                                                      std::size_t max_commands) noexcept
+{
+    ProcessorCommandDrainResult result{};
     safevst3::EngineParameterUpdate update{};
-    while (drained < max_commands && commands.pop(update)) {
-        ++drained;
-        if (!engine.queue_processor_parameter(update.id, update.normalized) && region)
-            InterlockedExchange(&region->last_error, 5);
+    while (result.drained < max_commands && commands.pop(update)) {
+        ++result.drained;
+        if (engine.queue_processor_parameter(update.id, update.normalized))
+            continue;
+
+        // The command has already left the bounded SPSC queue. Continuing would
+        // silently advance the controller/shared mirror without proving delivery
+        // to the processor. Taint this helper and let the outer watchdog rebuild
+        // it from S1's last-known-good checkpoint instead of serializing a mixed
+        // component/controller state.
+        result.failed = true;
+        request_consistency_recovery(region, 5);
+        break;
     }
-    return drained;
+    return result;
 }
 
 void drain_controller_feedback(safevst3::SharedAudioRegion* region,
@@ -253,36 +275,32 @@ bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
     if (native_overrides.empty())
         return true;
     if (native_overrides.overflowed()) {
-        if (region)
-            InterlockedExchange(&region->last_error, 15);
+        request_consistency_recovery(region, 15);
         return false;
     }
 
     drain_controller_feedback_preserving_native_overrides(
         region, engine, feedback, native_overrides);
 
-    bool queued_all = true;
     for (std::size_t i = 0; i < native_overrides.size(); ++i) {
         const auto& update = native_overrides.at(i);
         if (!engine.set_controller_parameter(update.id, update.normalized) ||
             !engine.queue_processor_parameter(update.id, update.normalized)) {
-            queued_all = false;
-            continue;
+            request_consistency_recovery(region, 13);
+            return false;
         }
         publish_parameter_value(region, update.id, update.normalized);
     }
 
-    const bool flushed = engine.flush_parameter_changes();
+    if (!engine.flush_parameter_changes()) {
+        request_consistency_recovery(region, 13);
+        return false;
+    }
+
     publish_engine_updates_direct(region, engine);
     sync_engine_mirror_to_controller(region, engine);
-
-    if (queued_all && flushed) {
-        native_overrides.clear();
-        return true;
-    }
-    if (region)
-        InterlockedExchange(&region->last_error, 13);
-    return false;
+    native_overrides.clear();
+    return true;
 }
 
 bool catch_up_pending_host_parameters_after_pause(safevst3::SharedAudioRegion* region,
@@ -296,7 +314,6 @@ bool catch_up_pending_host_parameters_after_pause(safevst3::SharedAudioRegion* r
         std::array<long, safevst3::kMaxParameters> ack_generations{};
         std::array<bool, safevst3::kMaxParameters> touched{};
         bool queued_any = false;
-        bool queue_ok = true;
 
         for (std::uint32_t i = 0; i < count; ++i) {
             auto& descriptor = region->parameters[i];
@@ -312,8 +329,8 @@ bool catch_up_pending_host_parameters_after_pause(safevst3::SharedAudioRegion* r
 
             if (!engine.set_controller_parameter(descriptor.id, value) ||
                 !engine.queue_processor_parameter(descriptor.id, value)) {
-                queue_ok = false;
-                continue;
+                request_consistency_recovery(region, 12);
+                return false;
             }
 
             publish_parameter_value(region, descriptor.id, value);
@@ -322,17 +339,13 @@ bool catch_up_pending_host_parameters_after_pause(safevst3::SharedAudioRegion* r
             queued_any = true;
         }
 
+        if (queued_any && !engine.flush_parameter_changes()) {
+            request_consistency_recovery(region, 12);
+            return false;
+        }
         if (queued_any) {
-            const bool flushed = engine.flush_parameter_changes();
             publish_engine_updates_direct(region, engine);
             sync_engine_mirror_to_controller(region, engine);
-            if (!flushed)
-                queue_ok = false;
-        }
-
-        if (!queue_ok) {
-            InterlockedExchange(&region->last_error, 12);
-            return false;
         }
 
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -536,9 +549,6 @@ public:
         if (wait_for_transition(token, timeout_ms))
             return true;
 
-        // Supersede a timed-out pause with a newer Running token. If the worker
-        // returns late from vendor processing it can only acknowledge the newest
-        // token; it cannot enter the obsolete pause afterward.
         (void)request_transition(false);
         return false;
     }
@@ -607,20 +617,18 @@ private:
             const std::uint64_t requested = requested_transition_.load(std::memory_order_acquire);
             if (requested != acknowledged) {
                 if (!token_requests_pause(requested)) {
-                    // At the outer-loop frontier the worker is already Running;
-                    // acknowledge exactly the token it observed.
                     acknowledged = requested;
                     acknowledge_transition(acknowledged);
                 } else {
-                    // Drain/flush the same processing frontier as before, then
-                    // re-check the exact packed token before acknowledging
-                    // Paused. A newer token therefore supersedes this request
-                    // without generation/state tearing.
                     bool feedback_pending = false;
-                    (void)drain_processor_commands(
+                    const auto drained = drain_processor_commands(
                         region_, engine_, control_to_dsp_, kParameterTransferCapacity);
-                    if (!engine_.flush_parameter_changes())
-                        InterlockedExchange(&region_->last_error, 2);
+                    if (drained.failed)
+                        return;
+                    if (!engine_.flush_parameter_changes()) {
+                        request_consistency_recovery(region_, 2);
+                        return;
+                    }
                     feedback_pending |= enqueue_processor_feedback(
                         region_, engine_, dsp_to_control_, feedback_resync_required_);
                     if (feedback_pending && control_event_)
@@ -640,16 +648,10 @@ private:
                             requested_transition_.load(std::memory_order_acquire);
                         if (latest != acknowledged) {
                             if (!token_requests_pause(latest)) {
-                                // Leave the paused loop first; only then publish
-                                // the Running ACK so it cannot be mistaken for a
-                                // state the worker has not actually reached yet.
                                 running_to_ack = latest;
                                 break;
                             }
 
-                            // A newer Paused token while already paused is
-                            // satisfied in place and starts a fresh intentional
-                            // heartbeat grace interval.
                             acknowledged = latest;
                             acknowledge_transition(acknowledged);
                             pause_started = GetTickCount64();
@@ -691,25 +693,37 @@ private:
 
                 processed_any = true;
                 const bool ok = engine_.process(slot);
+                if (!ok) {
+                    InterlockedExchange(&slot.result,
+                                        static_cast<long>(safevst3::ProcessResult::VstProcessError));
+                    MemoryBarrier();
+                    InterlockedExchange(&slot.state, static_cast<long>(safevst3::SlotState::Done));
+                    SetEvent(response_event_);
+                    request_consistency_recovery(region_, 16);
+                    return;
+                }
+
                 feedback_pending |= enqueue_processor_feedback(
                     region_, engine_, dsp_to_control_, feedback_resync_required_);
-                InterlockedExchange(&slot.result,
-                                    static_cast<long>(ok ? safevst3::ProcessResult::Ok
-                                                        : safevst3::ProcessResult::VstProcessError));
+                InterlockedExchange(&slot.result, static_cast<long>(safevst3::ProcessResult::Ok));
                 MemoryBarrier();
                 InterlockedExchange(&slot.state, static_cast<long>(safevst3::SlotState::Done));
                 SetEvent(response_event_);
             }
 
-            const std::size_t drained = drain_processor_commands(
+            const auto drained = drain_processor_commands(
                 region_, engine_, control_to_dsp_, kMaxProcessorCommandsPerWake);
-            if (drained > 0 && !processed_any) {
-                if (!engine_.flush_parameter_changes())
-                    InterlockedExchange(&region_->last_error, 2);
+            if (drained.failed)
+                return;
+            if (drained.drained > 0 && !processed_any) {
+                if (!engine_.flush_parameter_changes()) {
+                    request_consistency_recovery(region_, 2);
+                    return;
+                }
                 feedback_pending |= enqueue_processor_feedback(
                     region_, engine_, dsp_to_control_, feedback_resync_required_);
             }
-            if (drained == kMaxProcessorCommandsPerWake && dsp_event_)
+            if (drained.drained == kMaxProcessorCommandsPerWake && dsp_event_)
                 SetEvent(dsp_event_);
 
             if (feedback_pending && control_event_)
