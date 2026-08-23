@@ -21,6 +21,7 @@ struct BridgeNames {
     std::wstring mapping;
     std::wstring state_mapping;
     std::wstring request_event;
+    std::wstring dsp_event;
     std::wstring response_event;
     std::wstring ready_event;
     std::wstring state_event;
@@ -80,16 +81,19 @@ public:
         return region_ ? region_->latency_samples : 0;
     }
 
-    // Main-loop heartbeat. This deliberately measures the thread that owns
-    // vendor lifecycle/UI and, until S2.2, DSP processing too. A live process
-    // with an old heartbeat is therefore distinguishable from a healthy idle
-    // helper and can be replaced by the non-realtime recovery worker.
+    // Watchdog follows the independent DSP heartbeat when available. The
+    // control/UI heartbeat can stall inside arbitrary vendor editor code while
+    // healthy DSP continues and must not be killed for that reason.
     std::uint64_t heartbeat_age_ms() const noexcept
     {
         if (!region_)
             return std::numeric_limits<std::uint64_t>::max();
-        const LONG64 raw = InterlockedCompareExchange64(
-            reinterpret_cast<volatile LONG64*>(&region_->helper_heartbeat_ms), 0, 0);
+        LONG64 raw = InterlockedCompareExchange64(
+            reinterpret_cast<volatile LONG64*>(&region_->dsp_heartbeat_ms), 0, 0);
+        if (raw <= 0) {
+            raw = InterlockedCompareExchange64(
+                reinterpret_cast<volatile LONG64*>(&region_->helper_heartbeat_ms), 0, 0);
+        }
         if (raw <= 0)
             return std::numeric_limits<std::uint64_t>::max();
         const std::uint64_t now = static_cast<std::uint64_t>(GetTickCount64());
@@ -121,6 +125,7 @@ private:
     HANDLE mapping_ = nullptr;
     HANDLE state_mapping_ = nullptr;
     HANDLE request_event_ = nullptr;
+    HANDLE dsp_event_ = nullptr;
     HANDLE response_event_ = nullptr;
     HANDLE ready_event_ = nullptr;
     HANDLE state_event_ = nullptr;
@@ -146,6 +151,7 @@ public:
     SharedAudioRegion* region() const noexcept { return region_; }
     StateTransferRegion* state_region() const noexcept { return state_region_; }
     HANDLE request_event() const noexcept { return request_event_; }
+    HANDLE dsp_event() const noexcept { return dsp_event_; }
     HANDLE response_event() const noexcept { return response_event_; }
     HANDLE ready_event() const noexcept { return ready_event_; }
     HANDLE state_event() const noexcept { return state_event_; }
@@ -154,6 +160,7 @@ private:
     HANDLE mapping_ = nullptr;
     HANDLE state_mapping_ = nullptr;
     HANDLE request_event_ = nullptr;
+    HANDLE dsp_event_ = nullptr;
     HANDLE response_event_ = nullptr;
     HANDLE ready_event_ = nullptr;
     HANDLE state_event_ = nullptr;
