@@ -60,6 +60,17 @@ public:
     bool set_parameter(std::uint32_t id, double normalized) noexcept;
     std::uint32_t parameter_total_count() const noexcept;
 
+    // Read-only status snapshot for the normal OBS properties UI. The helper
+    // owns these fields and publishes them before HostStatus::Ready.
+    std::string plugin_name() const
+    {
+        return region_ ? std::string(region_->plugin_name) : std::string{};
+    }
+    std::uint32_t latency_samples() const noexcept
+    {
+        return region_ ? region_->latency_samples : 0;
+    }
+
     // Non-realtime native-editor seam. The vendor UI remains entirely inside
     // the helper process; OBS only publishes an asynchronous command.
     bool open_editor() noexcept;
