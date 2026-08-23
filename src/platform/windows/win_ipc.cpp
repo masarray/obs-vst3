@@ -88,7 +88,8 @@ BridgeNames WinObsBridge::make_names()
     std::wstringstream ss;
     ss << L"Local\\obs-safe-vst3-" << pid << L'-' << tick << L'-' << serial;
     const auto base = ss.str();
-    return {base + L"-map", base + L"-req", base + L"-rsp", base + L"-ready"};
+    return {base + L"-map", base + L"-state-map", base + L"-req", base + L"-rsp",
+            base + L"-ready", base + L"-state-done"};
 }
 
 bool WinObsBridge::start(const std::filesystem::path& helper,
@@ -134,13 +135,37 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     region_->parameter_count = 0;
     region_->parameter_total_count = 0;
     region_->host_status = static_cast<long>(HostStatus::Booting);
+    region_->state_command = static_cast<long>(StateCommand::None);
+    region_->state_status = static_cast<long>(StateStatus::Idle);
     for (auto& slot : region_->slots)
         slot.state = static_cast<long>(SlotState::Free);
+
+    state_mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
+                                        static_cast<DWORD>(sizeof(StateTransferRegion)), names_.state_mapping.c_str());
+    if (!state_mapping_) {
+        error = win_error("CreateFileMappingW(state)");
+        stop();
+        return false;
+    }
+    state_region_ = static_cast<StateTransferRegion*>(
+        MapViewOfFile(state_mapping_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(StateTransferRegion)));
+    if (!state_region_) {
+        error = win_error("MapViewOfFile(state)");
+        stop();
+        return false;
+    }
+    // A fresh page-file mapping is zero initialized. Do not touch the large
+    // payload here: keeping it demand-paged avoids committing 16 MiB per filter.
+    state_region_->magic = kStateTransferMagic;
+    state_region_->version = kStateTransferVersion;
+    state_region_->capacity = static_cast<std::uint32_t>(kMaxStateBytes);
+    state_region_->reserved = 0;
 
     request_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.request_event.c_str());
     response_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.response_event.c_str());
     ready_event_ = CreateEventW(nullptr, TRUE, FALSE, names_.ready_event.c_str());
-    if (!request_event_ || !response_event_ || !ready_event_) {
+    state_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.state_event.c_str());
+    if (!request_event_ || !response_event_ || !ready_event_ || !state_event_) {
         error = win_error("CreateEventW");
         stop();
         return false;
@@ -154,9 +179,11 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
 
     std::wstring command = quote(helper.wstring()) +
         L" --mapping " + quote(names_.mapping) +
+        L" --state-mapping " + quote(names_.state_mapping) +
         L" --request-event " + quote(names_.request_event) +
         L" --response-event " + quote(names_.response_event) +
         L" --ready-event " + quote(names_.ready_event) +
+        L" --state-event " + quote(names_.state_event) +
         L" --vst " + quote(vst_path.wstring());
     if (!class_id.empty())
         command += L" --class-id " + quote(widen(class_id));
@@ -233,13 +260,18 @@ void WinObsBridge::stop() noexcept
     if (process_.hThread) CloseHandle(process_.hThread);
     if (process_.hProcess) CloseHandle(process_.hProcess);
     process_ = {};
+    if (state_region_) UnmapViewOfFile(state_region_);
+    state_region_ = nullptr;
     if (region_) UnmapViewOfFile(region_);
     region_ = nullptr;
+    if (state_event_) CloseHandle(state_event_);
     if (ready_event_) CloseHandle(ready_event_);
     if (response_event_) CloseHandle(response_event_);
     if (request_event_) CloseHandle(request_event_);
+    if (state_mapping_) CloseHandle(state_mapping_);
     if (mapping_) CloseHandle(mapping_);
-    ready_event_ = response_event_ = request_event_ = mapping_ = nullptr;
+    state_event_ = ready_event_ = response_event_ = request_event_ = nullptr;
+    state_mapping_ = mapping_ = nullptr;
 }
 
 void WinObsBridge::abort() noexcept
@@ -411,10 +443,18 @@ bool WinHostEndpoint::open(const BridgeNames& names, std::string& error)
     if (!mapping_) { error = win_error("OpenFileMappingW"); return false; }
     region_ = static_cast<SharedAudioRegion*>(MapViewOfFile(mapping_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedAudioRegion)));
     if (!region_) { error = win_error("MapViewOfFile"); close(); return false; }
+
+    state_mapping_ = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, names.state_mapping.c_str());
+    if (!state_mapping_) { error = win_error("OpenFileMappingW(state)"); close(); return false; }
+    state_region_ = static_cast<StateTransferRegion*>(
+        MapViewOfFile(state_mapping_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(StateTransferRegion)));
+    if (!state_region_) { error = win_error("MapViewOfFile(state)"); close(); return false; }
+
     request_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.request_event.c_str());
     response_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.response_event.c_str());
     ready_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.ready_event.c_str());
-    if (!request_event_ || !response_event_ || !ready_event_) {
+    state_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.state_event.c_str());
+    if (!request_event_ || !response_event_ || !ready_event_ || !state_event_) {
         error = win_error("OpenEventW");
         close();
         return false;
@@ -424,18 +464,30 @@ bool WinHostEndpoint::open(const BridgeNames& names, std::string& error)
         close();
         return false;
     }
+    if (state_region_->magic != kStateTransferMagic ||
+        state_region_->version != kStateTransferVersion ||
+        state_region_->capacity != kMaxStateBytes) {
+        error = "VST3 state-transfer protocol mismatch";
+        close();
+        return false;
+    }
     return true;
 }
 
 void WinHostEndpoint::close() noexcept
 {
+    if (state_region_) UnmapViewOfFile(state_region_);
+    state_region_ = nullptr;
     if (region_) UnmapViewOfFile(region_);
     region_ = nullptr;
+    if (state_event_) CloseHandle(state_event_);
     if (ready_event_) CloseHandle(ready_event_);
     if (response_event_) CloseHandle(response_event_);
     if (request_event_) CloseHandle(request_event_);
+    if (state_mapping_) CloseHandle(state_mapping_);
     if (mapping_) CloseHandle(mapping_);
-    ready_event_ = response_event_ = request_event_ = mapping_ = nullptr;
+    state_event_ = ready_event_ = response_event_ = request_event_ = nullptr;
+    state_mapping_ = mapping_ = nullptr;
 }
 
 } // namespace safevst3
