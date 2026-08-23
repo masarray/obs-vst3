@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(obs-safe-vst3 VERSION 0.1.0 LANGUAGES C CXX)
+project(obs-safe-vst3 VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,7 +9,7 @@ option(SAFEVST3_BUILD_OBS_PLUGIN "Build the OBS module when libobs is available"
 option(SAFEVST3_BUILD_TESTS "Build protocol/layout tests" ON)
 
 if(NOT WIN32)
-    message(STATUS "P0 runtime is Windows x86-64 only. Building portable tests only.")
+    message(STATUS "Public-trial runtime is Windows x86-64 only. Building portable tests only.")
 endif()
 
 add_library(safevst3_protocol INTERFACE)
@@ -45,6 +45,10 @@ if(WIN32)
     target_link_libraries(obs-safe-vst3-host PRIVATE safevst3_win_ipc sdk_hosting sdk Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+    add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
+    target_link_libraries(obs-safe-vst3-scanner PRIVATE sdk_hosting sdk)
+    target_compile_definitions(obs-safe-vst3-scanner PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
     if(SAFEVST3_BUILD_OBS_PLUGIN)
         find_package(libobs CONFIG QUIET)
         if(libobs_FOUND)
@@ -57,9 +61,12 @@ if(WIN32)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     $<TARGET_FILE:obs-safe-vst3-host>
                     $<TARGET_FILE_DIR:obs-safe-vst3>
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:obs-safe-vst3-scanner>
+                    $<TARGET_FILE_DIR:obs-safe-vst3>
             )
         else()
-            message(WARNING "libobs CMake package not found; helper will build, OBS module will be skipped. Set libobs_DIR to OBS's CMake package directory.")
+            message(WARNING "libobs CMake package not found; helper/scanner will build, OBS module will be skipped. Set libobs_DIR to OBS's CMake package directory.")
         endif()
     endif()
 endif()
