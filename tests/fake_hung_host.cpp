@@ -32,7 +32,8 @@ int wmain(int argc, wchar_t** argv)
     };
 
     BridgeNames names{get(L"--mapping"), get(L"--state-mapping"), get(L"--request-event"),
-                      get(L"--response-event"), get(L"--ready-event"), get(L"--state-event")};
+                      get(L"--dsp-event"), get(L"--response-event"), get(L"--ready-event"),
+                      get(L"--state-event")};
 
     WinHostEndpoint endpoint;
     std::string error;
@@ -42,16 +43,16 @@ int wmain(int argc, wchar_t** argv)
     }
 
     SharedAudioRegion* region = endpoint.region();
-    InterlockedExchange64(
-        reinterpret_cast<volatile LONG64*>(&region->helper_heartbeat_ms),
-        static_cast<LONG64>(GetTickCount64()));
+    const LONG64 now = static_cast<LONG64>(GetTickCount64());
+    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&region->helper_heartbeat_ms), now);
     InterlockedIncrement(&region->helper_progress_generation);
+    InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&region->dsp_heartbeat_ms), now);
+    InterlockedIncrement(&region->dsp_progress_generation);
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Ready));
     SetEvent(endpoint.ready_event());
 
-    // Deliberately remain alive without touching the heartbeat again. This
-    // models vendor code stuck inside process()/UI/lifecycle while the helper
-    // process itself still exists and therefore fools a process-only watchdog.
+    // Deliberately remain alive without touching DSP heartbeat again. This
+    // models processor code stuck while the helper process itself still exists.
     Sleep(30000);
     return 0;
 }
