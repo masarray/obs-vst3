@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <stop_token>
 #include <string>
+#include <vector>
 
 namespace safevst3 {
 
@@ -18,6 +19,16 @@ struct BridgeNames {
     std::wstring request_event;
     std::wstring response_event;
     std::wstring ready_event;
+};
+
+struct ParameterSnapshot {
+    std::uint32_t id = 0;
+    std::int32_t step_count = 0;
+    std::uint32_t flags = 0;
+    double default_normalized = 0.0;
+    double current_normalized = 0.0;
+    std::string title;
+    std::string units;
 };
 
 class WinObsBridge {
@@ -40,11 +51,31 @@ public:
     void abort() noexcept;
     bool running() const noexcept;
 
-    // Returns true only when wet output was produced before the deadline.
     bool process(float* const* channels,
                  std::uint32_t channel_count,
                  std::uint32_t frames,
                  double deadline_fraction) noexcept;
+
+    std::vector<ParameterSnapshot> parameters() const;
+    bool set_parameter(std::uint32_t id, double normalized) noexcept;
+    std::uint32_t parameter_total_count() const noexcept;
+
+    // Read-only status snapshot for the normal OBS properties UI. The helper
+    // owns these fields and publishes them before HostStatus::Ready.
+    std::string plugin_name() const
+    {
+        return region_ ? std::string(region_->plugin_name) : std::string{};
+    }
+    std::uint32_t latency_samples() const noexcept
+    {
+        return region_ ? region_->latency_samples : 0;
+    }
+
+    // Non-realtime native-editor seam. The vendor UI remains entirely inside
+    // the helper process; OBS only publishes an asynchronous command.
+    bool open_editor() noexcept;
+    bool hide_editor() noexcept;
+    EditorStatus editor_status() const noexcept;
 
     std::uint64_t deadline_misses() const noexcept { return deadline_misses_; }
 
@@ -53,6 +84,7 @@ private:
     static std::wstring quote(const std::wstring& value);
     static BridgeNames make_names();
     AudioSlot* acquire_slot() noexcept;
+    bool send_editor_command(EditorCommand command) noexcept;
     static std::uint64_t qpc_now() noexcept;
     static std::uint64_t qpc_frequency() noexcept;
 

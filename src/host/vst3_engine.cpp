@@ -2,7 +2,9 @@
 
 #include "host/vst3_engine.hpp"
 
+#include "common/parameter_utils.hpp"
 #include "pluginterfaces/vst/vstspeaker.h"
+#include "public.sdk/source/vst/utility/stringconvert.h"
 
 #include <algorithm>
 #include <vector>
@@ -62,13 +64,56 @@ bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
         if (processor_->getBusArrangement(kInput, main_input_bus_, actual_in) != kResultTrue ||
             processor_->getBusArrangement(kOutput, main_output_bus_, actual_out) != kResultTrue ||
             actual_in != requested || actual_out != requested) {
-            error = channels == 1 ? "VST3 does not accept mono I/O for P0" : "VST3 does not accept stereo I/O for P0";
+            error = channels == 1 ? "VST3 does not accept mono I/O" : "VST3 does not accept stereo I/O";
             return false;
         }
     }
 
     component_->activateBus(kAudio, kInput, main_input_bus_, true);
     component_->activateBus(kAudio, kOutput, main_output_bus_, true);
+    return true;
+}
+
+bool Vst3Engine::enumerate_parameters(std::string& error)
+{
+    parameters_.clear();
+    if (!controller_)
+        return true;
+
+    const int32 count = controller_->getParameterCount();
+    if (count < 0) {
+        error = "VST3 controller returned an invalid parameter count";
+        return false;
+    }
+
+    parameters_.reserve(static_cast<std::size_t>(count));
+    for (int32 index = 0; index < count; ++index) {
+        ParameterInfo info{};
+        if (controller_->getParameterInfo(index, info) != kResultTrue)
+            continue;
+
+        std::uint32_t flags = 0;
+        if (info.flags & ParameterInfo::kCanAutomate) flags |= ParameterCanAutomate;
+        if (info.flags & ParameterInfo::kIsReadOnly) flags |= ParameterReadOnly;
+        if (info.flags & ParameterInfo::kIsHidden) flags |= ParameterHidden;
+        if (info.flags & ParameterInfo::kIsList) flags |= ParameterList;
+        if (info.flags & ParameterInfo::kIsProgramChange) flags |= ParameterProgramChange;
+        if (info.flags & ParameterInfo::kIsBypass) flags |= ParameterBypass;
+
+        EngineParameter parameter{};
+        parameter.id = static_cast<std::uint32_t>(info.id);
+        parameter.step_count = info.stepCount;
+        parameter.flags = flags;
+        parameter.default_normalized = normalize_parameter_value(info.defaultNormalizedValue, info.stepCount);
+        parameter.current_normalized = normalize_parameter_value(controller_->getParamNormalized(info.id), info.stepCount);
+        parameter.title = StringConvert::convert(info.title);
+        parameter.units = StringConvert::convert(info.units);
+        parameters_.push_back(std::move(parameter));
+    }
+
+    const auto queue_capacity = static_cast<int32>(parameters_.size());
+    input_parameter_changes_.setMaxParameters(queue_capacity);
+    output_parameter_changes_.setMaxParameters(queue_capacity);
     return true;
 }
 
@@ -80,7 +125,7 @@ bool Vst3Engine::open(const std::string& path,
 {
     close();
     if (channels == 0 || channels > kMaxChannels) {
-        error = "P0 supports only mono or stereo";
+        error = "Public preview supports only mono or stereo";
         return false;
     }
 
@@ -116,6 +161,7 @@ bool Vst3Engine::open(const std::string& path,
     }
 
     component_ = provider_->getComponentPtr();
+    controller_ = provider_->getControllerPtr();
     if (!component_) {
         error = "VST3 component unavailable";
         return false;
@@ -128,10 +174,12 @@ bool Vst3Engine::open(const std::string& path,
     }
 
     if (processor_->canProcessSampleSize(kSample32) != kResultTrue) {
-        error = "P0 requires float32-capable VST3 processing";
+        error = "Public preview requires float32-capable VST3 processing";
         return false;
     }
 
+    if (!enumerate_parameters(error))
+        return false;
     if (!configure_buses(channels, error))
         return false;
 
@@ -170,14 +218,28 @@ bool Vst3Engine::open(const std::string& path,
     return true;
 }
 
+void Vst3Engine::set_component_handler(IComponentHandler* handler) noexcept
+{
+    if (controller_)
+        (void)controller_->setComponentHandler(handler);
+}
+
 void Vst3Engine::close() noexcept
 {
+    if (controller_)
+        (void)controller_->setComponentHandler(nullptr);
     if (processor_)
         processor_->setProcessing(false);
     if (component_)
         component_->setActive(false);
     process_data_.unprepare();
+    input_parameter_changes_.clearQueue();
+    output_parameter_changes_.clearQueue();
+    parameter_changes_pending_ = false;
+    parameter_update_count_ = 0;
+    parameters_.clear();
     processor_ = nullptr;
+    controller_ = nullptr;
     component_ = nullptr;
     provider_ = nullptr;
     module_.reset();
@@ -188,6 +250,169 @@ void Vst3Engine::close() noexcept
     plugin_name_.clear();
     latency_samples_ = 0;
     sample_position_ = 0;
+}
+
+EngineParameter* Vst3Engine::find_parameter(std::uint32_t id) noexcept
+{
+    auto it = std::find_if(parameters_.begin(), parameters_.end(), [id](const EngineParameter& parameter) {
+        return parameter.id == id;
+    });
+    return it == parameters_.end() ? nullptr : &*it;
+}
+
+bool Vst3Engine::queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept
+{
+    if (!processor_)
+        return false;
+
+    EngineParameter* parameter = find_parameter(id);
+    if (!parameter)
+        return false;
+
+    // Hidden/read-only flags restrict host-authored fallback controls. A native
+    // vendor editor is the plug-in's own controller UI; its performEdit() still
+    // has to be transferred by the host to the processor, even for parameters
+    // that are not meant to be exposed as generic host controls.
+    if (update_controller && (parameter->flags & (ParameterReadOnly | ParameterHidden)) != 0)
+        return false;
+
+    normalized = normalize_parameter_value(normalized, parameter->step_count);
+    if (update_controller) {
+        if (!controller_ || controller_->setParamNormalized(static_cast<ParamID>(id), normalized) != kResultTrue)
+            return false;
+    }
+
+    int32 queue_index = 0;
+    IParamValueQueue* queue = input_parameter_changes_.addParameterData(static_cast<ParamID>(id), queue_index);
+    if (!queue)
+        return false;
+
+    int32 point_index = 0;
+    if (queue->addPoint(0, normalized, point_index) != kResultTrue)
+        return false;
+
+    parameter->current_normalized = normalized;
+    record_parameter_update(id, normalized);
+    parameter_changes_pending_ = true;
+    return true;
+}
+
+bool Vst3Engine::queue_parameter(std::uint32_t id, double normalized) noexcept
+{
+    return queue_parameter_impl(id, normalized, true);
+}
+
+bool Vst3Engine::queue_parameter_from_controller(std::uint32_t id, double normalized) noexcept
+{
+    return queue_parameter_impl(id, normalized, false);
+}
+
+void Vst3Engine::refresh_parameter_values() noexcept
+{
+    if (!controller_)
+        return;
+    for (auto& parameter : parameters_) {
+        const double value = normalize_parameter_value(
+            controller_->getParamNormalized(static_cast<ParamID>(parameter.id)), parameter.step_count);
+        if (value == parameter.current_normalized)
+            continue;
+        parameter.current_normalized = value;
+        record_parameter_update(parameter.id, value);
+    }
+}
+
+bool Vst3Engine::apply_pending_parameter_changes(ProcessData& data) noexcept
+{
+    if (!parameter_changes_pending_) {
+        data.inputParameterChanges = nullptr;
+        return false;
+    }
+    data.inputParameterChanges = &input_parameter_changes_;
+    return true;
+}
+
+void Vst3Engine::finish_parameter_changes() noexcept
+{
+    input_parameter_changes_.clearQueue();
+    parameter_changes_pending_ = false;
+}
+
+void Vst3Engine::record_parameter_update(std::uint32_t id, double normalized) noexcept
+{
+    for (std::size_t i = 0; i < parameter_update_count_; ++i) {
+        if (parameter_updates_[i].id == id) {
+            parameter_updates_[i].normalized = normalized;
+            return;
+        }
+    }
+    if (parameter_update_count_ < parameter_updates_.size())
+        parameter_updates_[parameter_update_count_++] = {id, normalized};
+}
+
+void Vst3Engine::capture_output_parameter_changes() noexcept
+{
+    const int32 count = output_parameter_changes_.getParameterCount();
+    for (int32 i = 0; i < count; ++i) {
+        IParamValueQueue* queue = output_parameter_changes_.getParameterData(i);
+        if (!queue || queue->getPointCount() <= 0)
+            continue;
+
+        int32 sample_offset = 0;
+        ParamValue value = 0.0;
+        if (queue->getPoint(queue->getPointCount() - 1, sample_offset, value) != kResultTrue)
+            continue;
+
+        const auto id = static_cast<std::uint32_t>(queue->getParameterId());
+        EngineParameter* parameter = find_parameter(id);
+        if (!parameter)
+            continue;
+
+        value = normalize_parameter_value(value, parameter->step_count);
+        parameter->current_normalized = value;
+        if (controller_)
+            (void)controller_->setParamNormalized(queue->getParameterId(), value);
+        record_parameter_update(id, value);
+    }
+    output_parameter_changes_.clearQueue();
+}
+
+std::size_t Vst3Engine::take_parameter_updates(EngineParameterUpdate* destination, std::size_t capacity) noexcept
+{
+    if (!destination || capacity == 0)
+        return 0;
+    const std::size_t count = std::min(capacity, parameter_update_count_);
+    std::copy_n(parameter_updates_.begin(), count, destination);
+    if (count < parameter_update_count_)
+        std::move(parameter_updates_.begin() + static_cast<std::ptrdiff_t>(count),
+                  parameter_updates_.begin() + static_cast<std::ptrdiff_t>(parameter_update_count_),
+                  parameter_updates_.begin());
+    parameter_update_count_ -= count;
+    return count;
+}
+
+bool Vst3Engine::flush_parameter_changes() noexcept
+{
+    if (!processor_ || !parameter_changes_pending_)
+        return true;
+
+    ProcessData flush{};
+    flush.processMode = kRealtime;
+    flush.symbolicSampleSize = kSample32;
+    flush.numSamples = 0;
+    flush.numInputs = 0;
+    flush.numOutputs = 0;
+    flush.inputs = nullptr;
+    flush.outputs = nullptr;
+    flush.inputEvents = nullptr;
+    flush.outputEvents = nullptr;
+    flush.outputParameterChanges = &output_parameter_changes_;
+    flush.processContext = &process_context_;
+    apply_pending_parameter_changes(flush);
+
+    const tresult result = processor_->process(flush);
+    finish_parameter_changes();
+    capture_output_parameter_changes();
+    return result == kResultOk;
 }
 
 bool Vst3Engine::process(AudioSlot& slot) noexcept
@@ -209,13 +434,16 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
     process_data_.numSamples = static_cast<int32>(slot.frames);
     process_data_.inputEvents = nullptr;
     process_data_.outputEvents = nullptr;
-    process_data_.inputParameterChanges = nullptr;
-    process_data_.outputParameterChanges = nullptr;
+    process_data_.outputParameterChanges = &output_parameter_changes_;
+    apply_pending_parameter_changes(process_data_);
 
     process_context_.projectTimeSamples = sample_position_;
     sample_position_ += slot.frames;
 
-    return processor_->process(process_data_) == kResultOk;
+    const tresult result = processor_->process(process_data_);
+    finish_parameter_changes();
+    capture_output_parameter_changes();
+    return result == kResultOk;
 }
 
 } // namespace safevst3

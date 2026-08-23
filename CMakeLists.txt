@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(obs-safe-vst3 VERSION 0.2.0 LANGUAGES C CXX)
+project(obs-safe-vst3 VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,9 +32,6 @@ if(WIN32)
     )
     FetchContent_MakeAvailable(vst3sdk)
 
-    # sdk_hosting deliberately contains the platform-neutral hosting core only.
-    # Module::create and PlugProvider live in separate SDK translation units, so
-    # include the exact Windows/runtime implementations needed by our host.
     add_library(safevst3_vst3_hosting_runtime STATIC
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
@@ -42,19 +39,20 @@ if(WIN32)
     target_link_libraries(safevst3_vst3_hosting_runtime PUBLIC sdk_hosting sdk)
     target_compile_definitions(safevst3_vst3_hosting_runtime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     if(MSVC)
-        # Steinberg's SMTG_CPP20 detection reads __cplusplus. MSVC reports the
-        # legacy value unless /Zc:__cplusplus is enabled, which otherwise sends
-        # module_win32.cpp down its pre-C++20 generic_u8string() branch.
         target_compile_options(safevst3_vst3_hosting_runtime PRIVATE /Zc:__cplusplus)
     endif()
 
-    add_library(safevst3_win_ipc STATIC src/platform/windows/win_ipc.cpp)
+    add_library(safevst3_win_ipc STATIC
+        src/platform/windows/win_ipc.cpp
+        src/platform/windows/editor_ipc.cpp
+    )
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
     target_compile_definitions(safevst3_win_ipc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-host
         src/host/main.cpp
+        src/host/native_editor.cpp
         src/host/vst3_engine.cpp
     )
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -68,7 +66,10 @@ if(WIN32)
     if(SAFEVST3_BUILD_OBS_PLUGIN)
         find_package(libobs CONFIG QUIET)
         if(libobs_FOUND)
-            add_library(obs-safe-vst3 MODULE src/obs-plugin/plugin.cpp)
+            add_library(obs-safe-vst3 MODULE
+                src/obs-plugin/plugin.cpp
+                src/obs-plugin/parameter_controls.cpp
+            )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(obs-safe-vst3 PRIVATE OBS::libobs safevst3_win_ipc)
             target_compile_definitions(obs-safe-vst3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -89,7 +90,13 @@ endif()
 
 if(SAFEVST3_BUILD_TESTS)
     enable_testing()
+
+    add_executable(parameter-control-test tests/parameter_control.cpp)
+    target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
+    add_test(NAME parameter-control COMMAND parameter-control-test)
+
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
+    add_dependencies(protocol-layout-test parameter-control-test)
     add_test(NAME protocol-layout COMMAND protocol-layout-test)
 endif()
