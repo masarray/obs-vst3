@@ -162,6 +162,13 @@ void drain_controller_feedback(safevst3::SharedAudioRegion* region,
     }
 }
 
+void discard_controller_feedback(ParameterQueue& feedback) noexcept
+{
+    safevst3::EngineParameterUpdate ignored{};
+    while (feedback.pop(ignored)) {
+    }
+}
+
 void reconcile_controller_feedback_after_pause(safevst3::SharedAudioRegion* region,
                                                safevst3::Vst3Engine& engine,
                                                ParameterQueue& feedback,
@@ -180,6 +187,47 @@ void reconcile_controller_feedback_after_pause(safevst3::SharedAudioRegion* regi
     }
 }
 
+bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
+                                        safevst3::Vst3Engine& engine,
+                                        ParameterQueue& feedback,
+                                        std::atomic<bool>& native_resync_required) noexcept
+{
+    if (!native_resync_required.load(std::memory_order_acquire))
+        return true;
+
+    // A rejected performEdit means IEditController already owns a value newer
+    // than the saturated control->DSP ring. Do not apply older DSP feedback to
+    // the controller first. Snapshot controller values into the engine mirror,
+    // discard stale queued feedback, then replay that complete latest-value
+    // mirror to the paused processor.
+    engine.refresh_parameter_values();
+    discard_controller_feedback(feedback);
+
+    bool queued_all = true;
+    for (const auto& parameter : engine.parameters()) {
+        if (!engine.queue_processor_parameter(parameter.id, parameter.current_normalized))
+            queued_all = false;
+    }
+    const bool flushed = engine.flush_parameter_changes();
+
+    // flush may itself produce canonical processor feedback. Clear its compact
+    // update buffer into the shared mirror, then make the controller match the
+    // final processor-owned mirror before allowing state capture.
+    publish_engine_updates_direct(region, engine);
+    for (const auto& parameter : engine.parameters()) {
+        (void)engine.set_controller_parameter(parameter.id, parameter.current_normalized);
+        publish_parameter_value(region, parameter.id, parameter.current_normalized);
+    }
+
+    if (queued_all && flushed) {
+        native_resync_required.store(false, std::memory_order_release);
+        return true;
+    }
+    if (region)
+        InterlockedExchange(&region->last_error, 13);
+    return false;
+}
+
 void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
                                    safevst3::Vst3Engine& engine) noexcept
 {
@@ -193,8 +241,12 @@ class ComponentHandler final : public Steinberg::Vst::IComponentHandler {
 public:
     ComponentHandler(safevst3::SharedAudioRegion* region,
                      ParameterQueue& control_to_dsp,
-                     HANDLE dsp_event)
-        : region_(region), control_to_dsp_(control_to_dsp), dsp_event_(dsp_event)
+                     std::atomic<bool>& native_resync_required,
+                     HANDLE dsp_event,
+                     HANDLE control_event)
+        : region_(region), control_to_dsp_(control_to_dsp),
+          native_resync_required_(native_resync_required), dsp_event_(dsp_event),
+          control_event_(control_event)
     {
     }
 
@@ -208,9 +260,21 @@ public:
     {
         const safevst3::EngineParameterUpdate update{static_cast<std::uint32_t>(id), value};
         if (!control_to_dsp_.push(update)) {
-            if (region_)
+            // The controller has already accepted this native edit. Preserve it
+            // as the source of truth and schedule a paused full controller->DSP
+            // resync instead of dropping the user's newest value.
+            native_resync_required_.store(true, std::memory_order_release);
+            publish_parameter_value(region_, update.id, value);
+            if (region_) {
+                InterlockedIncrement(&region_->state_dirty_generation);
                 InterlockedExchange(&region_->last_error, 6);
-            return Steinberg::kResultFalse;
+            }
+            if (dsp_event_)
+                SetEvent(dsp_event_);
+            if (control_event_)
+                SetEvent(control_event_);
+            edit_pending_.store(true, std::memory_order_release);
+            return Steinberg::kResultOk;
         }
         publish_parameter_value(region_, update.id, value);
         if (region_)
@@ -264,7 +328,9 @@ public:
 private:
     safevst3::SharedAudioRegion* region_ = nullptr;
     ParameterQueue& control_to_dsp_;
+    std::atomic<bool>& native_resync_required_;
     HANDLE dsp_event_ = nullptr;
+    HANDLE control_event_ = nullptr;
     std::atomic<bool> edit_pending_{false};
     std::atomic<Steinberg::int32> restart_flags_{0};
 };
@@ -452,6 +518,9 @@ private:
     std::jthread thread_;
 };
 
+void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
+                                   safevst3::Vst3Engine& engine) noexcept;
+
 void handle_editor_command(safevst3::SharedAudioRegion* region,
                            safevst3::Vst3Engine& engine,
                            safevst3::NativeEditorWindow& editor)
@@ -628,7 +697,10 @@ int wmain(int argc, wchar_t** argv)
     ParameterQueue control_to_dsp;
     ParameterQueue dsp_to_control;
     std::atomic<bool> feedback_resync_required{false};
-    ComponentHandler component_handler(region, control_to_dsp, endpoint.dsp_event());
+    std::atomic<bool> native_resync_required{false};
+    ComponentHandler component_handler(
+        region, control_to_dsp, native_resync_required,
+        endpoint.dsp_event(), endpoint.request_event());
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
 
@@ -680,9 +752,9 @@ int wmain(int argc, wchar_t** argv)
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
 
-        if (wait == WAIT_OBJECT_0 + 1)
-            pump_windows_messages();
-
+        // Apply processor feedback before pumping a new native UI message. That
+        // prevents older feedback from overwriting a newer performEdit value in
+        // the controller after the user gesture has already occurred.
         drain_controller_feedback(region, engine, dsp_to_control);
         if (feedback_resync_required.load(std::memory_order_acquire)) {
             if (dsp.pause(2000)) {
@@ -691,6 +763,22 @@ int wmain(int argc, wchar_t** argv)
                 dsp.resume();
             } else {
                 InterlockedExchange(&region->last_error, 11);
+            }
+        }
+
+        if (wait == WAIT_OBJECT_0 + 1)
+            pump_windows_messages();
+
+        bool native_resync_failed = false;
+        if (native_resync_required.load(std::memory_order_acquire)) {
+            if (dsp.pause(2000)) {
+                if (!reconcile_native_edits_after_pause(
+                        region, engine, dsp_to_control, native_resync_required))
+                    native_resync_failed = true;
+                dsp.resume();
+            } else {
+                native_resync_failed = true;
+                InterlockedExchange(&region->last_error, 13);
             }
         }
 
@@ -747,10 +835,11 @@ int wmain(int argc, wchar_t** argv)
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
         const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
         if (state_requested != state_applied) {
-            if (pending_parameter_delivery_failed) {
-                // Never serialize a component/controller pair while a visible
-                // host edit is still waiting for processor delivery. The OBS
-                // side treats this as transient and preserves S1 last-known-good.
+            if (pending_parameter_delivery_failed || native_resync_failed ||
+                native_resync_required.load(std::memory_order_acquire)) {
+                // Never serialize a component/controller pair while any visible
+                // host/native edit is still waiting for processor delivery. OBS
+                // treats this failure as transient and preserves S1 LKG state.
                 complete_state_failure(region, endpoint.state_event());
                 InterlockedExchange(&region->last_error, 12);
             } else if (dsp.pause(2000)) {
