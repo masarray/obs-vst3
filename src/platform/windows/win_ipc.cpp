@@ -2,6 +2,8 @@
 
 #include "platform/windows/win_ipc.hpp"
 
+#include "common/parameter_utils.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -25,6 +27,31 @@ bool process_alive(const PROCESS_INFORMATION& pi) noexcept
         return false;
     DWORD code = 0;
     return GetExitCodeProcess(pi.hProcess, &code) && code == STILL_ACTIVE;
+}
+
+std::int64_t double_to_bits(double value) noexcept
+{
+    std::int64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value));
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+double bits_to_double(std::int64_t bits) noexcept
+{
+    double value = 0.0;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+std::string bounded_string(const char* value, std::size_t capacity)
+{
+    if (!value || capacity == 0)
+        return {};
+    std::size_t length = 0;
+    while (length < capacity && value[length] != '\0')
+        ++length;
+    return std::string(value, length);
 }
 } // namespace
 
@@ -78,7 +105,7 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
         return false;
     }
     if (channels == 0 || channels > kMaxChannels) {
-        error = "P0 supports mono/stereo only";
+        error = "Public preview supports mono/stereo only";
         return false;
     }
 
@@ -104,6 +131,8 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     region_->channels = channels;
     region_->max_frames = kMaxFrames;
     region_->slot_count = kSlotCount;
+    region_->parameter_count = 0;
+    region_->parameter_total_count = 0;
     region_->host_status = static_cast<long>(HostStatus::Booting);
     for (auto& slot : region_->slots)
         slot.state = static_cast<long>(SlotState::Free);
@@ -223,6 +252,61 @@ void WinObsBridge::abort() noexcept
 bool WinObsBridge::running() const noexcept
 {
     return region_ && region_->host_status == static_cast<long>(HostStatus::Ready) && process_alive(process_);
+}
+
+std::vector<ParameterSnapshot> WinObsBridge::parameters() const
+{
+    std::vector<ParameterSnapshot> result;
+    if (!running() || !region_)
+        return result;
+
+    const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
+    result.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        auto& descriptor = region_->parameters[i];
+        const auto bits = InterlockedCompareExchange64(
+            reinterpret_cast<volatile LONG64*>(&descriptor.current_value_bits), 0, 0);
+
+        ParameterSnapshot snapshot{};
+        snapshot.id = descriptor.id;
+        snapshot.step_count = descriptor.step_count;
+        snapshot.flags = descriptor.flags;
+        snapshot.default_normalized = descriptor.default_normalized;
+        snapshot.current_normalized = bits_to_double(static_cast<std::int64_t>(bits));
+        snapshot.title = bounded_string(descriptor.title, kParameterTitleBytes);
+        snapshot.units = bounded_string(descriptor.units, kParameterUnitsBytes);
+        result.push_back(std::move(snapshot));
+    }
+    return result;
+}
+
+bool WinObsBridge::set_parameter(std::uint32_t id, double normalized) noexcept
+{
+    if (!running() || !region_ || !request_event_)
+        return false;
+
+    const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        auto& descriptor = region_->parameters[i];
+        if (descriptor.id != id)
+            continue;
+        if ((descriptor.flags & (ParameterReadOnly | ParameterHidden)) != 0)
+            return false;
+
+        normalized = normalize_parameter_value(normalized, descriptor.step_count);
+        const auto bits = static_cast<LONG64>(double_to_bits(normalized));
+        InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), bits);
+        MemoryBarrier();
+        InterlockedIncrement(&descriptor.pending_generation);
+        SetEvent(request_event_);
+        return true;
+    }
+    return false;
+}
+
+std::uint32_t WinObsBridge::parameter_total_count() const noexcept
+{
+    return region_ ? region_->parameter_total_count : 0;
 }
 
 AudioSlot* WinObsBridge::acquire_slot() noexcept
