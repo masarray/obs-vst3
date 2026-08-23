@@ -345,6 +345,7 @@ obs_properties_t* filter_properties(void*)
     populate_plugin_list(list);
     obs_properties_add_button(props, kRescan, obs_module_text("RescanVST3"), rescan_button);
     obs_properties_add_path(props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+    obs_properties_add_float_slider(props, kDeadline, obs_module_text("DeadlineFraction"), 0.10, 0.95, 0.05);
     return props;
 }
 
