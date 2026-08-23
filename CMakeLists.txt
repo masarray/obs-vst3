@@ -95,8 +95,12 @@ if(SAFEVST3_BUILD_TESTS)
     target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
     add_test(NAME parameter-control COMMAND parameter-control-test)
 
+    add_executable(state-snapshot-test tests/state_snapshot.cpp)
+    target_link_libraries(state-snapshot-test PRIVATE safevst3_protocol)
+    add_test(NAME state-snapshot COMMAND state-snapshot-test)
+
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
-    add_dependencies(protocol-layout-test parameter-control-test)
+    add_dependencies(protocol-layout-test parameter-control-test state-snapshot-test)
     add_test(NAME protocol-layout COMMAND protocol-layout-test)
 endif()
