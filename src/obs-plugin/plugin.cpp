@@ -427,23 +427,21 @@ bool capture_bridge_state(Filter* filter,
     safevst3::PluginStateSnapshot snapshot{};
     std::string error;
     if (!filter->bridge_owner->capture_state(snapshot, error)) {
-        // Never keep an older opaque snapshot after the plug-in tells us the
-        // current exact state can no longer be captured. The normalized host
-        // parameters remain the conservative compatibility fallback.
-        safevst3::obsstate::discard(filter->context, path, class_id);
+        // Capture can fail transiently because the helper exits, IPC times out,
+        // or a vendor temporarily stalls. Preserve the last-known-good exact
+        // snapshot and keep the generation unsaved so the debounce worker can
+        // retry instead of destroying the only recovery point.
         filter->observed_state_generation.store(dirty, std::memory_order_release);
-        filter->saved_state_generation.store(dirty, std::memory_order_release);
-        blog(LOG_WARNING, "[obs-safe-vst3] exact VST3 state capture unavailable; using parameter fallback: %s", error.c_str());
+        blog(LOG_WARNING, "[obs-safe-vst3] exact VST3 state capture failed; last-known-good snapshot preserved: %s", error.c_str());
         return false;
     }
 
     if (!safevst3::obsstate::save(filter->context, path, class_id, snapshot, error)) {
-        // A previously saved exact snapshot is now known stale. Never leave it
-        // behind just because the replacement write failed; recovery should
-        // prefer parameter fallback over restoring the wrong historic state.
-        safevst3::obsstate::discard(filter->context, path, class_id);
+        // Atomic replacement failure is also transient. The previous complete
+        // file remains the recovery point; never delete it merely because the
+        // new snapshot could not be committed to disk.
         filter->observed_state_generation.store(dirty, std::memory_order_release);
-        blog(LOG_WARNING, "[obs-safe-vst3] could not persist exact VST3 state; stale snapshot discarded: %s", error.c_str());
+        blog(LOG_WARNING, "[obs-safe-vst3] could not persist exact VST3 state; last-known-good snapshot preserved: %s", error.c_str());
         return false;
     }
 
