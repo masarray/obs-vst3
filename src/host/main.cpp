@@ -245,9 +245,6 @@ int wmain(int argc, wchar_t** argv)
         return 3;
     }
 
-    // Publish the same user-facing identity the earlier native-like build exposed:
-    // plug-in name plus its reported VST3 latency. This is status data only and
-    // never participates in the realtime callback protocol.
     copy_text(region->plugin_name, kPluginNameBytes, engine.plugin_name());
     region->latency_samples = engine.latency_samples();
 
@@ -272,8 +269,15 @@ int wmain(int argc, wchar_t** argv)
         copy_text(destination.title, kParameterTitleBytes, source.title);
         copy_text(destination.units, kParameterUnitsBytes, source.units);
     }
-    InterlockedExchange(&region->editor_status,
-                        static_cast<long>(engine.edit_controller() ? EditorStatus::Closed : EditorStatus::Unsupported));
+
+    // Never run arbitrary vendor UI code before the DSP helper is Ready. If a
+    // controller exists, editor capability remains Unknown until the user
+    // explicitly requests Open and attached(HWND) succeeds or fails. This
+    // keeps a broken/hanging GUI from preventing healthy DSP + fallback use.
+    InterlockedExchange(
+        &region->editor_status,
+        static_cast<long>(engine.edit_controller() ? EditorStatus::Unknown
+                                                    : EditorStatus::Unsupported));
     MemoryBarrier();
 
     DWORD task_index = 0;
@@ -348,7 +352,7 @@ int wmain(int argc, wchar_t** argv)
             publish_parameter_feedback(region, engine);
         }
         if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
-            region->last_error = 3; // Deferred to a later routing/reload phase; OBS remains fail-open.
+            region->last_error = 3;
 
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,

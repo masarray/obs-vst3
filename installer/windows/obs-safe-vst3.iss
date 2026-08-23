@@ -37,10 +37,16 @@ Source: "payload\obs-safe-vst3-scanner.exe"; DestDir: "{code:GetPluginBinDir}"; 
 Source: "payload\en-US.ini"; DestDir: "{code:GetPluginLocaleDir}"; Flags: ignoreversion
 
 [Code]
+const
+  SettingsRegKey = 'Software\masarray\OBS Safe VST3 Host';
+  LastModeValue = 'LastInstallMode';
+  LastPortableDirValue = 'LastPortableObsDir';
+
 var
   InstallModePage: TInputOptionWizardPage;
   PortableDirPage: TInputDirWizardPage;
   PortableObsDirParam: String;
+  CloseObsParam: String;
 
 function AddSlash(const Path: String): String;
 begin
@@ -56,7 +62,7 @@ end;
 
 function IsObsRootValid(const Root: String): Boolean;
 begin
-  Result := FileExists(AddSlash(Root) + 'bin\64bit\obs64.exe');
+  Result := (Root <> '') and FileExists(AddSlash(Root) + 'bin\64bit\obs64.exe');
 end;
 
 function GetPluginBinDir(Param: String): String;
@@ -85,6 +91,139 @@ begin
     ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
+function WaitForObsExit(const HalfSecondAttempts: Integer): Boolean;
+var
+  I: Integer;
+begin
+  for I := 1 to HalfSecondAttempts do
+  begin
+    if not IsObsRunning then
+    begin
+      Result := True;
+      Exit;
+    end;
+    Sleep(500);
+  end;
+  Result := not IsObsRunning;
+end;
+
+function TerminateObs(const Force: Boolean): Boolean;
+var
+  ResultCode: Integer;
+  Params: String;
+begin
+  Params := '/C taskkill /T /IM obs64.exe';
+  if Force then
+    Params := Params + ' /F';
+
+  Result := Exec(ExpandConstant('{cmd}'), Params, '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+function RequestObsClose: Boolean;
+var
+  Answer: Integer;
+  AllowForce: Boolean;
+begin
+  Result := True;
+  if not IsObsRunning then
+    Exit;
+
+  AllowForce := False;
+
+  if WizardSilent then
+  begin
+    if (CloseObsParam <> 'yes') and (CloseObsParam <> 'force') then
+    begin
+      Result := False;
+      Exit;
+    end;
+    AllowForce := CloseObsParam = 'force';
+  end
+  else
+  begin
+    Answer := MsgBox(
+      'OBS Studio is currently running.' + #13#10 + #13#10 +
+      'Setup must close OBS before updating the plug-in files.' + #13#10 +
+      'Save or stop any active recording/stream first.' + #13#10 + #13#10 +
+      'Close OBS Studio automatically now?',
+      mbConfirmation, MB_YESNO);
+    if Answer <> IDYES then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+
+  { First request a normal process termination. Never force-close without a
+    second explicit permission in the interactive installer. }
+  TerminateObs(False);
+  if WaitForObsExit(20) then
+    Exit;
+
+  if WizardSilent then
+  begin
+    if not AllowForce then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end
+  else
+  begin
+    Answer := MsgBox(
+      'OBS Studio did not close within 10 seconds.' + #13#10 + #13#10 +
+      'Force-close OBS now?' + #13#10 +
+      'Unsaved recording/stream state may be lost.',
+      mbConfirmation, MB_YESNO);
+    if Answer <> IDYES then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+
+  TerminateObs(True);
+  Result := WaitForObsExit(10);
+end;
+
+procedure LoadRememberedInstallTarget;
+var
+  RememberedMode: String;
+  RememberedPortableDir: String;
+begin
+  RememberedMode := '';
+  RememberedPortableDir := '';
+
+  RegQueryStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+    LastModeValue, RememberedMode);
+  RegQueryStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+    LastPortableDirValue, RememberedPortableDir);
+
+  if IsObsRootValid(RememberedPortableDir) then
+  begin
+    PortableDirPage.Values[0] := RememberedPortableDir;
+    if CompareText(RememberedMode, 'portable') = 0 then
+      InstallModePage.SelectedValueIndex := 1;
+  end;
+end;
+
+procedure RememberInstallTarget;
+begin
+  if IsStandardMode then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+      LastModeValue, 'standard');
+  end
+  else
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+      LastModeValue, 'portable');
+    RegWriteStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+      LastPortableDirValue, PortableDirPage.Values[0]);
+  end;
+end;
+
 procedure InitializeWizard;
 var
   DefaultPortablePath: String;
@@ -92,8 +231,9 @@ begin
   InstallModePage := CreateInputOptionPage(wpWelcome,
     'Choose OBS installation type',
     'Where should OBS Safe VST3 Host be installed?',
-    'For a normal OBS Studio installation, keep the recommended option. ' +
-    'Choose Custom / Portable only when you run OBS from a self-contained folder.',
+    'Setup remembers the last successful installation mode and portable OBS folder. ' +
+    'For a normal OBS Studio installation, use Standard. ' +
+    'Choose Custom / Portable for a self-contained OBS folder.',
     True, False);
 
   InstallModePage.Add('Standard OBS Studio (recommended)');
@@ -104,7 +244,7 @@ begin
     'Select your OBS folder',
     'Choose the OBS Studio root folder',
     'Select the folder that contains bin\64bit\obs64.exe. ' +
-    'Setup will install the plug-in into this OBS tree.',
+    'Setup remembers this location for future updates.',
     False, '');
   PortableDirPage.Add('');
 
@@ -114,12 +254,20 @@ begin
   else
     PortableDirPage.Values[0] := ExpandConstant('{sd}\OBS Studio');
 
+  LoadRememberedInstallTarget;
+
+  { Explicit command-line target always wins over remembered state. }
   PortableObsDirParam := ExpandConstant('{param:PortableObsDir|}');
   if PortableObsDirParam <> '' then
   begin
     InstallModePage.SelectedValueIndex := 1;
     PortableDirPage.Values[0] := PortableObsDirParam;
   end;
+
+  { Silent automation can opt into closing OBS with /CloseObs=yes, or permit
+    a force-close fallback with /CloseObs=force. Interactive installs always
+    ask the user before either action. }
+  CloseObsParam := Lowercase(ExpandConstant('{param:CloseObs|ask}'));
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -146,6 +294,17 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  if IsObsRunning then
-    Result := 'OBS Studio is still running. Close OBS Studio completely, then click Install again.';
+  if IsObsRunning and (not RequestObsClose) then
+  begin
+    if WizardSilent then
+      Result := 'OBS Studio is running. Close it first, or use /CloseObs=yes (normal close) or /CloseObs=force (allow force-close fallback).'
+    else
+      Result := 'OBS Studio is still running. Close OBS Studio, then click Install again.';
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    RememberInstallTarget;
 end;

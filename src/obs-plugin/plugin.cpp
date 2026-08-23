@@ -33,7 +33,7 @@ using safevst3::WinObsBridge;
 constexpr const char* kPluginPath = "vst3_path";
 constexpr const char* kCustomPath = "custom_vst3_path";
 constexpr const char* kClassId = "class_id"; // Backward compatibility with early scenes.
-constexpr const char* kEnabled = "enabled";  // Retained in saved settings, not exposed in normal UI.
+constexpr const char* kEnabled = "enabled";  // Legacy saved key; normal UI now follows OBS filter visibility.
 constexpr const char* kRescan = "rescan_vst3";
 constexpr const char* kOpenEditor = "open_plugin_ui";
 constexpr const char* kPluginStatus = "plugin_status";
@@ -293,6 +293,7 @@ bool run_scanner()
         GetExitCodeProcess(pi.hProcess, &code);
     } else if (wait == WAIT_TIMEOUT) {
         TerminateProcess(pi.hProcess, 0xDEAD);
+        (void)WaitForSingleObject(pi.hProcess, 2000);
         blog(LOG_WARNING, "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; previous cache kept");
     }
     CloseHandle(pi.hThread);
@@ -349,8 +350,6 @@ void populate_plugin_list(obs_property_t* list)
         return;
     }
 
-    // Keep Browse reachable even after an installed plug-in was previously
-    // selected. Empty selection explicitly activates the custom path fallback.
     obs_property_list_add_string(list, obs_module_text("UseBrowseVST3"), "");
     for (const auto& entry : entries) {
         std::string display = entry.name;
@@ -398,10 +397,13 @@ void restart_bridge(Filter* filter)
     if (cancel.stop_requested())
         return;
 
-    const auto [path, class_id] = current_identity(filter);
+    // Serialize restart ownership before snapshotting identity. A recovery
+    // restart can no longer publish an old plug-in after a UI-driven restart
+    // has already selected and published a newer identity.
     std::lock_guard restart_lock(filter->restart_mutex);
     if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
         return;
+    const auto [path, class_id] = current_identity(filter);
 
     if (!filter->enabled.load(std::memory_order_relaxed) || path.empty()) {
         publish_bridge_locked(filter, {});
@@ -532,7 +534,10 @@ void filter_update(void* data, obs_data_t* settings)
         filter->class_id = class_id;
     }
 
-    const bool new_enabled = obs_data_get_bool(settings, kEnabled);
+    // The plug-in-level Enabled checkbox was removed from the normal UX. Do
+    // not keep honoring an old explicit false value that users can no longer
+    // change; OBS's own filter visibility is now the user-facing enable path.
+    const bool new_enabled = true;
     const bool enabled_changed = filter->enabled.exchange(new_enabled, std::memory_order_relaxed) != new_enabled;
     filter->deadline_fraction.store(kInternalDeadlineFraction, std::memory_order_relaxed);
 
@@ -653,15 +658,20 @@ obs_properties_t* filter_properties(void* data)
 
     auto* open_editor = obs_properties_add_button2(
         props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
-    const bool has_native_editor = running && editor_status != safevst3::EditorStatus::Unsupported &&
-                                   editor_status != safevst3::EditorStatus::Error;
-    if (!has_native_editor)
+    const bool can_try_native_editor = running &&
+        editor_status != safevst3::EditorStatus::Unsupported &&
+        editor_status != safevst3::EditorStatus::Error;
+    const bool native_editor_confirmed = running &&
+        (editor_status == safevst3::EditorStatus::Open ||
+         editor_status == safevst3::EditorStatus::Closed);
+
+    if (!can_try_native_editor)
         obs_property_set_enabled(open_editor, false);
 
-    // Keep the normal properties panel as clean as the recovered native-like
-    // build. Generic controls are a fallback, not a second editor shown beside
-    // a perfectly usable vendor interface.
-    if (has_native_editor || parameters.empty())
+    // Unknown means the plug-in has a controller but its vendor UI has never
+    // successfully attached. Keep generic controls available until explicit
+    // Open succeeds so a broken/hanging GUI cannot make healthy DSP unusable.
+    if (native_editor_confirmed || parameters.empty())
         return props;
 
     obs_data_t* settings = filter->context ? obs_source_get_settings(filter->context) : nullptr;

@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release tag, for example v0.2.0-preview.1'
+        description: 'Release tag, for example v0.3.0-preview.1'
         required: true
         type: string
       obs_version:
@@ -255,7 +255,7 @@ jobs:
             }
           }
 
-      - name: Smoke-test Smart Installer on synthetic portable OBS
+      - name: Smoke-test Smart Installer and remembered portable target
         run: |
           $Setup = Get-ChildItem dist -Filter '*-Setup-x64.exe' -File | Select-Object -First 1
           if (-not $Setup) { throw 'Smart Installer was not created.' }
@@ -265,11 +265,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $SyntheticObs 'bin\64bit') | Out-Null
           Set-Content -Path (Join-Path $SyntheticObs 'bin\64bit\obs64.exe') -Value 'synthetic OBS marker' -Encoding ASCII
 
-          $PortableArg = "/PortableObsDir=`"$SyntheticObs`""
-          $Process = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $PortableArg -Wait -PassThru
-          if ($Process.ExitCode -ne 0) {
-            throw "Smart Installer failed with exit code $($Process.ExitCode)."
-          }
+          $SettingsReg = 'HKCU:\Software\masarray\OBS Safe VST3 Host'
+          Remove-Item -Path $SettingsReg -Recurse -Force -ErrorAction SilentlyContinue
 
           $Expected = @(
             'obs-plugins\64bit\obs-safe-vst3.dll',
@@ -277,26 +274,71 @@ jobs:
             'obs-plugins\64bit\obs-safe-vst3-scanner.exe',
             'data\obs-plugins\obs-safe-vst3\locale\en-US.ini'
           )
+
+          # First install: explicit portable root, as a first-time user would choose.
+          $PortableArg = "/PortableObsDir=`"$SyntheticObs`""
+          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $PortableArg -Wait -PassThru
+          if ($FirstInstall.ExitCode -ne 0) {
+            throw "First Smart Installer run failed with exit code $($FirstInstall.ExitCode)."
+          }
           foreach ($Relative in $Expected) {
             if (-not (Test-Path (Join-Path $SyntheticObs $Relative))) {
-              throw "Installer smoke test missing: $Relative"
+              throw "First installer run missing: $Relative"
             }
+          }
+
+          if (-not (Test-Path $SettingsReg)) {
+            throw 'Installer did not persist its remembered target registry key.'
+          }
+          $Remembered = Get-ItemProperty -Path $SettingsReg
+          if ($Remembered.LastInstallMode -ne 'portable') {
+            throw "Installer remembered unexpected mode '$($Remembered.LastInstallMode)'."
+          }
+          $ExpectedRoot = [IO.Path]::GetFullPath($SyntheticObs).TrimEnd('\')
+          $RememberedRoot = [IO.Path]::GetFullPath([string]$Remembered.LastPortableObsDir).TrimEnd('\')
+          if ($RememberedRoot -ne $ExpectedRoot) {
+            throw "Installer remembered '$RememberedRoot' instead of '$ExpectedRoot'."
           }
 
           $UninstallerRoot = Join-Path $env:ProgramFiles 'OBS Safe VST3 Host'
           $Uninstaller = Get-ChildItem -Path $UninstallerRoot -Filter 'unins*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $Uninstaller) {
-            throw 'Registered uninstaller was not created.'
+            throw 'Registered uninstaller was not created after first install.'
           }
-          $UninstallProcess = Start-Process -FilePath $Uninstaller.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
-          if ($UninstallProcess.ExitCode -ne 0) {
-            throw "Uninstaller smoke test failed with exit code $($UninstallProcess.ExitCode)."
+          $FirstUninstall = Start-Process -FilePath $Uninstaller.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($FirstUninstall.ExitCode -ne 0) {
+            throw "First uninstaller run failed with exit code $($FirstUninstall.ExitCode)."
           }
-          if (Test-Path (Join-Path $SyntheticObs 'obs-plugins\64bit\obs-safe-vst3.dll')) {
-            throw 'Uninstaller did not remove the plugin DLL from the custom OBS tree.'
+          foreach ($Relative in $Expected) {
+            if (Test-Path (Join-Path $SyntheticObs $Relative)) {
+              throw "First uninstall did not remove: $Relative"
+            }
           }
-          if (Test-Path (Join-Path $SyntheticObs 'obs-plugins\64bit\obs-safe-vst3-scanner.exe')) {
-            throw 'Uninstaller did not remove the isolated scanner from the custom OBS tree.'
+
+          # Second install: no /PortableObsDir at all. The remembered portable
+          # mode/path must make a future update one-click and target the same OBS.
+          $SecondInstall = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($SecondInstall.ExitCode -ne 0) {
+            throw "Remembered-target Smart Installer run failed with exit code $($SecondInstall.ExitCode)."
+          }
+          foreach ($Relative in $Expected) {
+            if (-not (Test-Path (Join-Path $SyntheticObs $Relative))) {
+              throw "Remembered-target installer did not restore: $Relative"
+            }
+          }
+
+          $Uninstaller = Get-ChildItem -Path $UninstallerRoot -Filter 'unins*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $Uninstaller) {
+            throw 'Registered uninstaller was not recreated after remembered-target install.'
+          }
+          $SecondUninstall = Start-Process -FilePath $Uninstaller.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($SecondUninstall.ExitCode -ne 0) {
+            throw "Second uninstaller run failed with exit code $($SecondUninstall.ExitCode)."
+          }
+          foreach ($Relative in $Expected) {
+            if (Test-Path (Join-Path $SyntheticObs $Relative)) {
+              throw "Second uninstall did not remove: $Relative"
+            }
           }
 
       - name: Upload workflow artifacts
