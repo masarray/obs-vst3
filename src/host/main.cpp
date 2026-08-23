@@ -36,7 +36,7 @@ std::string narrow(const std::wstring& value)
     if (value.empty()) return {};
     const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
     std::string out(static_cast<std::size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, value.data(), size, out.data(), size, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size, nullptr, nullptr);
     return out;
 }
 
@@ -461,8 +461,6 @@ public:
         if (!thread_.joinable() || !paused_event_ || !resumed_event_)
             return false;
 
-        // Never issue a second pause while the worker is still unwinding the
-        // previous one. This closes the lost false->true transition race.
         if (WaitForSingleObject(resumed_event_, timeout_ms) != WAIT_OBJECT_0)
             return false;
 
@@ -562,9 +560,6 @@ private:
                 SetEvent(response_event_);
             }
 
-            // Audio is serviced before control traffic. Only a bounded number of
-            // commands can run in one wake, preventing a knob/automation burst
-            // from monopolizing the DSP worker ahead of Ready audio slots.
             const std::size_t drained = drain_processor_commands(
                 region_, engine_, control_to_dsp_, kMaxProcessorCommandsPerWake);
             if (drained > 0 && !processed_any) {
@@ -871,7 +866,6 @@ int wmain(int argc, wchar_t** argv)
         if (wait != WAIT_TIMEOUT)
             handle_editor_command(region, engine, editor);
 
-        bool pending_parameter_delivery_failed = false;
         for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
             auto& descriptor = region->parameters[i];
             const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
@@ -891,7 +885,6 @@ int wmain(int argc, wchar_t** argv)
                 InterlockedExchange(&descriptor.applied_generation, generation);
                 SetEvent(endpoint.dsp_event());
             } else {
-                pending_parameter_delivery_failed = true;
                 InterlockedExchange(&region->last_error, 6);
             }
         }
@@ -923,7 +916,6 @@ int wmain(int argc, wchar_t** argv)
             } else if (dsp.pause(2000)) {
                 bool frontier_ok = true;
 
-                // A late native overflow must win over queued DSP feedback.
                 if (native_resync_required.load(std::memory_order_acquire)) {
                     frontier_ok = reconcile_native_edits_after_pause(
                         region, engine, dsp_to_control, native_resync_required);
@@ -934,11 +926,6 @@ int wmain(int argc, wchar_t** argv)
                         region, engine, dsp_to_control, feedback_resync_required);
                 }
 
-                // Re-read host pending/applied generations while the processor
-                // is stopped. This closes the scan->state race: any edit already
-                // visible at the capture frontier is applied directly and
-                // flushed before getState(). Rapidly changing frontiers fail
-                // transiently instead of producing a stale exact snapshot.
                 if (frontier_ok)
                     frontier_ok = catch_up_pending_host_parameters_after_pause(region, engine);
                 if (native_resync_required.load(std::memory_order_acquire))
