@@ -658,12 +658,20 @@ obs_properties_t* filter_properties(void* data)
 
     auto* open_editor = obs_properties_add_button2(
         props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
-    const bool has_native_editor = running && editor_status != safevst3::EditorStatus::Unsupported &&
-                                   editor_status != safevst3::EditorStatus::Error;
-    if (!has_native_editor)
+    const bool can_try_native_editor = running &&
+        editor_status != safevst3::EditorStatus::Unsupported &&
+        editor_status != safevst3::EditorStatus::Error;
+    const bool native_editor_confirmed = running &&
+        (editor_status == safevst3::EditorStatus::Open ||
+         editor_status == safevst3::EditorStatus::Closed);
+
+    if (!can_try_native_editor)
         obs_property_set_enabled(open_editor, false);
 
-    if (has_native_editor || parameters.empty())
+    // Unknown means the plug-in has a controller but its vendor UI has never
+    // successfully attached. Keep generic controls available until explicit
+    // Open succeeds so a broken/hanging GUI cannot make healthy DSP unusable.
+    if (native_editor_confirmed || parameters.empty())
         return props;
 
     obs_data_t* settings = filter->context ? obs_source_get_settings(filter->context) : nullptr;
