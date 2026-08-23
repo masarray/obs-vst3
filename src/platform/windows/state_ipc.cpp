@@ -31,12 +31,15 @@ bool WinObsBridge::wait_for_state_request(long request_generation, std::string& 
 
     const ULONGLONG deadline = GetTickCount64() + 2000;
     HANDLE wait_handles[] = {state_event_, process_.hProcess};
-    while (GetTickCount64() < deadline) {
+    while (true) {
         if (InterlockedCompareExchange(&region_->state_applied_generation, 0, 0) == request_generation)
             return true;
 
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline)
+            break;
         const DWORD remaining = static_cast<DWORD>(
-            std::min<ULONGLONG>(deadline - GetTickCount64(), 100));
+            std::min<ULONGLONG>(deadline - now, 100));
         const DWORD wait = WaitForMultipleObjects(2, wait_handles, FALSE, remaining);
         if (wait == WAIT_OBJECT_0)
             continue;
