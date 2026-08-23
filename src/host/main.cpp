@@ -31,6 +31,50 @@ constexpr std::size_t kMaxPausedHostCatchupPasses = 4;
 constexpr ULONGLONG kPausedHeartbeatGraceMs = 2000;
 using ParameterQueue = safevst3::SpscRing<safevst3::EngineParameterUpdate, kParameterTransferCapacity>;
 
+class NativeOverrideBuffer {
+public:
+    bool record(const safevst3::EngineParameterUpdate& update) noexcept
+    {
+        for (std::size_t i = 0; i < count_; ++i) {
+            if (updates_[i].id == update.id) {
+                updates_[i].normalized = update.normalized;
+                return true;
+            }
+        }
+        if (count_ >= updates_.size()) {
+            overflowed_ = true;
+            return false;
+        }
+        updates_[count_++] = update;
+        return true;
+    }
+
+    bool contains(std::uint32_t id) const noexcept
+    {
+        for (std::size_t i = 0; i < count_; ++i) {
+            if (updates_[i].id == id)
+                return true;
+        }
+        return false;
+    }
+
+    bool empty() const noexcept { return count_ == 0 && !overflowed_; }
+    bool overflowed() const noexcept { return overflowed_; }
+    std::size_t size() const noexcept { return count_; }
+    const safevst3::EngineParameterUpdate& at(std::size_t index) const noexcept { return updates_[index]; }
+
+    void clear() noexcept
+    {
+        count_ = 0;
+        overflowed_ = false;
+    }
+
+private:
+    std::array<safevst3::EngineParameterUpdate, kParameterTransferCapacity> updates_{};
+    std::size_t count_ = 0;
+    bool overflowed_ = false;
+};
+
 std::string narrow(const std::wstring& value)
 {
     if (value.empty()) return {};
@@ -157,10 +201,18 @@ void drain_controller_feedback(safevst3::SharedAudioRegion* region,
     }
 }
 
-void discard_controller_feedback(ParameterQueue& feedback) noexcept
+void drain_controller_feedback_preserving_native_overrides(
+    safevst3::SharedAudioRegion* region,
+    safevst3::Vst3Engine& engine,
+    ParameterQueue& feedback,
+    const NativeOverrideBuffer& native_overrides) noexcept
 {
-    safevst3::EngineParameterUpdate ignored{};
-    while (feedback.pop(ignored)) {
+    safevst3::EngineParameterUpdate update{};
+    while (feedback.pop(update)) {
+        if (native_overrides.contains(update.id))
+            continue;
+        (void)engine.set_controller_parameter(update.id, update.normalized);
+        publish_parameter_value(region, update.id, update.normalized);
     }
 }
 
@@ -196,25 +248,39 @@ void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
 bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
                                         safevst3::Vst3Engine& engine,
                                         ParameterQueue& feedback,
-                                        std::atomic<bool>& native_resync_required) noexcept
+                                        NativeOverrideBuffer& native_overrides) noexcept
 {
-    if (!native_resync_required.load(std::memory_order_acquire))
+    if (native_overrides.empty())
         return true;
+    if (native_overrides.overflowed()) {
+        if (region)
+            InterlockedExchange(&region->last_error, 15);
+        return false;
+    }
 
-    engine.refresh_parameter_values();
-    discard_controller_feedback(feedback);
+    // Preserve legitimate DSP-originated changes for every parameter that did
+    // not lose a native edit. Only feedback for explicitly overridden IDs is
+    // superseded by the newer controller value captured below.
+    drain_controller_feedback_preserving_native_overrides(
+        region, engine, feedback, native_overrides);
 
     bool queued_all = true;
-    for (const auto& parameter : engine.parameters()) {
-        if (!engine.queue_processor_parameter(parameter.id, parameter.current_normalized))
+    for (std::size_t i = 0; i < native_overrides.size(); ++i) {
+        const auto& update = native_overrides.at(i);
+        if (!engine.set_controller_parameter(update.id, update.normalized) ||
+            !engine.queue_processor_parameter(update.id, update.normalized)) {
             queued_all = false;
+            continue;
+        }
+        publish_parameter_value(region, update.id, update.normalized);
     }
+
     const bool flushed = engine.flush_parameter_changes();
     publish_engine_updates_direct(region, engine);
     sync_engine_mirror_to_controller(region, engine);
 
     if (queued_all && flushed) {
-        native_resync_required.store(false, std::memory_order_release);
+        native_overrides.clear();
         return true;
     }
     if (region)
@@ -301,11 +367,11 @@ class ComponentHandler final : public Steinberg::Vst::IComponentHandler {
 public:
     ComponentHandler(safevst3::SharedAudioRegion* region,
                      ParameterQueue& control_to_dsp,
-                     std::atomic<bool>& native_resync_required,
+                     NativeOverrideBuffer& native_overrides,
                      HANDLE dsp_event,
                      HANDLE control_event)
         : region_(region), control_to_dsp_(control_to_dsp),
-          native_resync_required_(native_resync_required), dsp_event_(dsp_event),
+          native_overrides_(native_overrides), dsp_event_(dsp_event),
           control_event_(control_event)
     {
     }
@@ -320,18 +386,18 @@ public:
     {
         const safevst3::EngineParameterUpdate update{static_cast<std::uint32_t>(id), value};
         if (!control_to_dsp_.push(update)) {
-            native_resync_required_.store(true, std::memory_order_release);
+            const bool retained = native_overrides_.record(update);
             publish_parameter_value(region_, update.id, value);
             if (region_) {
                 InterlockedIncrement(&region_->state_dirty_generation);
-                InterlockedExchange(&region_->last_error, 6);
+                InterlockedExchange(&region_->last_error, retained ? 6 : 15);
             }
             if (dsp_event_)
                 SetEvent(dsp_event_);
             if (control_event_)
                 SetEvent(control_event_);
             edit_pending_.store(true, std::memory_order_release);
-            return Steinberg::kResultOk;
+            return retained ? Steinberg::kResultOk : Steinberg::kResultFalse;
         }
         publish_parameter_value(region_, update.id, value);
         if (region_)
@@ -385,7 +451,7 @@ public:
 private:
     safevst3::SharedAudioRegion* region_ = nullptr;
     ParameterQueue& control_to_dsp_;
-    std::atomic<bool>& native_resync_required_;
+    NativeOverrideBuffer& native_overrides_;
     HANDLE dsp_event_ = nullptr;
     HANDLE control_event_ = nullptr;
     std::atomic<bool> edit_pending_{false};
@@ -772,9 +838,9 @@ int wmain(int argc, wchar_t** argv)
     ParameterQueue control_to_dsp;
     ParameterQueue dsp_to_control;
     std::atomic<bool> feedback_resync_required{false};
-    std::atomic<bool> native_resync_required{false};
+    NativeOverrideBuffer native_overrides;
     ComponentHandler component_handler(
-        region, control_to_dsp, native_resync_required,
+        region, control_to_dsp, native_overrides,
         endpoint.dsp_event(), endpoint.request_event());
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
@@ -827,7 +893,7 @@ int wmain(int argc, wchar_t** argv)
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
 
-        if (!native_resync_required.load(std::memory_order_acquire)) {
+        if (native_overrides.empty()) {
             drain_controller_feedback(region, engine, dsp_to_control);
             if (feedback_resync_required.load(std::memory_order_acquire)) {
                 if (dsp.pause(2000)) {
@@ -839,16 +905,21 @@ int wmain(int argc, wchar_t** argv)
                     InterlockedExchange(&region->last_error, 11);
                 }
             }
+        } else {
+            // A failed native delivery only supersedes feedback for the same
+            // parameter IDs. Preserve and apply unrelated DSP changes now.
+            drain_controller_feedback_preserving_native_overrides(
+                region, engine, dsp_to_control, native_overrides);
         }
 
         if (wait == WAIT_OBJECT_0 + 1)
             pump_windows_messages();
 
         bool native_resync_failed = false;
-        if (native_resync_required.load(std::memory_order_acquire)) {
+        if (!native_overrides.empty()) {
             if (dsp.pause(2000)) {
                 if (reconcile_native_edits_after_pause(
-                        region, engine, dsp_to_control, native_resync_required)) {
+                        region, engine, dsp_to_control, native_overrides)) {
                     feedback_resync_required.store(false, std::memory_order_release);
                 } else {
                     native_resync_failed = true;
@@ -894,10 +965,15 @@ int wmain(int argc, wchar_t** argv)
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         if ((restart_flags & Steinberg::Vst::kParamValuesChanged) != 0) {
             if (dsp.pause(2000)) {
-                reconcile_controller_feedback_after_pause(
-                    region, engine, dsp_to_control, feedback_resync_required);
-                engine.refresh_parameter_values();
-                publish_engine_updates_direct(region, engine);
+                if (native_overrides.empty()) {
+                    reconcile_controller_feedback_after_pause(
+                        region, engine, dsp_to_control, feedback_resync_required);
+                    engine.refresh_parameter_values();
+                    publish_engine_updates_direct(region, engine);
+                } else if (reconcile_native_edits_after_pause(
+                               region, engine, dsp_to_control, native_overrides)) {
+                    feedback_resync_required.store(false, std::memory_order_release);
+                }
                 if (!dsp.resume(2000))
                     InterlockedExchange(&region->last_error, 14);
             } else {
@@ -910,15 +986,15 @@ int wmain(int argc, wchar_t** argv)
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
         const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
         if (state_requested != state_applied) {
-            if (native_resync_failed || native_resync_required.load(std::memory_order_acquire)) {
+            if (native_resync_failed || native_overrides.overflowed()) {
                 complete_state_failure(region, endpoint.state_event());
                 InterlockedExchange(&region->last_error, 12);
             } else if (dsp.pause(2000)) {
                 bool frontier_ok = true;
 
-                if (native_resync_required.load(std::memory_order_acquire)) {
+                if (!native_overrides.empty()) {
                     frontier_ok = reconcile_native_edits_after_pause(
-                        region, engine, dsp_to_control, native_resync_required);
+                        region, engine, dsp_to_control, native_overrides);
                     if (frontier_ok)
                         feedback_resync_required.store(false, std::memory_order_release);
                 } else {
@@ -928,7 +1004,7 @@ int wmain(int argc, wchar_t** argv)
 
                 if (frontier_ok)
                     frontier_ok = catch_up_pending_host_parameters_after_pause(region, engine);
-                if (native_resync_required.load(std::memory_order_acquire))
+                if (!native_overrides.empty())
                     frontier_ok = false;
 
                 if (frontier_ok) {
@@ -946,8 +1022,12 @@ int wmain(int argc, wchar_t** argv)
             }
         }
 
-        if (!native_resync_required.load(std::memory_order_acquire))
+        if (native_overrides.empty())
             drain_controller_feedback(region, engine, dsp_to_control);
+        else
+            drain_controller_feedback_preserving_native_overrides(
+                region, engine, dsp_to_control, native_overrides);
+
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,
                                 static_cast<long>(editor.visible() ? EditorStatus::Open : EditorStatus::Closed));
