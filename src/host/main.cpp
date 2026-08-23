@@ -245,6 +245,12 @@ int wmain(int argc, wchar_t** argv)
         return 3;
     }
 
+    // Publish the same user-facing identity the earlier native-like build exposed:
+    // plug-in name plus its reported VST3 latency. This is status data only and
+    // never participates in the realtime callback protocol.
+    copy_text(region->plugin_name, kPluginNameBytes, engine.plugin_name());
+    region->latency_samples = engine.latency_samples();
+
     ComponentHandler component_handler(engine, region);
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
