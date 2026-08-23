@@ -33,6 +33,7 @@ if(WIN32)
     FetchContent_MakeAvailable(vst3sdk)
 
     add_library(safevst3_vst3_hosting_runtime STATIC
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/common/memorystream.cpp
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
     )
