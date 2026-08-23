@@ -83,7 +83,9 @@ void add_generic_parameter_properties(obs_properties_t* parent,
         if ((parameter.flags & ParameterReadOnly) != 0)
             obs_property_set_enabled(property, false);
 
-        if (source_settings && !obs_data_has_default_value(source_settings, key.c_str()))
+        // Defaults mirror the latest processor/controller value. A user value,
+        // when present, remains authoritative and is never overwritten here.
+        if (source_settings)
             obs_data_set_default_double(source_settings, key.c_str(), parameter.current_normalized);
         ++visible_count;
     }
