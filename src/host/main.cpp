@@ -109,20 +109,30 @@ void publish_parameter_value(safevst3::SharedAudioRegion* region,
 
 bool enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
                                 safevst3::Vst3Engine& engine,
-                                ParameterQueue& feedback) noexcept
+                                ParameterQueue& feedback,
+                                std::atomic<bool>& resync_required) noexcept
 {
-    bool queued_any = false;
+    bool notify_control = false;
     std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
     const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
     for (std::size_t i = 0; i < count; ++i) {
+        // The shared mirror is latest-value storage and is safe to update from
+        // DSP with an interlocked write. Even if the bounded feedback queue is
+        // saturated by a long control/UI stall, OBS never regresses its value.
+        publish_parameter_value(region, updates[i].id, updates[i].normalized);
         if (!feedback.push(updates[i])) {
+            // Never block realtime and never silently lose the semantic update.
+            // The control thread will pause DSP and replay engine.parameters()
+            // into IEditController once it resumes.
+            resync_required.store(true, std::memory_order_release);
             if (region)
                 InterlockedExchange(&region->last_error, 4);
-            break;
+            notify_control = true;
+            continue;
         }
-        queued_any = true;
+        notify_control = true;
     }
-    return queued_any;
+    return notify_control;
 }
 
 bool drain_processor_commands(safevst3::SharedAudioRegion* region,
@@ -149,6 +159,24 @@ void drain_controller_feedback(safevst3::SharedAudioRegion* region,
     while (feedback.pop(update)) {
         (void)engine.set_controller_parameter(update.id, update.normalized);
         publish_parameter_value(region, update.id, update.normalized);
+    }
+}
+
+void reconcile_controller_feedback_after_pause(safevst3::SharedAudioRegion* region,
+                                               safevst3::Vst3Engine& engine,
+                                               ParameterQueue& feedback,
+                                               std::atomic<bool>& resync_required) noexcept
+{
+    // DSP is paused: no producer can mutate the engine parameter mirror or add
+    // new feedback while this transaction runs. Apply queued feedback first so
+    // old queue entries can never overwrite the authoritative full resync.
+    drain_controller_feedback(region, engine, feedback);
+    if (!resync_required.exchange(false, std::memory_order_acq_rel))
+        return;
+
+    for (const auto& parameter : engine.parameters()) {
+        (void)engine.set_controller_parameter(parameter.id, parameter.current_normalized);
+        publish_parameter_value(region, parameter.id, parameter.current_normalized);
     }
 }
 
@@ -247,12 +275,13 @@ public:
               safevst3::Vst3Engine& engine,
               ParameterQueue& control_to_dsp,
               ParameterQueue& dsp_to_control,
+              std::atomic<bool>& feedback_resync_required,
               HANDLE dsp_event,
               HANDLE control_event,
               HANDLE response_event)
         : region_(region), engine_(engine), control_to_dsp_(control_to_dsp),
-          dsp_to_control_(dsp_to_control), dsp_event_(dsp_event),
-          control_event_(control_event), response_event_(response_event)
+          dsp_to_control_(dsp_to_control), feedback_resync_required_(feedback_resync_required),
+          dsp_event_(dsp_event), control_event_(control_event), response_event_(response_event)
     {
     }
 
@@ -333,13 +362,14 @@ private:
                 // Drain and flush every control->DSP edit before acknowledging
                 // pause. This preserves S1's invariant that getState() cannot
                 // capture one knob edit behind the visible controller.
-                bool feedback_queued = false;
+                bool feedback_pending = false;
                 if (drain_processor_commands(region_, engine_, control_to_dsp_)) {
                     if (!engine_.flush_parameter_changes())
                         InterlockedExchange(&region_->last_error, 2);
-                    feedback_queued |= enqueue_processor_feedback(region_, engine_, dsp_to_control_);
+                    feedback_pending |= enqueue_processor_feedback(
+                        region_, engine_, dsp_to_control_, feedback_resync_required_);
                 }
-                if (feedback_queued && control_event_)
+                if (feedback_pending && control_event_)
                     SetEvent(control_event_);
 
                 const ULONGLONG pause_started = GetTickCount64();
@@ -371,7 +401,7 @@ private:
 
             const bool parameter_edits = drain_processor_commands(region_, engine_, control_to_dsp_);
             bool processed_any = false;
-            bool feedback_queued = false;
+            bool feedback_pending = false;
 
             for (std::uint32_t i = 0; i < safevst3::kSlotCount; ++i) {
                 auto& slot = region_->slots[i];
@@ -383,7 +413,8 @@ private:
 
                 processed_any = true;
                 const bool ok = engine_.process(slot);
-                feedback_queued |= enqueue_processor_feedback(region_, engine_, dsp_to_control_);
+                feedback_pending |= enqueue_processor_feedback(
+                    region_, engine_, dsp_to_control_, feedback_resync_required_);
                 InterlockedExchange(&slot.result,
                                     static_cast<long>(ok ? safevst3::ProcessResult::Ok
                                                         : safevst3::ProcessResult::VstProcessError));
@@ -395,10 +426,11 @@ private:
             if (parameter_edits && !processed_any) {
                 if (!engine_.flush_parameter_changes())
                     InterlockedExchange(&region_->last_error, 2);
-                feedback_queued |= enqueue_processor_feedback(region_, engine_, dsp_to_control_);
+                feedback_pending |= enqueue_processor_feedback(
+                    region_, engine_, dsp_to_control_, feedback_resync_required_);
             }
 
-            if (feedback_queued && control_event_)
+            if (feedback_pending && control_event_)
                 SetEvent(control_event_);
             publish_dsp_heartbeat(region_);
         }
@@ -411,6 +443,7 @@ private:
     safevst3::Vst3Engine& engine_;
     ParameterQueue& control_to_dsp_;
     ParameterQueue& dsp_to_control_;
+    std::atomic<bool>& feedback_resync_required_;
     HANDLE dsp_event_ = nullptr;
     HANDLE control_event_ = nullptr;
     HANDLE response_event_ = nullptr;
@@ -594,6 +627,7 @@ int wmain(int argc, wchar_t** argv)
 
     ParameterQueue control_to_dsp;
     ParameterQueue dsp_to_control;
+    std::atomic<bool> feedback_resync_required{false};
     ComponentHandler component_handler(region, control_to_dsp, endpoint.dsp_event());
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
@@ -622,7 +656,7 @@ int wmain(int argc, wchar_t** argv)
                                                     : EditorStatus::Unsupported));
     MemoryBarrier();
 
-    DspWorker dsp(region, engine, control_to_dsp, dsp_to_control,
+    DspWorker dsp(region, engine, control_to_dsp, dsp_to_control, feedback_resync_required,
                   endpoint.dsp_event(), endpoint.request_event(), endpoint.response_event());
     if (!dsp.start(error)) {
         region->last_error = 8;
@@ -650,6 +684,15 @@ int wmain(int argc, wchar_t** argv)
             pump_windows_messages();
 
         drain_controller_feedback(region, engine, dsp_to_control);
+        if (feedback_resync_required.load(std::memory_order_acquire)) {
+            if (dsp.pause(2000)) {
+                reconcile_controller_feedback_after_pause(
+                    region, engine, dsp_to_control, feedback_resync_required);
+                dsp.resume();
+            } else {
+                InterlockedExchange(&region->last_error, 11);
+            }
+        }
 
         if (wait != WAIT_TIMEOUT) {
             handle_editor_command(region, engine, editor);
@@ -683,6 +726,8 @@ int wmain(int argc, wchar_t** argv)
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         if ((restart_flags & Steinberg::Vst::kParamValuesChanged) != 0) {
             if (dsp.pause(2000)) {
+                reconcile_controller_feedback_after_pause(
+                    region, engine, dsp_to_control, feedback_resync_required);
                 engine.refresh_parameter_values();
                 publish_engine_updates_direct(region, engine);
                 dsp.resume();
@@ -697,6 +742,12 @@ int wmain(int argc, wchar_t** argv)
         const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
         if (state_requested != state_applied) {
             if (dsp.pause(2000)) {
+                // A block already in flight may have produced final processor
+                // feedback just before pause acknowledgement. Apply it to the
+                // controller before getState(), so component/controller blobs
+                // represent the same exact processing frontier.
+                reconcile_controller_feedback_after_pause(
+                    region, engine, dsp_to_control, feedback_resync_required);
                 handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
                 dsp.resume();
             } else {
