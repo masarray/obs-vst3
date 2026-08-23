@@ -70,6 +70,7 @@ if(WIN32)
             add_library(obs-safe-vst3 MODULE
                 src/obs-plugin/plugin.cpp
                 src/obs-plugin/parameter_controls.cpp
+                src/obs-plugin/state_store.cpp
             )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(obs-safe-vst3 PRIVATE OBS::libobs safevst3_win_ipc)
