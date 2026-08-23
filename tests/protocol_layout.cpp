@@ -19,6 +19,10 @@ int main()
     assert(region.version == kProtocolVersion);
     assert(region.parameter_count == 0);
     assert(region.parameter_total_count == 0);
+    assert(region.editor_command == static_cast<long>(EditorCommand::None));
+    assert(region.editor_status == static_cast<long>(EditorStatus::Unknown));
+    assert(region.editor_request_generation == 0);
+    assert(region.editor_applied_generation == 0);
     std::cout << "protocol v" << region.version << ", shared region " << sizeof(region) << " bytes\n";
     return 0;
 }
