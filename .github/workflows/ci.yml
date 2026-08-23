@@ -71,19 +71,50 @@ jobs:
           CI: 'true'
         run: .\.github\scripts\Build-Windows.ps1 -Target x64 -Configuration Release
 
-      - name: Locate libobs package
+      - name: Stage libobs development package
         id: libobs
         shell: pwsh
         run: |
-          $Config = Get-ChildItem -Path '.obs-sdk\build_x64\install' -Filter 'libobsConfig.cmake' -File -Recurse | Select-Object -First 1
-          if (-not $Config) { throw 'libobsConfig.cmake not found' }
+          $Generated = Get-ChildItem -Path '.obs-sdk' -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '[\\/]install[\\/]' } |
+            Select-Object -First 1
+          if (-not $Generated) {
+            throw 'Generated libobsConfig.cmake was not found after the OBS build.'
+          }
+
+          $BuildRoot = Split-Path $Generated.Directory.FullName -Parent
+          if (-not (Test-Path (Join-Path $BuildRoot 'cmake_install.cmake'))) {
+            throw "Could not derive the OBS CMake build root from $($Generated.FullName)."
+          }
+
+          $SdkPrefix = Join-Path $env:RUNNER_TEMP 'obs-libobs-sdk'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SdkPrefix
+          cmake --install $BuildRoot --prefix $SdkPrefix --config Release --component Development
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installing the OBS Development component failed with exit code $LASTEXITCODE."
+          }
+
+          $Config = Get-ChildItem -Path $SdkPrefix -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $Config) {
+            throw 'libobsConfig.cmake was not installed by the OBS Development component.'
+          }
+          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'libobsTargets.cmake'))) {
+            throw 'Staged libobs package is incomplete: libobsTargets.cmake is missing.'
+          }
+          if (-not (Test-Path (Join-Path $Config.Directory.FullName 'finders\Findw32-pthreads.cmake'))) {
+            throw 'Staged libobs package is incomplete: dependency finders are missing.'
+          }
+
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
+          "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
+          Write-Host "Using staged libobs package: $($Config.FullName)"
 
       - name: Configure public-trial module
         shell: pwsh
         run: |
           cmake -S . -B build/module -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }}" `
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
 
