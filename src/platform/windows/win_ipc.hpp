@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <stop_token>
 #include <string>
 
 namespace safevst3 {
@@ -32,9 +33,11 @@ public:
                const std::string& class_id,
                std::uint32_t sample_rate,
                std::uint32_t channels,
-               std::string& error);
+               std::string& error,
+               std::stop_token cancel = {});
 
     void stop() noexcept;
+    void abort() noexcept;
     bool running() const noexcept;
 
     // Returns true only when wet output was produced before the deadline.
