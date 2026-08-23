@@ -6,6 +6,7 @@
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
+#include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "public.sdk/source/vst/hosting/hostclasses.h"
 #include "public.sdk/source/vst/hosting/module.h"
 #include "public.sdk/source/vst/hosting/plugprovider.h"
@@ -39,7 +40,7 @@ private:
     bool configure_buses(std::uint32_t channels, std::string& error);
 
     Steinberg::IPtr<Steinberg::Vst::HostApplication> host_;
-    std::shared_ptr<Steinberg::VST3::Hosting::Module> module_;
+    VST3::Hosting::Module::Ptr module_;
     Steinberg::IPtr<Steinberg::Vst::PlugProvider> provider_;
     Steinberg::IPtr<Steinberg::Vst::IComponent> component_;
     Steinberg::FUnknownPtr<Steinberg::Vst::IAudioProcessor> processor_;
