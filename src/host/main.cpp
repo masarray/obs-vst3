@@ -109,6 +109,8 @@ public:
         if (!engine_.queue_parameter_from_controller(static_cast<std::uint32_t>(id), value))
             return Steinberg::kResultFalse;
         publish_parameter_value(region_, static_cast<std::uint32_t>(id), value);
+        if (region_)
+            InterlockedIncrement(&region_->state_dirty_generation);
         edit_pending_.store(true, std::memory_order_release);
         return Steinberg::kResultOk;
     }
@@ -121,6 +123,8 @@ public:
     Steinberg::tresult PLUGIN_API restartComponent(Steinberg::int32 flags) override
     {
         restart_flags_.fetch_or(flags, std::memory_order_release);
+        if (region_ && flags != 0)
+            InterlockedIncrement(&region_->state_dirty_generation);
         return Steinberg::kResultOk;
     }
 
@@ -203,6 +207,77 @@ void handle_editor_command(safevst3::SharedAudioRegion* region,
     InterlockedExchange(&region->editor_applied_generation, requested);
 }
 
+void handle_state_command(safevst3::SharedAudioRegion* region,
+                          safevst3::StateTransferRegion* transfer,
+                          safevst3::Vst3Engine& engine,
+                          HANDLE state_event)
+{
+    const long requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
+    const long applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
+    if (requested == applied)
+        return;
+
+    const auto command = static_cast<safevst3::StateCommand>(
+        InterlockedCompareExchange(&region->state_command, 0, 0));
+    safevst3::StateStatus status = safevst3::StateStatus::Invalid;
+    std::string error;
+
+    if (!transfer || transfer->magic != safevst3::kStateTransferMagic ||
+        transfer->version != safevst3::kStateTransferVersion ||
+        transfer->capacity != safevst3::kMaxStateBytes) {
+        status = safevst3::StateStatus::Invalid;
+    } else if (command == safevst3::StateCommand::Capture) {
+        safevst3::PluginStateSnapshot snapshot{};
+        if (!engine.capture_state(snapshot, error)) {
+            status = safevst3::StateStatus::VstError;
+        } else if (snapshot.component.size() > safevst3::kMaxStateBytes ||
+                   snapshot.controller.size() > safevst3::kMaxStateBytes - snapshot.component.size()) {
+            status = safevst3::StateStatus::TooLarge;
+        } else {
+            if (!snapshot.component.empty())
+                std::memcpy(transfer->payload, snapshot.component.data(), snapshot.component.size());
+            if (!snapshot.controller.empty()) {
+                std::memcpy(transfer->payload + snapshot.component.size(),
+                            snapshot.controller.data(), snapshot.controller.size());
+            }
+            region->state_component_bytes = static_cast<std::uint32_t>(snapshot.component.size());
+            region->state_controller_bytes = static_cast<std::uint32_t>(snapshot.controller.size());
+            status = safevst3::StateStatus::Ok;
+        }
+    } else if (command == safevst3::StateCommand::Restore) {
+        const std::size_t component_bytes = region->state_component_bytes;
+        const std::size_t controller_bytes = region->state_controller_bytes;
+        if (component_bytes > safevst3::kMaxStateBytes ||
+            controller_bytes > safevst3::kMaxStateBytes - component_bytes) {
+            status = safevst3::StateStatus::TooLarge;
+        } else {
+            safevst3::PluginStateSnapshot snapshot{};
+            snapshot.component.assign(
+                transfer->payload,
+                transfer->payload + static_cast<std::ptrdiff_t>(component_bytes));
+            snapshot.controller.assign(
+                transfer->payload + static_cast<std::ptrdiff_t>(component_bytes),
+                transfer->payload + static_cast<std::ptrdiff_t>(component_bytes + controller_bytes));
+            if (engine.restore_state(snapshot, error)) {
+                region->latency_samples = engine.latency_samples();
+                publish_parameter_feedback(region, engine);
+                status = safevst3::StateStatus::Ok;
+            } else {
+                status = safevst3::StateStatus::VstError;
+            }
+        }
+    }
+
+    if (!error.empty())
+        std::cerr << "VST3 state: " << error << '\n';
+    MemoryBarrier();
+    InterlockedExchange(&region->state_status, static_cast<long>(status));
+    InterlockedExchange(&region->state_command, static_cast<long>(safevst3::StateCommand::None));
+    InterlockedExchange(&region->state_applied_generation, requested);
+    if (state_event)
+        SetEvent(state_event);
+}
+
 void pump_windows_messages()
 {
     MSG message{};
@@ -224,7 +299,8 @@ int wmain(int argc, wchar_t** argv)
         return it == args.end() ? std::wstring{} : it->second;
     };
 
-    BridgeNames names{get(L"--mapping"), get(L"--request-event"), get(L"--response-event"), get(L"--ready-event")};
+    BridgeNames names{get(L"--mapping"), get(L"--state-mapping"), get(L"--request-event"),
+                      get(L"--response-event"), get(L"--ready-event"), get(L"--state-event")};
     const std::wstring vst_path_w = get(L"--vst");
     const std::string class_id = narrow(get(L"--class-id"));
 
@@ -301,6 +377,7 @@ int wmain(int argc, wchar_t** argv)
             pump_windows_messages();
 
         handle_editor_command(region, engine, editor);
+        handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
 
         bool parameter_edits = false;
         for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
@@ -316,6 +393,7 @@ int wmain(int argc, wchar_t** argv)
             if (engine.queue_parameter(descriptor.id, value)) {
                 publish_parameter_value(region, descriptor.id,
                     normalize_parameter_value(value, descriptor.step_count));
+                InterlockedIncrement(&region->state_dirty_generation);
                 parameter_edits = true;
             }
             InterlockedExchange(&descriptor.applied_generation, generation);
