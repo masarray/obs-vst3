@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include "common/parameter_utils.hpp"
 #include "host/vst3_engine.hpp"
 #include "platform/windows/win_ipc.hpp"
 
@@ -159,9 +160,6 @@ int wmain(int argc, wchar_t** argv)
             SetEvent(endpoint.response_event());
         }
 
-        // VST3 requires hosts to flush controller-to-processor parameter edits
-        // even when no normal audio block is running. This zero-sample process
-        // keeps generic controls synchronized while an OBS source is inactive.
         if (parameter_edits && !processed_any && !engine.flush_parameter_changes())
             region->last_error = 2;
 
