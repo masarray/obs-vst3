@@ -68,6 +68,11 @@ public:
 
     bool flush_parameter_changes() noexcept;
     void refresh_parameter_values() noexcept;
+    // Control-thread recovery seam. Call only while the DSP worker is paused:
+    // it replays the processor-owned latest-value mirror into IEditController
+    // after bounded DSP->control feedback overflow, so no one-shot change is
+    // permanently lost merely because the UI/control thread stalled.
+    void sync_controller_from_processor_mirror() noexcept;
     std::size_t take_parameter_updates(EngineParameterUpdate* destination, std::size_t capacity) noexcept;
 
     void set_component_handler(Steinberg::Vst::IComponentHandler* handler) noexcept;
