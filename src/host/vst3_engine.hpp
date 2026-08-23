@@ -14,6 +14,8 @@
 #include "public.sdk/source/vst/hosting/plugprovider.h"
 #include "public.sdk/source/vst/hosting/processdata.h"
 
+#include <array>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +30,11 @@ struct EngineParameter {
     double current_normalized = 0.0;
     std::string title;
     std::string units;
+};
+
+struct EngineParameterUpdate {
+    std::uint32_t id = 0;
+    double normalized = 0.0;
 };
 
 class Vst3Engine {
@@ -48,6 +55,7 @@ public:
 
     bool queue_parameter(std::uint32_t id, double normalized) noexcept;
     bool flush_parameter_changes() noexcept;
+    std::size_t take_parameter_updates(EngineParameterUpdate* destination, std::size_t capacity) noexcept;
 
     const std::string& plugin_name() const noexcept { return plugin_name_; }
     std::uint32_t latency_samples() const noexcept { return latency_samples_; }
@@ -58,6 +66,8 @@ private:
     bool enumerate_parameters(std::string& error);
     bool apply_pending_parameter_changes(Steinberg::Vst::ProcessData& data) noexcept;
     void finish_parameter_changes() noexcept;
+    void capture_output_parameter_changes() noexcept;
+    void record_parameter_update(std::uint32_t id, double normalized) noexcept;
     EngineParameter* find_parameter(std::uint32_t id) noexcept;
 
     Steinberg::IPtr<Steinberg::Vst::HostApplication> host_;
@@ -68,11 +78,14 @@ private:
     Steinberg::FUnknownPtr<Steinberg::Vst::IAudioProcessor> processor_;
     Steinberg::Vst::HostProcessData process_data_;
     Steinberg::Vst::ParameterChanges input_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
+    Steinberg::Vst::ParameterChanges output_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
     Steinberg::Vst::ProcessSetup process_setup_{};
     Steinberg::Vst::ProcessContext process_context_{};
     Steinberg::int32 main_input_bus_ = -1;
     Steinberg::int32 main_output_bus_ = -1;
     std::vector<EngineParameter> parameters_;
+    std::array<EngineParameterUpdate, kMaxParameters> parameter_updates_{};
+    std::size_t parameter_update_count_ = 0;
     std::string plugin_name_;
     std::uint32_t sample_rate_ = 0;
     std::uint32_t channels_ = 0;
