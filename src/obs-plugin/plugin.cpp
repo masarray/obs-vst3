@@ -34,8 +34,9 @@ constexpr const char* kPluginPath = "vst3_path";
 constexpr const char* kCustomPath = "custom_vst3_path";
 constexpr const char* kClassId = "class_id"; // Backward compatibility with P0 scenes.
 constexpr const char* kEnabled = "enabled";
-constexpr const char* kDeadline = "deadline_fraction";
 constexpr const char* kRescan = "rescan_vst3";
+constexpr const char* kOpenEditor = "open_plugin_ui";
+constexpr double kInternalDeadlineFraction = 0.70;
 constexpr std::size_t kBridgeHazardSlots = 8;
 
 struct ScanEntry {
@@ -73,7 +74,7 @@ struct Filter {
     std::string class_id;
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
-    std::atomic<double> deadline_fraction{0.70};
+    std::atomic<double> deadline_fraction{kInternalDeadlineFraction};
     std::atomic<bool> enabled{true};
     std::atomic<bool> shutting_down{false};
 };
@@ -445,6 +446,23 @@ bool bridge_running(Filter* filter)
     return filter->bridge_owner && filter->bridge_owner->running();
 }
 
+bool open_editor_button(obs_properties_t*, obs_property_t*, void* data)
+{
+    auto* filter = static_cast<Filter*>(data);
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+        return false;
+
+    std::lock_guard restart_lock(filter->restart_mutex);
+    if (!filter->bridge_owner || !filter->bridge_owner->running()) {
+        blog(LOG_WARNING, "[obs-safe-vst3] cannot open VST3 interface because helper is not running");
+        return false;
+    }
+
+    if (!filter->bridge_owner->open_editor())
+        blog(LOG_WARNING, "[obs-safe-vst3] failed to request native VST3 interface");
+    return false;
+}
+
 void apply_current_parameter_settings(Filter* filter, obs_data_t* settings)
 {
     if (!filter || !settings)
@@ -475,7 +493,6 @@ const char* filter_name(void*) { return obs_module_text("SafeVST3Filter"); }
 void filter_defaults(obs_data_t* settings)
 {
     obs_data_set_default_bool(settings, kEnabled, true);
-    obs_data_set_default_double(settings, kDeadline, 0.70);
     obs_data_set_default_string(settings, kCustomPath, "");
 }
 
@@ -511,15 +528,12 @@ void filter_update(void* data, obs_data_t* settings)
 
     const bool new_enabled = obs_data_get_bool(settings, kEnabled);
     const bool enabled_changed = filter->enabled.exchange(new_enabled, std::memory_order_relaxed) != new_enabled;
-    filter->deadline_fraction.store(std::clamp(obs_data_get_double(settings, kDeadline), 0.10, 0.95),
-                                    std::memory_order_relaxed);
+    filter->deadline_fraction.store(kInternalDeadlineFraction, std::memory_order_relaxed);
 
     const bool needs_restart = identity_changed || enabled_changed;
     if (needs_restart)
         restart_bridge(filter);
 
-    // Generic controls are non-realtime. Re-sending persisted user values is
-    // intentionally idempotent and avoids storing a second state cache in OBS.
     apply_current_parameter_settings(filter, settings);
 
     if (needs_restart && filter->context)
@@ -595,26 +609,39 @@ obs_properties_t* filter_properties(void* data)
     auto* list = obs_properties_add_list(props, kPluginPath, obs_module_text("InstalledVST3"),
                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     populate_plugin_list(list);
+
+    auto* open_editor = obs_properties_add_button2(
+        props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
     obs_properties_add_button(props, kRescan, obs_module_text("RescanVST3"), rescan_button);
     obs_properties_add_path(props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
-    obs_properties_add_float_slider(props, kDeadline, obs_module_text("DeadlineFraction"), 0.10, 0.95, 0.05);
 
-    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire)) {
+        obs_property_set_enabled(open_editor, false);
         return props;
+    }
 
     const auto [path, class_id] = current_identity(filter);
-    if (path.empty())
+    if (path.empty()) {
+        obs_property_set_enabled(open_editor, false);
         return props;
+    }
 
     std::vector<safevst3::ParameterSnapshot> parameters;
     std::uint32_t total_parameter_count = 0;
+    safevst3::EditorStatus editor_status = safevst3::EditorStatus::Unknown;
     {
         std::lock_guard restart_lock(filter->restart_mutex);
         if (filter->bridge_owner && filter->bridge_owner->running()) {
             parameters = filter->bridge_owner->parameters();
             total_parameter_count = filter->bridge_owner->parameter_total_count();
+            editor_status = filter->bridge_owner->editor_status();
+        } else {
+            obs_property_set_enabled(open_editor, false);
         }
     }
+
+    if (editor_status == safevst3::EditorStatus::Unsupported)
+        obs_property_set_enabled(open_editor, false);
 
     if (parameters.empty())
         return props;
@@ -697,7 +724,7 @@ void obs_module_unload(void)
 
 const char* obs_module_description(void)
 {
-    return "Crash-isolated VST3 host with generic parameter controls for OBS Studio";
+    return "Crash-isolated VST3 host with native vendor interface and generic fallback controls for OBS Studio";
 }
 
 #endif
