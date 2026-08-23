@@ -57,36 +57,13 @@ bool NativeEditorWindow::ensure_window_class(std::string& error)
     return false;
 }
 
-bool NativeEditorWindow::supports(Steinberg::Vst::IEditController* controller) noexcept
-{
-    if (!controller)
-        return false;
-
-    // Do not infer usability from controller/createView metadata alone. Some
-    // plug-ins expose a view but reject IPlugFrame or attached(HWND). Exercise
-    // the exact lifecycle in a hidden helper window, then detach immediately.
-    try {
-        NativeEditorWindow probe;
-        std::string error;
-        if (!probe.open(controller, "VST3 editor capability probe", error, false))
-            return false;
-        probe.close();
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
 bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
                               const std::string& title,
-                              std::string& error,
-                              bool show_window)
+                              std::string& error)
 {
     if (window_ && view_) {
-        if (show_window) {
-            ShowWindow(window_, SW_SHOWNORMAL);
-            SetForegroundWindow(window_);
-        }
+        ShowWindow(window_, SW_SHOWNORMAL);
+        SetForegroundWindow(window_);
         return true;
     }
 
@@ -168,11 +145,9 @@ bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
     }
     attached_ = true;
 
-    if (show_window) {
-        ShowWindow(window_, SW_SHOWNORMAL);
-        UpdateWindow(window_);
-        SetForegroundWindow(window_);
-    }
+    ShowWindow(window_, SW_SHOWNORMAL);
+    UpdateWindow(window_);
+    SetForegroundWindow(window_);
     return true;
 }
 
