@@ -6,10 +6,13 @@
 namespace safevst3 {
 
 inline constexpr std::uint32_t kProtocolMagic = 0x3356534Fu; // "OSV3"
-inline constexpr std::uint32_t kProtocolVersion = 1;
+inline constexpr std::uint32_t kProtocolVersion = 2;
 inline constexpr std::uint32_t kMaxChannels = 2;
 inline constexpr std::uint32_t kMaxFrames = 2048;
 inline constexpr std::uint32_t kSlotCount = 4;
+inline constexpr std::uint32_t kMaxParameters = 256;
+inline constexpr std::size_t kParameterTitleBytes = 64;
+inline constexpr std::size_t kParameterUnitsBytes = 32;
 
 enum class SlotState : long {
     Free = 0,
@@ -32,6 +35,30 @@ enum class ProcessResult : long {
     InvalidBlock = 2,
 };
 
+enum ParameterFlags : std::uint32_t {
+    ParameterCanAutomate = 1u << 0,
+    ParameterReadOnly = 1u << 1,
+    ParameterHidden = 1u << 2,
+    ParameterList = 1u << 3,
+    ParameterProgramChange = 1u << 4,
+    ParameterBypass = 1u << 5,
+};
+
+struct alignas(64) ParameterDescriptor {
+    std::uint32_t id = 0;
+    std::int32_t step_count = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t reserved0 = 0;
+    double default_normalized = 0.0;
+    volatile std::int64_t current_value_bits = 0;
+    volatile std::int64_t pending_value_bits = 0;
+    volatile long pending_generation = 0;
+    volatile long applied_generation = 0;
+    char title[kParameterTitleBytes]{};
+    char units[kParameterUnitsBytes]{};
+    std::uint32_t reserved[4]{};
+};
+
 struct alignas(64) AudioSlot {
     volatile long state = static_cast<long>(SlotState::Free);
     std::uint32_t sequence = 0;
@@ -50,14 +77,18 @@ struct alignas(64) SharedAudioRegion {
     std::uint32_t channels = 0;
     std::uint32_t max_frames = kMaxFrames;
     std::uint32_t slot_count = kSlotCount;
+    std::uint32_t parameter_count = 0;
+    std::uint32_t parameter_total_count = 0;
     volatile long host_status = static_cast<long>(HostStatus::Booting);
     volatile long shutdown_requested = 0;
     volatile long last_error = 0;
-    std::uint32_t reserved[7]{};
+    std::uint32_t reserved[5]{};
+    alignas(64) ParameterDescriptor parameters[kMaxParameters]{};
     alignas(64) AudioSlot slots[kSlotCount]{};
 };
 
+static_assert(alignof(ParameterDescriptor) >= 64);
 static_assert(alignof(SharedAudioRegion) >= 64);
-static_assert(kMaxChannels == 2, "P0 intentionally supports mono/stereo only");
+static_assert(kMaxChannels == 2, "Public preview intentionally supports mono/stereo only");
 
 } // namespace safevst3
