@@ -104,11 +104,20 @@ std::vector<fs::path> discover_bundles()
             }
 
             const auto path = it->path();
-            if (it->is_directory(ec) && _wcsicmp(path.extension().c_str(), L".vst3") == 0) {
+            const bool vst3_path = _wcsicmp(path.extension().c_str(), L".vst3") == 0;
+            const bool is_directory = it->is_directory(ec);
+            if (ec)
+                ec.clear();
+            const bool is_regular_file = it->is_regular_file(ec);
+            if (ec)
+                ec.clear();
+
+            if (vst3_path && (is_directory || is_regular_file)) {
                 const auto key = path.wstring();
                 if (seen.insert(key).second)
                     bundles.push_back(path);
-                it.disable_recursion_pending();
+                if (is_directory)
+                    it.disable_recursion_pending();
             }
             it.increment(ec);
         }
