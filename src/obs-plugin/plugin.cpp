@@ -184,8 +184,6 @@ public:
     {
         if (!state_)
             return;
-
-        // Bounded realtime acquisition. Exhaustion fails open to dry audio.
         for (auto& candidate : state_->hazards) {
             if (!candidate.claimed.test_and_set(std::memory_order_acquire)) {
                 slot_ = &candidate;
@@ -194,9 +192,6 @@ public:
         }
         if (!slot_)
             return;
-
-        // Publish the hazard before re-validating the active pointer. Never
-        // spin indefinitely on the OBS audio callback.
         for (int attempt = 0; attempt < 2; ++attempt) {
             WinObsBridge* candidate = state_->active.load(std::memory_order_seq_cst);
             slot_->bridge.store(candidate, std::memory_order_seq_cst);
@@ -292,8 +287,6 @@ bool run_scanner()
         return false;
     }
 
-    // Individual candidates already have isolated probe timeouts. Keep a
-    // whole-scan ceiling too, so a broken scanner can never hold OBS forever.
     const DWORD wait = WaitForSingleObject(pi.hProcess, 180000);
     DWORD code = 1;
     if (wait == WAIT_OBJECT_0) {
@@ -356,6 +349,9 @@ void populate_plugin_list(obs_property_t* list)
         return;
     }
 
+    // Keep Browse reachable even after an installed plug-in was previously
+    // selected. Empty selection explicitly activates the custom path fallback.
+    obs_property_list_add_string(list, obs_module_text("UseBrowseVST3"), "");
     for (const auto& entry : entries) {
         std::string display = entry.name;
         const auto filename = filename_utf8(entry.path);
@@ -403,7 +399,6 @@ void restart_bridge(Filter* filter)
         return;
 
     const auto [path, class_id] = current_identity(filter);
-
     std::lock_guard restart_lock(filter->restart_mutex);
     if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
         return;
@@ -520,10 +515,6 @@ void filter_update(void* data, obs_data_t* settings)
     std::string path;
     std::string class_id;
     split_selection(selected, path, class_id);
-
-    // The installed plug-in selection is authoritative. Custom/Browse is a
-    // fallback only when there is no selected scanned plug-in. This prevents a
-    // stale custom path from silently overriding the visible dropdown.
     if (path.empty() && !custom.empty()) {
         path = custom;
         class_id = legacy_class;
@@ -550,7 +541,6 @@ void filter_update(void* data, obs_data_t* settings)
         restart_bridge(filter);
 
     apply_current_parameter_settings(filter, settings);
-
     if (needs_restart && filter->context)
         obs_source_update_properties(filter->context);
 }
@@ -620,8 +610,6 @@ obs_properties_t* filter_properties(void* data)
     auto* filter = static_cast<Filter*>(data);
     obs_properties_t* props = obs_properties_create();
 
-    // Normal user workflow deliberately mirrors OBS's familiar VST filter:
-    // choose an installed plug-in (or Browse), see readiness/latency, open UI.
     auto* list = obs_properties_add_list(props, kPluginPath, obs_module_text("InstalledVST3"),
                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     populate_plugin_list(list);
@@ -665,10 +653,15 @@ obs_properties_t* filter_properties(void* data)
 
     auto* open_editor = obs_properties_add_button2(
         props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
-    if (!running || editor_status == safevst3::EditorStatus::Unsupported)
+    const bool has_native_editor = running && editor_status != safevst3::EditorStatus::Unsupported &&
+                                   editor_status != safevst3::EditorStatus::Error;
+    if (!has_native_editor)
         obs_property_set_enabled(open_editor, false);
 
-    if (parameters.empty())
+    // Keep the normal properties panel as clean as the recovered native-like
+    // build. Generic controls are a fallback, not a second editor shown beside
+    // a perfectly usable vendor interface.
+    if (has_native_editor || parameters.empty())
         return props;
 
     obs_data_t* settings = filter->context ? obs_source_get_settings(filter->context) : nullptr;
