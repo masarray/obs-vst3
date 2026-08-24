@@ -4,6 +4,11 @@ This contract freezes the safety boundaries of the existing `VST 3.x Plug-in`
 Single Host. Stabilization work must preserve these rules before adding new UX,
 scanner lifecycle or compatibility behavior.
 
+The crash-proof stabilization line is based directly on the `v0.4.0` stable
+commit. RC/test branches must be ported into this line only as small,
+independently reviewed changes; never merge a mixed stabilization branch back
+into this baseline merely to recover individual fixes.
+
 ## Runtime invariants
 
 1. Third-party VST3 code never loads into `obs64.exe`.
