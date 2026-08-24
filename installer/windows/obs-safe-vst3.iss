@@ -37,9 +37,9 @@ Source: "payload\obs-safe-vst3-scanner.exe"; DestDir: "{code:GetPluginBinDir}"; 
 Source: "payload\en-US.ini"; DestDir: "{code:GetPluginLocaleDir}"; Flags: ignoreversion
 
 [InstallDelete]
-; Standard OBS can discover plug-ins from several historical locations. Clean
-; only our exact plug-in files/folders so an older copy cannot win discovery
-; order and silently shadow the package being installed now.
+; OBS can discover plug-ins from several historical locations. Clean only our
+; exact plug-in files/folders before installing the current package so an old
+; copy cannot shadow it. The active Standard target is re-created by [Files].
 Type: filesandordirs; Name: "{commonappdata}\obs-studio\plugins\obs-safe-vst3"; Check: IsStandardMode
 Type: filesandordirs; Name: "{userappdata}\obs-studio\plugins\obs-safe-vst3"; Check: IsStandardMode
 Type: files; Name: "{autopf}\obs-studio\obs-plugins\64bit\obs-safe-vst3.dll"; Check: IsStandardMode
@@ -66,6 +66,11 @@ begin
     Result := Result + '\';
 end;
 
+function StandardObsRoot: String;
+begin
+  Result := ExpandConstant('{autopf}\obs-studio');
+end;
+
 function IsStandardMode: Boolean;
 begin
   Result := InstallModePage.SelectedValueIndex = 0;
@@ -79,7 +84,7 @@ end;
 function GetPluginBinDir(Param: String): String;
 begin
   if IsStandardMode then
-    Result := ExpandConstant('{commonappdata}\obs-studio\plugins\obs-safe-vst3\bin\64bit')
+    Result := AddSlash(StandardObsRoot) + 'obs-plugins\64bit'
   else
     Result := AddSlash(PortableDirPage.Values[0]) + 'obs-plugins\64bit';
 end;
@@ -87,7 +92,7 @@ end;
 function GetPluginLocaleDir(Param: String): String;
 begin
   if IsStandardMode then
-    Result := ExpandConstant('{commonappdata}\obs-studio\plugins\obs-safe-vst3\data\locale')
+    Result := AddSlash(StandardObsRoot) + 'data\obs-plugins\obs-safe-vst3\locale'
   else
     Result := AddSlash(PortableDirPage.Values[0]) + 'data\obs-plugins\obs-safe-vst3\locale';
 end;
@@ -166,8 +171,6 @@ begin
     end;
   end;
 
-  { First request a normal process termination. Never force-close without a
-    second explicit permission in the interactive installer. }
   TerminateObs(False);
   if WaitForObsExit(20) then
     Exit;
@@ -242,12 +245,11 @@ begin
   InstallModePage := CreateInputOptionPage(wpWelcome,
     'Choose OBS installation type',
     'Where should OBS Safe VST3 Host be installed?',
-    'Setup remembers the last successful installation mode and portable OBS folder. ' +
-    'For a normal OBS Studio installation, use Standard. ' +
-    'Choose Custom / Portable for a self-contained OBS folder.',
+    'Standard installs directly into the official OBS folder so it works in both normal and portable-mode launches. ' +
+    'Choose Custom / Portable if OBS is installed somewhere else.',
     True, False);
 
-  InstallModePage.Add('Standard OBS Studio (recommended)');
+  InstallModePage.Add('Standard OBS Studio — C:\Program Files\obs-studio');
   InstallModePage.Add('Custom / Portable OBS folder');
   InstallModePage.SelectedValueIndex := 0;
 
@@ -259,7 +261,7 @@ begin
     False, '');
   PortableDirPage.Add('');
 
-  DefaultPortablePath := ExpandConstant('{autopf}\obs-studio');
+  DefaultPortablePath := StandardObsRoot;
   if IsObsRootValid(DefaultPortablePath) then
     PortableDirPage.Values[0] := DefaultPortablePath
   else
@@ -267,7 +269,6 @@ begin
 
   LoadRememberedInstallTarget;
 
-  { Explicit command-line target always wins over remembered state. }
   PortableObsDirParam := ExpandConstant('{param:PortableObsDir|}');
   if PortableObsDirParam <> '' then
   begin
@@ -275,9 +276,6 @@ begin
     PortableDirPage.Values[0] := PortableObsDirParam;
   end;
 
-  { Silent automation can opt into closing OBS with /CloseObs=yes, or permit
-    a force-close fallback with /CloseObs=force. Interactive installs always
-    ask the user before either action. }
   CloseObsParam := Lowercase(ExpandConstant('{param:CloseObs|ask}'));
 end;
 
@@ -289,6 +287,20 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
+
+  if (CurPageID = InstallModePage.ID) and IsStandardMode then
+  begin
+    if not IsObsRootValid(StandardObsRoot) then
+    begin
+      MsgBox('Standard OBS Studio was not found at:' + #13#10 +
+        StandardObsRoot + #13#10 + #13#10 +
+        'Choose Custom / Portable and select the folder containing bin\64bit\obs64.exe.',
+        mbInformation, MB_OK);
+      InstallModePage.SelectedValueIndex := 1;
+      Result := False;
+      Exit;
+    end;
+  end;
 
   if (CurPageID = PortableDirPage.ID) and (not IsStandardMode) then
   begin
