@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <set>
 #include <string>
 #include <thread>
@@ -192,9 +193,35 @@ std::vector<fs::path> discover_bundles_from_roots(const std::vector<fs::path>& r
     return bundles;
 }
 
-std::vector<fs::path> discover_bundles()
+std::wstring normalized_path_key(const fs::path& input)
 {
-    return discover_bundles_from_roots(scan_roots());
+    std::error_code ec;
+    const auto canonical = fs::weakly_canonical(input, ec);
+    std::wstring key = (ec ? input : canonical).wstring();
+    std::replace(key.begin(), key.end(), L'/', L'\\');
+    if (!key.empty())
+        CharLowerBuffW(key.data(), static_cast<DWORD>(key.size()));
+    return key;
+}
+
+using CachedLinesByPath = std::map<std::wstring, std::vector<std::string>>;
+
+CachedLinesByPath load_cached_lines_by_path(const fs::path& cache)
+{
+    CachedLinesByPath entries;
+    std::ifstream in(cache, std::ios::binary);
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto first = line.find('\t');
+        const auto second = first == std::string::npos ? std::string::npos : line.find('\t', first + 1);
+        if (first == std::string::npos || second == std::string::npos)
+            continue;
+        const std::string path_utf8 = line.substr(first + 1, second - first - 1);
+        if (path_utf8.empty())
+            continue;
+        entries[normalized_path_key(fs::u8path(path_utf8))].push_back(line);
+    }
+    return entries;
 }
 
 int probe(const fs::path& plugin, const fs::path& output)
@@ -227,28 +254,36 @@ int probe(const fs::path& plugin, const fs::path& output)
     return found ? 0 : 5;
 }
 
-std::jthread start_parent_watchdog(DWORD parent_pid)
+bool start_parent_watchdog(DWORD parent_pid, std::jthread& watchdog)
 {
+    // Probe children are always scanner-owned. If ownership cannot be proven,
+    // fail closed before third-party VST3 code is loaded.
     if (!parent_pid)
-        return {};
+        return false;
 
     HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, parent_pid);
     if (!parent)
-        return {};
+        return false;
 
-    return std::jthread([parent](std::stop_token stop) {
+    const DWORD initial = WaitForSingleObject(parent, 0);
+    if (initial != WAIT_TIMEOUT) {
+        CloseHandle(parent);
+        return false;
+    }
+
+    watchdog = std::jthread([parent](std::stop_token stop) {
         while (!stop.stop_requested()) {
             const DWORD wait = WaitForSingleObject(parent, 100);
-            if (wait == WAIT_OBJECT_0) {
+            if (wait == WAIT_OBJECT_0 || wait == WAIT_FAILED) {
                 CloseHandle(parent);
-                TerminateProcess(GetCurrentProcess(), ERROR_CANCELLED);
+                TerminateProcess(GetCurrentProcess(),
+                                 wait == WAIT_OBJECT_0 ? ERROR_CANCELLED : ERROR_INVALID_HANDLE);
                 return;
             }
-            if (wait == WAIT_FAILED)
-                break;
         }
         CloseHandle(parent);
     });
+    return true;
 }
 
 ProbeOutcome run_probe_child(const fs::path& self, const fs::path& plugin, const fs::path& output)
@@ -266,8 +301,8 @@ ProbeOutcome run_probe_child(const fs::path& self, const fs::path& plugin, const
     // Avoid PROC_THREAD_ATTRIBUTE_JOB_LIST here. OBS, Steam and enterprise
     // launchers can already place processes inside restrictive Job Objects;
     // nested job attachment then makes every probe child fail to start. Each
-    // probe still has a hard timeout, and the child also watches the scanner
-    // parent so it cannot survive if OBS terminates the whole scan.
+    // probe still has a hard timeout, and the child fails closed unless it can
+    // open and watch the scanner parent before loading vendor code.
     if (!CreateProcessW(self.c_str(), mutable_command.data(), nullptr, nullptr, FALSE,
                         CREATE_NO_WINDOW, nullptr, self.parent_path().c_str(), &si, &pi)) {
         std::wcerr << L"probe launch failed for " << plugin.wstring()
@@ -294,6 +329,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
 {
     const auto roots = scan_roots();
     const auto bundles = discover_bundles_from_roots(roots);
+    const auto cached = load_cached_lines_by_path(cache);
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
 
@@ -303,6 +339,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
         return 6;
 
     unsigned found = 0;
+    unsigned retained = 0;
     unsigned failed = 0;
     unsigned valid_without_effects = 0;
     unsigned serial = 0;
@@ -326,19 +363,27 @@ int scan_all(const fs::path& self, const fs::path& cache)
             ++valid_without_effects;
         } else {
             ++failed;
+            const auto previous = cached.find(normalized_path_key(bundle));
+            if (previous != cached.end()) {
+                for (const auto& line : previous->second) {
+                    combined << line << '\n';
+                    ++retained;
+                }
+            }
         }
         DeleteFileW(probe_out.c_str());
     }
 
     combined.close();
 
-    // Preserve the previous cache only when every discovered bundle genuinely
-    // failed to probe. A valid bundle with zero audio effects is a successful
-    // scan result and must be allowed to replace stale cache with an empty one.
+    // If every discovered bundle failed, retain the previous cache byte-for-byte.
+    // For a partial failure, only the failed bundle's previous entries are carried
+    // forward; successful probes remain authoritative and removed bundles vanish.
     if (!bundles.empty() && failed == bundles.size()) {
         DeleteFileW(staging.c_str());
         std::cerr << "roots=" << roots.size() << " bundles=" << bundles.size()
-                  << " plugins=0 no_audio_effects=0 failed_bundles=" << failed
+                  << " plugins=0 retained=" << retained
+                  << " no_audio_effects=0 failed_bundles=" << failed
                   << " previous_cache=kept\n";
         return 9;
     }
@@ -350,6 +395,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
 
     std::cout << "roots=" << roots.size() << " bundles=" << bundles.size()
               << " plugins=" << found
+              << " retained=" << retained
               << " no_audio_effects=" << valid_without_effects
               << " failed_bundles=" << failed << '\n';
     return 0;
@@ -360,6 +406,7 @@ int self_test_discovery()
     std::error_code ec;
     const auto root = fs::temp_directory_path(ec) /
         (L"obs-safe-vst3-scanner-selftest-" + std::to_wstring(GetCurrentProcessId()));
+    const auto cache = root / L"plugins.tsv";
     fs::remove_all(root, ec);
     fs::create_directories(root / L"VendorA.vst3" / L"Contents", ec);
     fs::create_directories(root / L"Nested" / L"VendorB.vst3" / L"Contents", ec);
@@ -382,8 +429,22 @@ int self_test_discovery()
         classify_probe_exit(5) == ProbeOutcome::NoAudioEffects &&
         classify_probe_exit(3) == ProbeOutcome::Failed;
 
+    const std::string cached_path = utf8((root / L"VendorA.vst3").wstring());
+    {
+        std::ofstream out(cache, std::ios::binary | std::ios::trunc);
+        out << "Cached A\t" << cached_path << "\tclass-a\n";
+    }
+    const auto cached_entries = load_cached_lines_by_path(cache);
+    const auto cached_it = cached_entries.find(normalized_path_key(root / L"VendorA.vst3"));
+    const bool partial_cache_lookup_ok =
+        cached_it != cached_entries.end() && cached_it->second.size() == 1;
+
+    std::jthread no_watchdog;
+    const bool watchdog_fail_closed = !start_parent_watchdog(0, no_watchdog);
+
     fs::remove_all(root, ec);
-    if (bundles.size() != 2 || !saw_a || !saw_b || saw_nested_inside_bundle || !probe_classification_ok) {
+    if (bundles.size() != 2 || !saw_a || !saw_b || saw_nested_inside_bundle ||
+        !probe_classification_ok || !partial_cache_lookup_ok || !watchdog_fail_closed) {
         std::cerr << "scanner discovery self-test failed\n";
         return 10;
     }
@@ -419,7 +480,11 @@ int wmain(int argc, wchar_t** argv)
         return self_test_discovery();
 
     if (!probe_path.empty() && !out_path.empty()) {
-        auto parent_watchdog = start_parent_watchdog(parent_pid);
+        std::jthread parent_watchdog;
+        if (!start_parent_watchdog(parent_pid, parent_watchdog)) {
+            std::cerr << "probe parent watchdog unavailable; refusing to load vendor code\n";
+            return 11;
+        }
         return probe(probe_path, out_path);
     }
 
