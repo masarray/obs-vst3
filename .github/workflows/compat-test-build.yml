@@ -79,8 +79,6 @@ jobs:
 
       - name: Configure compatibility build
         shell: pwsh
-        env:
-          CL: '/FI${{ steps.compat.outputs.header }}'
         run: |
           cmake -S . -B build/compat -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
@@ -89,11 +87,15 @@ jobs:
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
 
-      - name: Build plugin, helper, scanner and tests
+      - name: Build helper, scanner and tests with static MSVC runtime
+        shell: pwsh
+        run: cmake --build build/compat --config Release --target obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
+
+      - name: Build OBS module with ABI floor 29.1
         shell: pwsh
         env:
           CL: '/FI${{ steps.compat.outputs.header }}'
-        run: cmake --build build/compat --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
+        run: cmake --build build/compat --config Release --target obs-safe-vst3 --parallel
 
       - name: Run Windows tests
         shell: pwsh
