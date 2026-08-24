@@ -26,6 +26,7 @@ if(WIN32)
     set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
     set(SMTG_ENABLE_AUV2_BUILDS OFF CACHE BOOL "" FORCE)
+    set(SMTG_USE_STATIC_CRT ${SAFEVST3_STATIC_MSVC_RUNTIME} CACHE BOOL "" FORCE)
 
     FetchContent_Declare(
         vst3sdk
@@ -37,11 +38,9 @@ if(WIN32)
     )
     FetchContent_MakeAvailable(vst3sdk)
 
-    # The Steinberg SDK creates its own CMake targets. Pin their runtime
-    # explicitly so sdk.lib/sdk_hosting.lib cannot remain /MD while the host,
-    # scanner and OBS module use /MT. Mixing the two CRT models produces
-    # LNK4098/LNK2001 failures and can also make deployed binaries depend on a
-    # Visual C++ redistributable that is absent on the user's machine.
+    # Steinberg exposes SMTG_USE_STATIC_CRT, but also pin the generated static
+    # library targets to the same model so CMake and SDK runtime policies cannot
+    # diverge if either side changes its defaults in a future SDK update.
     if(MSVC AND SAFEVST3_STATIC_MSVC_RUNTIME)
         foreach(_safevst3_sdk_target IN ITEMS base sdk_common sdk sdk_hosting)
             if(TARGET ${_safevst3_sdk_target})
