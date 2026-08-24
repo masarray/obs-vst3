@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(obs-safe-vst3 VERSION 0.3.0 LANGUAGES C CXX)
+project(obs-safe-vst3 VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,7 +9,7 @@ option(SAFEVST3_BUILD_OBS_PLUGIN "Build the OBS module when libobs is available"
 option(SAFEVST3_BUILD_TESTS "Build protocol/layout tests" ON)
 
 if(NOT WIN32)
-    message(STATUS "Public-trial runtime is Windows x86-64 only. Building portable tests only.")
+    message(STATUS "Stable runtime target is Windows x86-64. Building portable tests only.")
 endif()
 
 add_library(safevst3_protocol INTERFACE)

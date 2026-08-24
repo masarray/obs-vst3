@@ -3,120 +3,83 @@
 **Crash-isolated VST3 audio-effect hosting for OBS Studio.**
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11&logoColor=white)](https://github.com/masarray/obs-vst3/releases)
-[![Public Preview](https://img.shields.io/badge/status-public%20preview-f59e0b)](https://github.com/masarray/obs-vst3/releases)
+[![Stable](https://img.shields.io/badge/status-stable-22c55e)](https://github.com/masarray/obs-vst3/releases)
 [![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-22c55e)](LICENSE)
 
-> **Current target: v0.3.0-preview.1 — Native OBS-like VST3 Recovery Preview, Windows x64.**
-> The goal of this preview is the familiar OBS VST workflow—select a plug-in, see that it is ready, open its real interface, and tune it—without loading third-party VST3 code into `obs64.exe`.
+> **Current stable release: v0.4.0 — Phase S stable, Windows x64.**
+> One isolated VST3 audio effect per OBS filter, with full component/controller state persistence, dedicated realtime DSP isolation, watchdog recovery, native vendor UI support, and dry fail-open behavior.
 
 ## Why this project exists
 
-OBS can host VST2 filters directly, but many current audio plug-ins are VST3-only. A third-party plug-in loaded directly inside `obs64.exe` can also take OBS down if the plug-in crashes or hangs.
+OBS can host VST2 filters directly, while many current plug-ins are VST3-only. Loading third-party plug-in code directly into `obs64.exe` also means a faulty plug-in can crash or hang OBS itself.
 
 OBS Safe VST3 Host keeps VST3 runtime and vendor UI code outside the OBS process:
 
 ```text
 OBS Studio (obs64.exe)
         │
-        │ bounded shared-memory audio + control IPC
+        │ bounded shared-memory audio + control/state IPC
         ▼
 obs-safe-vst3-host.exe
         │
+        ├── dedicated realtime DSP worker
         ├── native vendor VST3 editor window
+        └── full VST3 state capture / restore
         │
         ▼
 third-party VST3 effect
 ```
 
-If the helper exits, crashes, or misses its internal realtime budget, the filter leaves the original dry OBS audio buffer untouched. The helper can then be restarted without making third-party VST3 code part of the OBS process.
+If the isolated helper exits, crashes, hangs, or fails the DSP delivery contract, OBS keeps the original dry buffer and the recovery layer can recreate the helper from the last-known-good state checkpoint.
 
-## Recovered user workflow
+## Phase S stable capabilities
 
-The normal properties panel intentionally stays close to OBS's familiar VST filter workflow:
+- Windows x64 runtime targeting OBS Studio 32.x; release CI is pinned to OBS/libobs **32.2.2**.
+- Installed VST3 discovery with isolated per-candidate scanner probing.
+- Runtime VST3 process isolation: third-party DSP and vendor GUI do not load into `obs64.exe`.
+- Native vendor VST3 editor via `IEditController::createView()` / `IPlugView`.
+- Generic normalized parameter controls as fallback when the native editor is unavailable.
+- Protocol **v6** with separate control and DSP heartbeats.
+- Dedicated MMCSS **Pro Audio** DSP worker; vendor UI/control stalls do not automatically stop healthy DSP.
+- Fixed-capacity allocation-free SPSC queues for control↔DSP parameter transfer.
+- Audio-first bounded command servicing to reduce parameter-burst starvation.
+- Full opaque VST3 **component + controller state** persistence.
+- Versioned state envelope with CRC validation and per-source LocalAppData persistence.
+- Last-known-good state checkpoint retained across transient capture/IPC/disk failures.
+- Restore ordering: component state → controller component state → controller state.
+- State capture/restore uses an acknowledged DSP pause frontier so processor/controller snapshots do not intentionally mix generations.
+- Generation-coupled packed Paused/Running transition tokens prevent stale pause/resume acknowledgements.
+- Watchdog distinguishes exited helpers from live-but-hung DSP.
+- Exponential recovery backoff up to 30 seconds; 10 seconds of stable operation resets crash-loop history.
+- Processor-delivery, zero-sample flush, and VST process failures fail closed into helper recovery instead of allowing silent controller/component divergence.
+- Dry fail-open audio when no valid wet result is available within the realtime deadline.
 
-1. **Installed VST 3 Plug-in** — choose a discovered effect.
-2. **Rescan Installed Plug-ins** — refresh the isolated scan cache.
-3. **Browse / Custom VST3** — fallback for a development or non-standard `.vst3` bundle.
-4. Status such as **`ArSonKuPik — Ready — 48 samples latency`**.
-5. **Open Plug-in Interface** — opens the vendor's real VST3 editor in the isolated helper.
+## User workflow
 
-There is no user-facing `Realtime deadline fraction` control in the normal panel. The processing deadline remains an internal fail-open safety mechanism.
+1. Add **VST 3.x Plug-in (Safe Host)** to an OBS audio source.
+2. Click **Rescan Installed Plug-ins**.
+3. Choose an installed VST3 effect, or use **Browse / Custom VST3…** for a non-standard bundle.
+4. Confirm the status reports the plug-in name and latency.
+5. Click **Open Plug-in Interface** for the vendor UI.
+6. Tune normally. State is checkpointed outside the realtime callback and restored when the helper is recreated.
 
-When a native vendor editor is available, the OBS properties panel does not duplicate hundreds of generic controls beside it. **Plug-in Controls (Fallback)** appear only when the native editor is unavailable or unusable.
+The normal properties panel intentionally stays simple. The installed plug-in selector is authoritative, and fallback parameter controls appear only when the native editor is unavailable or unusable.
 
-The installed plug-in selector is authoritative. A stale custom path cannot silently override a plug-in visibly selected in the dropdown. Choosing **Browse / Custom VST3…** in the installed selector explicitly switches back to the custom-path fallback.
+## Download v0.4.0
 
-## New in v0.3.0-preview.1
-
-- helper-owned native VST3 vendor editor using `IEditController::createView()` and `IPlugView`;
-- Win32 `HWND` hosting plus `IPlugFrame::resizeView()` support;
-- native editor `beginEdit / performEdit / endEdit` routed to the processor;
-- protocol **v3** control/status ABI;
-- helper-published plug-in name and VST3-reported latency for OBS status display;
-- installed VST3 discovery with isolated scanning and per-candidate probing;
-- bounded host→processor parameter edits through VST3 `IParameterChanges`;
-- processor→host parameter feedback;
-- zero-audio parameter flush when normal audio blocks are inactive;
-- normalized fallback parameter controls for plug-ins without a usable native editor;
-- discrete/toggle parameter snapping;
-- scoped fallback values per plug-in path + Class ID;
-- automatic isolated-helper recovery attempt;
-- dry fail-open audio on helper failure/deadline miss;
-- Smart Installer and portable ZIP distribution paths retained.
-
-## Capability matrix
-
-| Capability | v0.3.0-preview.1 |
-|---|---|
-| Windows x64 | ✅ |
-| VST3 audio effects | ✅ preview |
-| Installed VST3 discovery | ✅ |
-| Scanner crash isolation | ✅ |
-| Runtime VST3 process isolation | ✅ |
-| Dry fail-open on timeout/failure | ✅ |
-| Automatic helper restart attempt | ✅ |
-| Mono / stereo | ✅ |
-| Float32 processing | ✅ |
-| Native VST3 vendor editor | ✅ helper-owned window |
-| Plug-in name + latency status | ✅ |
-| Native editor gesture → processor bridge | ✅ |
-| Generic parameter controls | ✅ fallback only |
-| Discrete/toggle parameter snapping | ✅ |
-| User fallback values re-applied after helper restart | ✅ |
-| Processor parameter feedback | ✅ bounded |
-| Edit while source/audio is inactive | ✅ zero-audio flush |
-| Full VST3 component/controller state blob | ❌ next phase |
-| Last-known-good full state restore | ❌ next phase |
-| Complete `restartComponent()` reconfiguration | ❌ later |
-| Sidechain | ❌ later |
-| Instruments / MIDI | ❌ |
-| Arbitrary multichannel | ❌ |
-| Linux/macOS package | ❌ |
-
-This remains a **public preview**, not a DAW-style host and not yet a claim of compatibility with every commercial VST3.
-
-## Download
+Use the assets on [GitHub Releases](https://github.com/masarray/obs-vst3/releases).
 
 ### Recommended: Smart Installer
 
-From [GitHub Releases](https://github.com/masarray/obs-vst3/releases), download:
+`OBS-Safe-VST3-Host-v0.4.0-Setup-x64.exe`
 
-`OBS-Safe-VST3-Host-v0.3.0-preview.1-Setup-x64.exe`
+Close OBS first. The installer supports a normal OBS installation and a validated Custom / Portable OBS root, and registers a normal Windows uninstaller.
 
-For a normal OBS installation, Setup installs the module and isolated runtime companions. It also:
+### Portable / manual install
 
-- requires administrator permission;
-- checks that OBS is closed;
-- supports a validated Custom / Portable OBS destination;
-- registers a normal Windows uninstaller.
+`OBS-Safe-VST3-Host-v0.4.0-Windows-x64-Portable.zip`
 
-### OBS Portable / manual install
-
-Download:
-
-`OBS-Safe-VST3-Host-v0.3.0-preview.1-Windows-x64-Portable.zip`
-
-Close OBS and extract the ZIP directly into the OBS portable root. The package contains:
+Extract directly into the OBS root. The package contains:
 
 ```text
 obs-plugins/64bit/obs-safe-vst3.dll
@@ -127,79 +90,87 @@ README-FIRST.txt
 UNINSTALL-MANUAL.cmd
 ```
 
-## First public-preview test
+The release also publishes `SHA256SUMS.txt`.
 
-1. Close OBS and install/extract the preview.
-2. Start OBS Studio.
-3. Open an audio source → **Filters** → **+** → **VST 3.x Plug-in**.
-4. Click **Rescan Installed Plug-ins**.
-5. Select an effect from **Installed VST 3 Plug-in**, or choose **Browse / Custom VST3…** and browse to a development/non-standard bundle.
-6. Confirm the status becomes `<plug-in name> — Ready — <N> samples latency`.
-7. Click **Open Plug-in Interface** and confirm the real vendor VST3 editor opens in its own helper-owned window.
-8. Change controls in the vendor UI and confirm the processed audio changes without recreating the helper.
-9. Close and reopen the vendor editor; resize it if the plug-in supports resizing.
-10. For recovery testing, terminate `obs-safe-vst3-host.exe`; OBS should stay alive and dry while the isolated helper is restarted.
-11. For a plug-in without a usable native editor, verify **Plug-in Controls (Fallback)** appear and affect processing.
+Example verification:
 
-## What to report
+```powershell
+Get-FileHash .\OBS-Safe-VST3-Host-v0.4.0-Setup-x64.exe -Algorithm SHA256
+```
 
-Please open an issue and include:
+## Compatibility scope and current limits
 
-- OBS version;
-- Windows version;
-- VST3 name and version;
-- whether it appears in the installed list;
-- whether the status reports the correct name/latency;
-- whether **Open Plug-in Interface** opens the correct vendor GUI;
-- whether resizing, closing, and reopening the GUI behave correctly;
-- whether vendor controls change the processed audio;
-- whether fallback controls work when needed;
-- whether edits still apply after a silent/inactive period;
-- what happens if the helper is terminated while the editor is open;
-- relevant OBS log lines beginning with `[obs-safe-vst3]`.
+`v0.4.0` marks the **Single Host Phase S architecture and recovery/state invariants as stable**. It is not a claim that every third-party VST3 is compatible.
 
-Successful compatibility reports are useful too.
+Current scope:
+
+| Capability | v0.4.0 |
+|---|---|
+| Windows x64 | ✅ |
+| VST3 audio effects | ✅ |
+| Installed VST3 discovery | ✅ |
+| Scanner crash isolation | ✅ |
+| Runtime process isolation | ✅ |
+| Native vendor editor | ✅ |
+| Generic fallback controls | ✅ |
+| Mono / stereo | ✅ |
+| Float32 processing | ✅ |
+| Full component/controller state persistence | ✅ |
+| Last-known-good restore checkpoint | ✅ |
+| Dedicated DSP/control isolation | ✅ |
+| DSP watchdog + bounded restart backoff | ✅ |
+| Dry fail-open on timeout/failure | ✅ |
+| Complete `restartComponent()` I/O reconfiguration | Partial |
+| Sidechain / multiple audio buses | Not yet |
+| Instruments / MIDI | Not supported |
+| Arbitrary multichannel / float64 fallback | Not yet |
+| Linux/macOS runtime packages | Not yet |
+| Safe VST3 Rack | Later phase |
 
 ## Safety model
 
 ### Runtime isolation
 
-The VST3 binary and native editor are loaded by `obs-safe-vst3-host.exe`, not `obs64.exe`. Audio crosses a fixed shared-memory bridge. Parameter metadata, edits, editor commands, plug-in identity, and latency status use the versioned protocol-v3 shared control state.
+The VST3 binary and native editor run in `obs-safe-vst3-host.exe`, not in `obs64.exe`. Audio uses fixed shared-memory slots and a dedicated DSP wake event. Control, editor, state, restart, and disk work stay outside the OBS realtime audio callback.
 
-The OBS audio callback does not enumerate parameters, open windows, scan plug-ins, or take the configuration/recovery mutex. Bridge ownership stays outside the realtime callback, and a bounded hazard-pointer acquisition protects helper replacement. If no safe wet result is available in time, the original OBS buffer remains dry and unchanged.
+A responsive control/UI thread is not required for the watchdog to consider DSP healthy: protocol v6 publishes separate control and DSP heartbeats. Conversely, a stalled DSP becomes watchdog-visible even if the helper process itself is still alive.
+
+### State consistency
+
+State capture waits for an acknowledged paused DSP frontier, drains/flushes pending processor changes, and preserves the last-known-good checkpoint if a transient capture/storage operation fails. Corrupt or rejected snapshots are not promoted as good state.
 
 ### Scanner isolation
 
-The scanner discovers standard Windows VST3 locations. Each candidate is probed out-of-process with a timeout so a bad scanner candidate does not directly load into OBS. The OBS-side scan invocation also has a whole-scan ceiling rather than waiting forever.
+Standard Windows VST3 locations are scanned out-of-process. Each candidate is probed in its own short-lived child with a timeout so a bad candidate does not directly load into OBS.
 
 ### Not a malware sandbox
 
 Crash/process isolation is not a security sandbox. Only load VST3 software you trust.
 
-## SmartScreen / Unknown publisher
+## SmartScreen / publisher warning
 
-Public-preview binaries are not Authenticode-signed yet, so Windows can show **Unknown publisher** or a SmartScreen reputation warning.
+Binaries are not Authenticode-signed yet, so Windows may show **Unknown publisher** or a SmartScreen reputation warning. Do not disable Defender or SmartScreen for this project. Download only from this repository's Releases page and verify the published SHA-256 checksums when desired.
 
-Do not disable Defender or SmartScreen just for this project. Download only from this repository's Releases page and verify `SHA256SUMS.txt` when desired.
+## Automated validation
 
-Example:
+CI and the Windows release pipeline validate:
 
-```powershell
-Get-FileHash .\OBS-Safe-VST3-Host-v0.3.0-preview.1-Setup-x64.exe -Algorithm SHA256
-```
+- protocol v6 layout and portable parameter/state/recovery tests;
+- SPSC FIFO/wrap/full-empty/concurrent producer-consumer behavior;
+- Windows helper and isolated scanner build + scanner smoke test;
+- watchdog classification for a live helper with a stalled DSP;
+- control-thread stall while DSP heartbeat and passthrough audio remain alive;
+- real WinObsBridge checkpoint restore across helper death/recreation;
+- full OBS module compilation against pinned OBS/libobs 32.2.2;
+- portable ZIP layout;
+- Smart Installer install → uninstall → reinstall using a remembered portable target;
+- SHA-256 generation for release assets.
 
-## Engineering direction after this preview
+Automated tests cannot prove compatibility with every commercial VST3. Please report plug-in-specific issues with OBS version, Windows version, VST3 name/version, relevant `[obs-safe-vst3]` log lines, and whether the issue affects scanning, GUI, state restore, DSP, or recovery.
 
-The next priority order is:
+## Engineering direction
 
-1. full VST3 component/controller state persistence and a last-known-good snapshot;
-2. clean helper UI/control vs DSP-thread ownership separation without changing the OBS-side UX;
-3. richer fallback parameter presentation and complete `restartComponent()` handling;
-4. recovery state machine, crash-loop quarantine, and health diagnostics;
-5. sidechain;
-6. simple isolated **Safe Rack** rather than a full DAW-style graph.
-
-The project deliberately stays focused on being a **simple, familiar, crash-resistant VST3 filter for OBS** rather than becoming a full DAW, MIDI workstation, or general device-routing environment.
+Phase S intentionally keeps the product as a **simple, familiar, crash-resistant Single VST3 filter for OBS**. The broader parent roadmap can later add richer `restartComponent()` handling, sidechain/multi-bus support, compatibility hardening, and a separate Safe VST3 Rack without making the stable Single Host workflow complicated.
 
 Architecture notes:
 
@@ -208,22 +179,6 @@ Architecture notes:
 - [Windows installation notes](INSTALL-WINDOWS.txt)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Security policy](SECURITY.md)
-
-## Build and automated validation
-
-CI validates:
-
-- protocol **v3** layout and parameter normalization semantics on Linux;
-- Windows isolated host/controller/native-editor compilation;
-- Windows isolated scanner build and smoke execution;
-- real OBS module compilation against pinned OBS/libobs 32.2.2;
-- Windows protocol/parameter tests;
-- release binary presence;
-- portable package layout;
-- Smart Installer install/uninstall against a synthetic portable OBS tree;
-- SHA-256 generation.
-
-Automated compilation cannot prove compatibility with every VST3 or exercise every vendor GUI. Representative desktop runtime testing remains essential during the preview.
 
 ## License and trademarks
 

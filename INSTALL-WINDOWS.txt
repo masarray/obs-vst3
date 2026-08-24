@@ -1,5 +1,5 @@
-OBS Safe VST3 Host — Windows x64 Public Trial
-==============================================
+OBS Safe VST3 Host — Windows x64 Stable
+========================================
 
 Recommended for most users: Smart Setup.exe
 ---------------------------------------------
@@ -14,7 +14,7 @@ Recommended for most users: Smart Setup.exe
 5. Click Install.
 6. Start OBS Studio, open an audio source -> Filters -> + ->
    VST 3.x Plug-in (Safe Host).
-7. Click Rescan Installed VST3 Plug-ins and choose an effect.
+7. Click Rescan Installed Plug-ins and choose an effect.
 
 The runtime package contains:
   obs-safe-vst3.dll
@@ -22,7 +22,7 @@ The runtime package contains:
   obs-safe-vst3-scanner.exe
   locale\en-US.ini
 
-The smart installer does not install or modify OBS itself. If OBS is open,
+The Smart Installer does not install or modify OBS itself. If OBS is open,
 Setup asks you to close it before copying files.
 
 Portable ZIP / advanced install
@@ -45,45 +45,63 @@ OBS root, or remove only the project-owned files listed above.
 
 Scanner behavior
 ----------------
-The public trial scans standard Windows VST3 locations. Each discovered .vst3
-bundle is probed in its own short-lived scanner child process. A hung probe is
-terminated after its timeout and skipped. The resulting cache is stored under
-the current user's LocalAppData folder and read by the OBS properties UI.
+The stable Windows runtime scans standard Windows VST3 locations. Each
+discovered .vst3 bundle is probed in its own short-lived scanner child process.
+A hung probe is terminated after its timeout and skipped. The resulting cache
+is stored under the current user's LocalAppData folder and read by the OBS
+properties UI.
 
-Use Custom VST3 bundle (optional) for a non-standard location.
+Use Browse / Custom VST3... for a non-standard location.
 
-Safety notes
-------------
+Phase S stable behavior
+-----------------------
 - Third-party VST3 DSP runs in obs-safe-vst3-host.exe, not obs64.exe.
 - Scanning also occurs outside OBS, with a separate child probe per bundle.
-- Process isolation is crash/hang containment, NOT a malware sandbox.
-- The realtime OBS filter uses bounded waiting and keeps dry audio on timeout.
-- The public trial attempts to restart a failed helper automatically.
-- Windows x64, mono/stereo and float32 audio effects are the current target.
+- Native vendor VST3 GUI is hosted by the isolated helper when available.
+- Generic normalized parameter controls are available as fallback.
+- Full VST3 component + controller state is persisted with CRC validation.
+- A last-known-good state checkpoint is used when recreating the helper.
+- DSP work runs on a dedicated MMCSS Pro Audio worker, separate from UI/control.
+- Protocol v6 publishes separate control and DSP heartbeats.
+- Hung/exited helpers recover with bounded exponential backoff.
+- Failed processor delivery/flush/process operations fail closed into recovery
+  rather than allowing silent controller/component state divergence.
+- The realtime OBS filter uses bounded waiting and keeps dry audio when a valid
+  wet result is unavailable in time.
 
-Public Trial limitations
-------------------------
-Not implemented yet:
-- native VST3 vendor GUI;
-- generic parameter controls;
-- full component/controller state persistence;
-- sidechain;
-- VST3 instruments/MIDI;
-- arbitrary multichannel and float64 fallback.
+Current scope / limitations
+---------------------------
+- Windows x64 runtime.
+- Mono/stereo float32 audio effects.
+- Complete restartComponent() I/O reconfiguration is still partial.
+- Sidechain / multiple audio buses are not fully supported.
+- VST3 instruments/MIDI are not supported.
+- Arbitrary multichannel and float64 fallback are not yet supported.
+- Linux/macOS runtime packages are not currently shipped.
+- The Safe VST3 Rack is a later phase; v0.4.0 remains one effect per OBS filter.
 
-This release should therefore be treated as a compatibility/reliability trial,
-not yet as a production daily-driver VST host.
+Phase S stable means the Single Host state/recovery/DSP-isolation architecture
+is now the stable release baseline. It is not a guarantee that every third-party
+VST3 plug-in is compatible.
+
+Security note
+-------------
+Process isolation is crash/hang containment, NOT a malware sandbox. Only load
+plug-ins you trust.
 
 CI / release validation
 -----------------------
 The Windows release pipeline validates:
-- protocol tests;
+- protocol v6 tests and state/recovery invariants;
+- SPSC realtime queue tests;
 - isolated host build;
 - isolated scanner build and smoke execution;
+- hang-watchdog and control-stall/DSP-survival fault tests;
+- checkpoint restoration across helper death/recreation;
 - real OBS module compilation against pinned OBS/libobs 32.2.2;
-- portable ZIP layout including scanner;
-- Smart Installer compilation;
-- silent install/uninstall into a synthetic portable OBS tree;
+- portable ZIP layout;
+- Smart Installer install/uninstall/reinstall using a remembered portable path;
 - SHA-256 checksums for published assets.
 
-Real-world third-party VST3 compatibility still requires public testing.
+Real-world third-party VST3 compatibility still benefits from compatibility
+reports and plug-in-specific testing.
