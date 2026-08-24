@@ -720,9 +720,12 @@ void filter_update(void* data, obs_data_t* settings)
             // Loading an existing scene/filter is never a user Browse gesture.
             // Mark the one-shot as consumed when a saved identity already exists.
             filter->browse_auto_open_consumed = !path.empty();
-        } else if (!filter->browse_auto_open_consumed && identity_changed &&
-                   old_path.empty() && custom_browse_active && !path.empty()) {
-            auto_open_after_first_browse = true;
+        } else if (!filter->browse_auto_open_consumed && identity_changed && !path.empty()) {
+            // The first non-empty identity consumes the one-shot. It opens the
+            // vendor GUI only when that first selection is a custom Browse from
+            // an otherwise-empty brand-new filter. Installed-list selection
+            // consumes the allowance without opening anything.
+            auto_open_after_first_browse = old_path.empty() && custom_browse_active;
             filter->browse_auto_open_consumed = true;
         }
 
