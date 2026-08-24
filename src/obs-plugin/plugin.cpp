@@ -724,8 +724,26 @@ void filter_update(void* data, obs_data_t* settings)
         apply_current_parameter_settings(filter, settings);
     }
 
-    if (needs_restart && filter->context)
-        obs_source_update_properties(filter->context);
+    // Deliberately do not call obs_source_update_properties() here. OBS's Qt
+    // properties view can still be processing the old obs_property_t pointer
+    // for the control that triggered this update. Property-driven refreshes are
+    // requested only by the modified callbacks below, so OBS queues the rebuild
+    // after obs_property_modified() has returned.
+}
+
+bool identity_property_modified(void* data, obs_properties_t*, obs_property_t*, obs_data_t* settings)
+{
+    auto* filter = static_cast<Filter*>(data);
+    if (!filter || !settings || filter->shutting_down.load(std::memory_order_acquire))
+        return false;
+
+    // Apply the identity while we are still inside OBS's property-modified
+    // callback, then return true. OBS 32 queues RefreshProperties only after
+    // this callback returns, which avoids invalidating WidgetInfo::property in
+    // the middle of ControlChanged(). The normal delayed source update becomes
+    // an idempotent second pass because the identity has already been applied.
+    filter_update(filter, settings);
+    return true;
 }
 
 void filter_save(void* data, obs_data_t*)
@@ -796,8 +814,8 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
                 previous_deadline_misses = 0;
                 stable_dirty_ticks = 0;
                 deadline_pressure_ticks = 0;
-                if (filter->context)
-                    obs_source_update_properties(filter->context);
+                // Recovery is a runtime/control-plane operation. It must never
+                // rebuild an open OBS Properties view from this worker thread.
                 continue;
             }
 
@@ -874,8 +892,13 @@ obs_properties_t* filter_properties(void* data)
     auto* list = obs_properties_add_list(props, kPluginPath, obs_module_text("InstalledVST3"),
                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     populate_plugin_list(list);
+    if (filter)
+        obs_property_set_modified_callback2(list, identity_property_modified, filter);
     obs_properties_add_button(props, kRescan, obs_module_text("RescanVST3"), rescan_button);
-    obs_properties_add_path(props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+    auto* custom_path = obs_properties_add_path(
+        props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+    if (filter)
+        obs_property_set_modified_callback2(custom_path, identity_property_modified, filter);
 
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return props;
