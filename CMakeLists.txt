@@ -9,7 +9,7 @@ option(SAFEVST3_BUILD_OBS_PLUGIN "Build the OBS module when libobs is available"
 option(SAFEVST3_BUILD_TESTS "Build protocol/layout tests" ON)
 
 if(NOT WIN32)
-    message(STATUS "Stable runtime target is Windows x86-64. Building portable tests only.")
+    message(STATUS "Stable runtime is Windows x86-64 only. Building portable tests only.")
 endif()
 
 add_library(safevst3_protocol INTERFACE)
@@ -62,7 +62,7 @@ if(WIN32)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
-    target_link_libraries(obs-safe-vst3-scanner PRIVATE safevst3_vst3_hosting_runtime)
+    target_link_libraries(obs-safe-vst3-scanner PRIVATE safevst3_vst3_hosting_runtime Shell32)
     target_compile_definitions(obs-safe-vst3-scanner PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     if(SAFEVST3_BUILD_OBS_PLUGIN)
@@ -111,6 +111,8 @@ if(SAFEVST3_BUILD_TESTS)
     add_test(NAME spsc-ring COMMAND spsc-ring-test)
 
     if(WIN32)
+        add_test(NAME scanner-discovery COMMAND $<TARGET_FILE:obs-safe-vst3-scanner> --self-test)
+
         add_executable(fake-hung-host tests/fake_hung_host.cpp)
         target_include_directories(fake-hung-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
         target_link_libraries(fake-hung-host PRIVATE safevst3_win_ipc)
@@ -153,6 +155,7 @@ if(SAFEVST3_BUILD_TESTS)
     add_dependencies(protocol-layout-test parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test
+            obs-safe-vst3-scanner
             hang-watchdog-test fake-hung-host
             control-stall-dsp-test fake-control-stall-host
             recovery-checkpoint-test fake-stateful-host)

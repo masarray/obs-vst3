@@ -83,6 +83,12 @@ struct Filter {
     std::stop_source shutdown_source;
     std::string path;
     std::string class_id;
+    // Protected by config_mutex. A brand-new empty filter may auto-open exactly
+    // once when the user chooses its first custom Browse path. Scene restore,
+    // installed-list selection, recovery, properties refresh and rescans never
+    // auto-open the vendor GUI.
+    bool initial_update_complete = false;
+    bool browse_auto_open_consumed = false;
     // Protected by restart_mutex. These fields describe the helper that is
     // actually published, not the possibly newer identity selected in the UI.
     std::string bridge_path;
@@ -387,8 +393,21 @@ void populate_plugin_list(obs_property_t* list)
     }
 }
 
-bool rescan_button(obs_properties_t* props, obs_property_t*, void*)
+void hide_editor_before_scan(Filter* filter)
 {
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+        return;
+    std::lock_guard restart_lock(filter->restart_mutex);
+    if (!filter->bridge_owner || !filter->bridge_owner->running())
+        return;
+    if (filter->bridge_owner->editor_status() == safevst3::EditorStatus::Open)
+        (void)filter->bridge_owner->hide_editor();
+}
+
+bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
+{
+    auto* filter = static_cast<Filter*>(data);
+    hide_editor_before_scan(filter);
     const bool ok = run_scanner();
     populate_plugin_list(obs_properties_get(props, kPluginPath));
     if (ok)
@@ -436,19 +455,12 @@ bool capture_bridge_state(Filter* filter,
     safevst3::PluginStateSnapshot snapshot{};
     std::string error;
     if (!filter->bridge_owner->capture_state(snapshot, error)) {
-        // Capture can fail transiently because the helper exits, IPC times out,
-        // or a vendor temporarily stalls. Preserve the last-known-good exact
-        // snapshot and keep the generation unsaved so the debounce worker can
-        // retry instead of destroying the only recovery point.
         filter->observed_state_generation.store(dirty, std::memory_order_release);
         blog(LOG_WARNING, "[obs-safe-vst3] exact VST3 state capture failed; last-known-good snapshot preserved: %s", error.c_str());
         return false;
     }
 
     if (!safevst3::obsstate::save(filter->context, path, class_id, snapshot, error)) {
-        // Atomic replacement failure is also transient. The previous complete
-        // file remains the recovery point; never delete it merely because the
-        // new snapshot could not be committed to disk.
         filter->observed_state_generation.store(dirty, std::memory_order_release);
         blog(LOG_WARNING, "[obs-safe-vst3] could not persist exact VST3 state; last-known-good snapshot preserved: %s", error.c_str());
         return false;
@@ -490,9 +502,6 @@ void restart_bridge(Filter* filter)
     if (cancel.stop_requested())
         return;
 
-    // Serialize restart ownership before snapshotting identity. A recovery
-    // restart can no longer publish an old plug-in after a UI-driven restart
-    // has already selected and published a newer identity.
     std::lock_guard restart_lock(filter->restart_mutex);
     if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
         return;
@@ -506,7 +515,7 @@ void restart_bridge(Filter* filter)
     const auto sample_rate = filter->sample_rate;
     const auto channels = filter->channels;
     if (channels == 0 || channels > safevst3::kMaxChannels) {
-        blog(LOG_WARNING, "[obs-safe-vst3] recovery preview supports mono/stereo only; current OBS layout has %u channels", channels);
+        blog(LOG_WARNING, "[obs-safe-vst3] stable runtime supports mono/stereo only; current OBS layout has %u channels", channels);
         publish_bridge_locked(filter, {});
         return;
     }
@@ -542,9 +551,6 @@ void restart_bridge(Filter* filter)
         return;
     }
 
-    // Restore exact opaque VST3 state before this helper is ever visible to the
-    // realtime callback. Invalid snapshots are quarantined by deleting them;
-    // existing normalized parameter persistence remains the fallback path.
     bool restored_exact_state = false;
     bool restore_rejected = false;
     safevst3::PluginStateSnapshot snapshot{};
@@ -567,9 +573,6 @@ void restart_bridge(Filter* filter)
     }
 
     if (restore_rejected) {
-        // setState() is vendor code and may partially mutate a component before
-        // returning failure. Never trust that process again: restart from a
-        // clean instance and only then apply the conservative fallback.
         bridge->abort();
         bridge = start_candidate();
         if (!bridge) {
@@ -630,9 +633,8 @@ bool read_bridge_state_generation(Filter* filter, std::uint32_t& generation)
     return true;
 }
 
-bool open_editor_button(obs_properties_t*, obs_property_t*, void* data)
+bool request_editor_open(Filter* filter, const char* reason)
 {
-    auto* filter = static_cast<Filter*>(data);
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return false;
 
@@ -642,8 +644,18 @@ bool open_editor_button(obs_properties_t*, obs_property_t*, void* data)
         return false;
     }
 
-    if (!filter->bridge_owner->open_editor())
+    if (!filter->bridge_owner->open_editor()) {
         blog(LOG_WARNING, "[obs-safe-vst3] failed to request native VST3 interface");
+        return false;
+    }
+    blog(LOG_INFO, "[obs-safe-vst3] native VST3 interface requested: %s", reason ? reason : "explicit request");
+    return true;
+}
+
+bool open_editor_button(obs_properties_t*, obs_property_t*, void* data)
+{
+    auto* filter = static_cast<Filter*>(data);
+    (void)request_editor_open(filter, "Open Plug-in Interface button");
     return false;
 }
 
@@ -684,7 +696,8 @@ void filter_update(void* data, obs_data_t* settings)
     std::string path;
     std::string class_id;
     split_selection(selected, path, class_id);
-    if (path.empty() && !custom.empty()) {
+    const bool custom_browse_active = path.empty() && !custom.empty();
+    if (custom_browse_active) {
         path = custom;
         class_id = legacy_class;
     } else if (class_id.empty()) {
@@ -694,23 +707,33 @@ void filter_update(void* data, obs_data_t* settings)
     const auto [old_path, old_class_id] = current_identity(filter);
     const bool identity_changed = old_path != path || old_class_id != class_id;
 
-    // Save the old plug-in while its helper and identity are still paired. A
-    // UI selection change can therefore never write old state under the new
-    // plug-in's identity.
     if (identity_changed && !old_path.empty())
         (void)capture_bridge_state(filter, old_path, old_class_id, true);
 
+    bool auto_open_after_first_browse = false;
     {
         std::lock_guard lock(filter->config_mutex);
         if (filter->shutting_down.load(std::memory_order_acquire))
             return;
+
+        if (!filter->initial_update_complete) {
+            // Loading an existing scene/filter is never a user Browse gesture.
+            // Mark the one-shot as consumed when a saved identity already exists.
+            filter->browse_auto_open_consumed = !path.empty();
+        } else if (!filter->browse_auto_open_consumed && identity_changed && !path.empty()) {
+            // The first non-empty identity consumes the one-shot. It opens the
+            // vendor GUI only when that first selection is a custom Browse from
+            // an otherwise-empty brand-new filter. Installed-list selection
+            // consumes the allowance without opening anything.
+            auto_open_after_first_browse = old_path.empty() && custom_browse_active;
+            filter->browse_auto_open_consumed = true;
+        }
+
         filter->path = path;
         filter->class_id = class_id;
+        filter->initial_update_complete = true;
     }
 
-    // The plug-in-level Enabled checkbox was removed from the normal UX. Do
-    // not keep honoring an old explicit false value that users can no longer
-    // change; OBS's own filter visibility is now the user-facing enable path.
     const bool new_enabled = true;
     const bool enabled_changed = filter->enabled.exchange(new_enabled, std::memory_order_relaxed) != new_enabled;
     filter->deadline_fraction.store(kInternalDeadlineFraction, std::memory_order_relaxed);
@@ -719,10 +742,11 @@ void filter_update(void* data, obs_data_t* settings)
     if (needs_restart) {
         restart_bridge(filter);
     } else {
-        // Existing normalized values continue to work as the compatibility
-        // fallback. Exact state is authoritative only when a helper is born.
         apply_current_parameter_settings(filter, settings);
     }
+
+    if (auto_open_after_first_browse)
+        (void)request_editor_open(filter, "first custom Browse selection");
 
     if (needs_restart && filter->context)
         obs_source_update_properties(filter->context);
@@ -824,8 +848,6 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
                     filter->observed_state_generation.store(dirty, std::memory_order_release);
                     stable_dirty_ticks = 0;
                 } else if (dirty != filter->saved_state_generation.load(std::memory_order_acquire)) {
-                    // Debounce vendor/editor activity. Two stable one-second
-                    // observations keep getState() off active knob gestures.
                     if (++stable_dirty_ticks >= 2) {
                         (void)capture_current_bridge_state(filter, false);
                         stable_dirty_ticks = 0;
@@ -847,8 +869,6 @@ void filter_destroy(void* data)
     if (!filter)
         return;
 
-    // Capture before shutdown flags make the control plane unavailable. This is
-    // the last exact snapshot if OBS exits before the debounce worker fires.
     (void)capture_current_bridge_state(filter, true);
 
     filter->shutting_down.store(true, std::memory_order_release);
@@ -874,7 +894,7 @@ obs_properties_t* filter_properties(void* data)
     auto* list = obs_properties_add_list(props, kPluginPath, obs_module_text("InstalledVST3"),
                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     populate_plugin_list(list);
-    obs_properties_add_button(props, kRescan, obs_module_text("RescanVST3"), rescan_button);
+    obs_properties_add_button2(props, kRescan, obs_module_text("RescanVST3"), rescan_button, filter);
     obs_properties_add_path(props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
 
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
@@ -925,9 +945,6 @@ obs_properties_t* filter_properties(void* data)
     if (!can_try_native_editor)
         obs_property_set_enabled(open_editor, false);
 
-    // Unknown means the plug-in has a controller but its vendor UI has never
-    // successfully attached. Keep generic controls available until explicit
-    // Open succeeds so a broken/hanging GUI cannot make healthy DSP unusable.
     if (native_editor_confirmed || parameters.empty())
         return props;
 
@@ -998,7 +1015,7 @@ bool obs_module_load(void)
     }
 
     obs_register_source(&source_info);
-    blog(LOG_INFO, "[obs-safe-vst3] native-like recovery preview module loaded");
+    blog(LOG_INFO, "[obs-safe-vst3] Phase S stable module loaded");
     return true;
 }
 
