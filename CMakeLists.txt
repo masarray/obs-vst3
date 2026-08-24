@@ -94,6 +94,13 @@ endif()
 if(SAFEVST3_BUILD_TESTS)
     enable_testing()
 
+    add_test(
+        NAME obs-properties-ownership
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/src/obs-plugin/plugin.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/obs_properties_ownership.cmake
+    )
+
     add_executable(parameter-control-test tests/parameter_control.cpp)
     target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
     add_test(NAME parameter-control COMMAND parameter-control-test)
