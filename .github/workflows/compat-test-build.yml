@@ -8,6 +8,9 @@ on:
       - 'src/obs-plugin/obs_compat_floor.hpp'
       - 'src/obs-plugin/plugin.cpp'
       - 'src/scanner/main.cpp'
+      - 'installer/windows/obs-safe-vst3.iss'
+      - 'data/locale/en-US.ini'
+      - 'scripts/package-windows.ps1'
 
 permissions:
   contents: read
@@ -168,9 +171,9 @@ jobs:
           if (-not $Iscc) { throw 'Inno Setup 6 not found' }
           "path=$Iscc" >> $env:GITHUB_OUTPUT
 
-      - name: Package compatibility test build
+      - name: Package stabilization test build
         shell: pwsh
-        run: .\scripts\package-windows.ps1 -BuildDir build/compat -Version '0.4.1-compat-test2' -OutDir dist -Iscc '${{ steps.inno.outputs.path }}'
+        run: .\scripts\package-windows.ps1 -BuildDir build/compat -Version '0.4.1-stabilize-test5' -OutDir dist -Iscc '${{ steps.inno.outputs.path }}'
 
       - name: Inspect PE dependencies
         shell: pwsh
@@ -188,7 +191,7 @@ jobs:
             }
           }
 
-      - name: Validate package
+      - name: Validate portable package
         shell: pwsh
         run: |
           $Zip = Get-ChildItem dist -Filter '*Portable.zip' -File | Select-Object -First 1
@@ -201,10 +204,33 @@ jobs:
             if (-not (Test-Path (Join-Path $Check $Rel))) { throw "missing $Rel" }
           }
 
-      - name: Upload compatibility test artifact
+      - name: Smoke-test canonical OBS-root installer
+        shell: pwsh
+        run: |
+          $Setup = Get-ChildItem dist -Filter '*Setup-x64.exe' -File | Select-Object -First 1
+          if (-not $Setup) { throw 'installer missing' }
+          $Root = Join-Path $env:RUNNER_TEMP 'synthetic-obs-root'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Root
+          New-Item -ItemType Directory -Force -Path (Join-Path $Root 'bin\64bit') | Out-Null
+          Set-Content -Path (Join-Path $Root 'bin\64bit\obs64.exe') -Value 'synthetic OBS marker' -Encoding ASCII
+          $Reg = 'HKCU:\Software\masarray\OBS Safe VST3 Host'
+          Remove-Item -Path $Reg -Recurse -Force -ErrorAction SilentlyContinue
+          $Arg = "/ObsRoot=`"$Root`""
+          $P = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',$Arg -Wait -PassThru
+          if ($P.ExitCode -ne 0) { throw "installer exited $($P.ExitCode)" }
+          foreach ($Rel in @('obs-plugins\64bit\obs-safe-vst3.dll','obs-plugins\64bit\obs-safe-vst3-host.exe','obs-plugins\64bit\obs-safe-vst3-scanner.exe','data\obs-plugins\obs-safe-vst3\locale\en-US.ini')) {
+            if (-not (Test-Path (Join-Path $Root $Rel))) { throw "installer missing $Rel" }
+          }
+          if (-not (Test-Path $Reg)) { throw 'installer did not persist OBS root' }
+          $Remembered = (Get-ItemProperty -Path $Reg).LastObsRoot
+          if ([IO.Path]::GetFullPath([string]$Remembered).TrimEnd('\') -ne [IO.Path]::GetFullPath($Root).TrimEnd('\')) {
+            throw "remembered OBS root mismatch: $Remembered"
+          }
+
+      - name: Upload stabilization test artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OBS-Safe-VST3-Host-v0.4.1-compat-test2-windows-x64
+          name: OBS-Safe-VST3-Host-v0.4.1-stabilize-test5-windows-x64
           path: |
             dist/*Setup-x64.exe
             dist/*Portable.zip
