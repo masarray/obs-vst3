@@ -37,26 +37,28 @@ Source: "payload\obs-safe-vst3-scanner.exe"; DestDir: "{code:GetPluginBinDir}"; 
 Source: "payload\en-US.ini"; DestDir: "{code:GetPluginLocaleDir}"; Flags: ignoreversion
 
 [InstallDelete]
-; OBS can discover plug-ins from several historical locations. Clean only our
-; exact plug-in files/folders before installing the current package so an old
-; copy cannot shadow it. The active Standard target is re-created by [Files].
-Type: filesandordirs; Name: "{commonappdata}\obs-studio\plugins\obs-safe-vst3"; Check: IsStandardMode
-Type: filesandordirs; Name: "{userappdata}\obs-studio\plugins\obs-safe-vst3"; Check: IsStandardMode
-Type: files; Name: "{autopf}\obs-studio\obs-plugins\64bit\obs-safe-vst3.dll"; Check: IsStandardMode
-Type: files; Name: "{autopf}\obs-studio\obs-plugins\64bit\obs-safe-vst3-host.exe"; Check: IsStandardMode
-Type: files; Name: "{autopf}\obs-studio\obs-plugins\64bit\obs-safe-vst3-scanner.exe"; Check: IsStandardMode
-Type: filesandordirs; Name: "{autopf}\obs-studio\data\obs-plugins\obs-safe-vst3"; Check: IsStandardMode
+; Remove only this product from OBS's historical per-machine/per-user plug-in
+; roots. The active package is always installed into the explicitly selected
+; OBS root below, which works for both normal and portable-mode OBS launches.
+Type: filesandordirs; Name: "{commonappdata}\obs-studio\plugins\obs-safe-vst3"
+Type: filesandordirs; Name: "{userappdata}\obs-studio\plugins\obs-safe-vst3"
+; Also replace an older copy in the selected OBS root without touching any
+; other plug-in files in that installation.
+Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3.dll"
+Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3-host.exe"
+Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3-scanner.exe"
+Type: filesandordirs; Name: "{code:GetPluginDataDir}"
 
 [Code]
 const
   SettingsRegKey = 'Software\masarray\OBS Safe VST3 Host';
-  LastModeValue = 'LastInstallMode';
-  LastPortableDirValue = 'LastPortableObsDir';
+  LastObsRootValue = 'LastObsRoot';
+  LegacyLastPortableDirValue = 'LastPortableObsDir';
 
 var
-  InstallModePage: TInputOptionWizardPage;
-  PortableDirPage: TInputDirWizardPage;
-  PortableObsDirParam: String;
+  ObsRootPage: TInputDirWizardPage;
+  ObsRootParam: String;
+  LegacyPortableObsDirParam: String;
   CloseObsParam: String;
 
 function AddSlash(const Path: String): String;
@@ -66,14 +68,9 @@ begin
     Result := Result + '\';
 end;
 
-function StandardObsRoot: String;
+function DefaultObsRoot: String;
 begin
   Result := ExpandConstant('{autopf}\obs-studio');
-end;
-
-function IsStandardMode: Boolean;
-begin
-  Result := InstallModePage.SelectedValueIndex = 0;
 end;
 
 function IsObsRootValid(const Root: String): Boolean;
@@ -81,20 +78,24 @@ begin
   Result := (Root <> '') and FileExists(AddSlash(Root) + 'bin\64bit\obs64.exe');
 end;
 
+function SelectedObsRoot: String;
+begin
+  Result := ObsRootPage.Values[0];
+end;
+
 function GetPluginBinDir(Param: String): String;
 begin
-  if IsStandardMode then
-    Result := AddSlash(StandardObsRoot) + 'obs-plugins\64bit'
-  else
-    Result := AddSlash(PortableDirPage.Values[0]) + 'obs-plugins\64bit';
+  Result := AddSlash(SelectedObsRoot) + 'obs-plugins\64bit';
+end;
+
+function GetPluginDataDir(Param: String): String;
+begin
+  Result := AddSlash(SelectedObsRoot) + 'data\obs-plugins\obs-safe-vst3';
 end;
 
 function GetPluginLocaleDir(Param: String): String;
 begin
-  if IsStandardMode then
-    Result := AddSlash(StandardObsRoot) + 'data\obs-plugins\obs-safe-vst3\locale'
-  else
-    Result := AddSlash(PortableDirPage.Values[0]) + 'data\obs-plugins\obs-safe-vst3\locale';
+  Result := GetPluginDataDir('') + '\locale';
 end;
 
 function IsObsRunning: Boolean;
@@ -201,110 +202,73 @@ begin
   Result := WaitForObsExit(10);
 end;
 
-procedure LoadRememberedInstallTarget;
+function LoadRememberedObsRoot: String;
 var
-  RememberedMode: String;
-  RememberedPortableDir: String;
+  Remembered: String;
 begin
-  RememberedMode := '';
-  RememberedPortableDir := '';
-
-  RegQueryStringValue(HKEY_CURRENT_USER, SettingsRegKey,
-    LastModeValue, RememberedMode);
-  RegQueryStringValue(HKEY_CURRENT_USER, SettingsRegKey,
-    LastPortableDirValue, RememberedPortableDir);
-
-  if IsObsRootValid(RememberedPortableDir) then
+  Result := '';
+  Remembered := '';
+  if RegQueryStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+    LastObsRootValue, Remembered) and IsObsRootValid(Remembered) then
   begin
-    PortableDirPage.Values[0] := RememberedPortableDir;
-    if CompareText(RememberedMode, 'portable') = 0 then
-      InstallModePage.SelectedValueIndex := 1;
+    Result := Remembered;
+    Exit;
   end;
+
+  { Migrate the path remembered by v0.3/v0.4 preview installers. }
+  Remembered := '';
+  if RegQueryStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+    LegacyLastPortableDirValue, Remembered) and IsObsRootValid(Remembered) then
+    Result := Remembered;
 end;
 
-procedure RememberInstallTarget;
+procedure RememberObsRoot;
 begin
-  if IsStandardMode then
-  begin
-    RegWriteStringValue(HKEY_CURRENT_USER, SettingsRegKey,
-      LastModeValue, 'standard');
-  end
-  else
-  begin
-    RegWriteStringValue(HKEY_CURRENT_USER, SettingsRegKey,
-      LastModeValue, 'portable');
-    RegWriteStringValue(HKEY_CURRENT_USER, SettingsRegKey,
-      LastPortableDirValue, PortableDirPage.Values[0]);
-  end;
+  RegWriteStringValue(HKEY_CURRENT_USER, SettingsRegKey,
+    LastObsRootValue, SelectedObsRoot);
 end;
 
 procedure InitializeWizard;
 var
-  DefaultPortablePath: String;
+  InitialRoot: String;
 begin
-  InstallModePage := CreateInputOptionPage(wpWelcome,
-    'Choose OBS installation type',
-    'Where should OBS Safe VST3 Host be installed?',
-    'Standard installs directly into the official OBS folder so it works in both normal and portable-mode launches. ' +
-    'Choose Custom / Portable if OBS is installed somewhere else.',
-    True, False);
-
-  InstallModePage.Add('Standard OBS Studio — C:\Program Files\obs-studio');
-  InstallModePage.Add('Custom / Portable OBS folder');
-  InstallModePage.SelectedValueIndex := 0;
-
-  PortableDirPage := CreateInputDirPage(InstallModePage.ID,
-    'Select your OBS folder',
+  ObsRootPage := CreateInputDirPage(wpWelcome,
+    'Select OBS Studio',
     'Choose the OBS Studio root folder',
-    'Select the folder that contains bin\64bit\obs64.exe. ' +
-    'Setup remembers this location for future updates.',
+    'OBS Safe VST3 Host installs directly into the selected OBS root. ' +
+    'This is the same plug-in layout for normal, Steam, custom and portable-mode OBS. ' +
+    'Choose the folder that contains bin\64bit\obs64.exe.',
     False, '');
-  PortableDirPage.Add('');
+  ObsRootPage.Add('');
 
-  DefaultPortablePath := StandardObsRoot;
-  if IsObsRootValid(DefaultPortablePath) then
-    PortableDirPage.Values[0] := DefaultPortablePath
-  else
-    PortableDirPage.Values[0] := ExpandConstant('{sd}\OBS Studio');
-
-  LoadRememberedInstallTarget;
-
-  PortableObsDirParam := ExpandConstant('{param:PortableObsDir|}');
-  if PortableObsDirParam <> '' then
+  InitialRoot := LoadRememberedObsRoot;
+  if InitialRoot = '' then
   begin
-    InstallModePage.SelectedValueIndex := 1;
-    PortableDirPage.Values[0] := PortableObsDirParam;
+    if IsObsRootValid(DefaultObsRoot) then
+      InitialRoot := DefaultObsRoot
+    else
+      InitialRoot := ExpandConstant('{sd}\OBS Studio');
   end;
 
-  CloseObsParam := Lowercase(ExpandConstant('{param:CloseObs|ask}'));
-end;
+  { New explicit target takes precedence. Keep /PortableObsDir as a backwards-
+    compatible alias for automation/scripts from earlier preview installers. }
+  ObsRootParam := ExpandConstant('{param:ObsRoot|}');
+  LegacyPortableObsDirParam := ExpandConstant('{param:PortableObsDir|}');
+  if ObsRootParam <> '' then
+    InitialRoot := ObsRootParam
+  else if LegacyPortableObsDirParam <> '' then
+    InitialRoot := LegacyPortableObsDirParam;
 
-function ShouldSkipPage(PageID: Integer): Boolean;
-begin
-  Result := (PageID = PortableDirPage.ID) and IsStandardMode;
+  ObsRootPage.Values[0] := InitialRoot;
+  CloseObsParam := Lowercase(ExpandConstant('{param:CloseObs|ask}'));
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-
-  if (CurPageID = InstallModePage.ID) and IsStandardMode then
+  if CurPageID = ObsRootPage.ID then
   begin
-    if not IsObsRootValid(StandardObsRoot) then
-    begin
-      MsgBox('Standard OBS Studio was not found at:' + #13#10 +
-        StandardObsRoot + #13#10 + #13#10 +
-        'Choose Custom / Portable and select the folder containing bin\64bit\obs64.exe.',
-        mbInformation, MB_OK);
-      InstallModePage.SelectedValueIndex := 1;
-      Result := False;
-      Exit;
-    end;
-  end;
-
-  if (CurPageID = PortableDirPage.ID) and (not IsStandardMode) then
-  begin
-    if not IsObsRootValid(PortableDirPage.Values[0]) then
+    if not IsObsRootValid(SelectedObsRoot) then
     begin
       MsgBox('That folder does not look like an OBS Studio root.' + #13#10 + #13#10 +
         'Please choose the folder that contains:' + #13#10 +
@@ -317,6 +281,12 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  if not IsObsRootValid(SelectedObsRoot) then
+  begin
+    Result := 'A valid OBS Studio root is required. Select the folder containing bin\64bit\obs64.exe.';
+    Exit;
+  end;
+
   if IsObsRunning and (not RequestObsClose) then
   begin
     if WizardSilent then
@@ -329,5 +299,5 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
-    RememberInstallTarget;
+    RememberObsRoot;
 end;
