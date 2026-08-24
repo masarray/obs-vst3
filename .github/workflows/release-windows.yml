@@ -255,7 +255,7 @@ jobs:
             }
           }
 
-      - name: Smoke-test Smart Installer and remembered portable target
+      - name: Smoke-test Smart Installer and remembered OBS root
         run: |
           $Setup = Get-ChildItem dist -Filter '*-Setup-x64.exe' -File | Select-Object -First 1
           if (-not $Setup) { throw 'Smart Installer was not created.' }
@@ -275,9 +275,9 @@ jobs:
             'data\obs-plugins\obs-safe-vst3\locale\en-US.ini'
           )
 
-          # First install: explicit portable root, as a first-time user would choose.
-          $PortableArg = "/PortableObsDir=`"$SyntheticObs`""
-          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $PortableArg -Wait -PassThru
+          # First install: explicit canonical OBS root.
+          $ObsRootArg = "/ObsRoot=`"$SyntheticObs`""
+          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $ObsRootArg -Wait -PassThru
           if ($FirstInstall.ExitCode -ne 0) {
             throw "First Smart Installer run failed with exit code $($FirstInstall.ExitCode)."
           }
@@ -291,11 +291,8 @@ jobs:
             throw 'Installer did not persist its remembered target registry key.'
           }
           $Remembered = Get-ItemProperty -Path $SettingsReg
-          if ($Remembered.LastInstallMode -ne 'portable') {
-            throw "Installer remembered unexpected mode '$($Remembered.LastInstallMode)'."
-          }
           $ExpectedRoot = [IO.Path]::GetFullPath($SyntheticObs).TrimEnd('\')
-          $RememberedRoot = [IO.Path]::GetFullPath([string]$Remembered.LastPortableObsDir).TrimEnd('\')
+          $RememberedRoot = [IO.Path]::GetFullPath([string]$Remembered.LastObsRoot).TrimEnd('\')
           if ($RememberedRoot -ne $ExpectedRoot) {
             throw "Installer remembered '$RememberedRoot' instead of '$ExpectedRoot'."
           }
@@ -315,8 +312,8 @@ jobs:
             }
           }
 
-          # Second install: no /PortableObsDir at all. The remembered portable
-          # mode/path must make a future update one-click and target the same OBS.
+          # Second install: no target argument. The remembered canonical OBS
+          # root must make a future update one-click and target the same installation.
           $SecondInstall = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           if ($SecondInstall.ExitCode -ne 0) {
             throw "Remembered-target Smart Installer run failed with exit code $($SecondInstall.ExitCode)."
