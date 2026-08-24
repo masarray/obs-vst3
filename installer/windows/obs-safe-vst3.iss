@@ -36,6 +36,17 @@ Source: "payload\obs-safe-vst3-host.exe"; DestDir: "{code:GetPluginBinDir}"; Fla
 Source: "payload\obs-safe-vst3-scanner.exe"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
 Source: "payload\en-US.ini"; DestDir: "{code:GetPluginLocaleDir}"; Flags: ignoreversion
 
+[InstallDelete]
+; Standard OBS can discover plug-ins from several historical locations. Clean
+; only our exact plug-in files/folders so an older copy cannot win discovery
+; order and silently shadow the package being installed now.
+Type: filesandordirs; Name: "{commonappdata}\obs-studio\plugins\obs-safe-vst3"; Check: IsStandardMode
+Type: filesandordirs; Name: "{userappdata}\obs-studio\plugins\obs-safe-vst3"; Check: IsStandardMode
+Type: files; Name: "{autopf}\obs-studio\obs-plugins\64bit\obs-safe-vst3.dll"; Check: IsStandardMode
+Type: files; Name: "{autopf}\obs-studio\obs-plugins\64bit\obs-safe-vst3-host.exe"; Check: IsStandardMode
+Type: files; Name: "{autopf}\obs-studio\obs-plugins\64bit\obs-safe-vst3-scanner.exe"; Check: IsStandardMode
+Type: filesandordirs; Name: "{autopf}\obs-studio\data\obs-plugins\obs-safe-vst3"; Check: IsStandardMode
+
 [Code]
 const
   SettingsRegKey = 'Software\masarray\OBS Safe VST3 Host';
