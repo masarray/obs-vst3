@@ -6,6 +6,8 @@ on:
       - '.github/workflows/compat-test-build.yml'
       - 'CMakeLists.txt'
       - 'src/obs-plugin/obs_compat_floor.hpp'
+      - 'src/obs-plugin/plugin.cpp'
+      - 'src/scanner/main.cpp'
 
 permissions:
   contents: read
@@ -94,19 +96,33 @@ jobs:
           if ($P.ExitCode -ne 0) { throw "scanner exited $($P.ExitCode)" }
           if (-not (Test-Path $Cache)) { throw 'scanner did not create cache' }
 
-      - name: Verify OBS module load and ABI floor
+      - name: Install official OBS 29.1.3 runtime for loader probe
+        id: obs29
+        shell: pwsh
+        run: |
+          $Installer = Join-Path $env:RUNNER_TEMP 'OBS-Studio-29.1.3-Full-Installer-x64.exe'
+          $Url = 'https://github.com/obsproject/obs-studio/releases/download/29.1.3/OBS-Studio-29.1.3-Full-Installer-x64.exe'
+          Invoke-WebRequest -Uri $Url -OutFile $Installer
+          $Expected = 'F5D429B2F75E85A7FB3E8DC84613FA362AB10276E4679B19F57DCAE86569536B'
+          $Actual = (Get-FileHash -Algorithm SHA256 $Installer).Hash.ToUpperInvariant()
+          if ($Actual -ne $Expected) { throw "OBS 29.1.3 installer checksum mismatch: $Actual" }
+          $Root = Join-Path $env:RUNNER_TEMP 'obs-29.1.3'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Root
+          New-Item -ItemType Directory -Force -Path $Root | Out-Null
+          $P = Start-Process -FilePath $Installer -ArgumentList '/S', "/D=$Root" -Wait -PassThru
+          if ($P.ExitCode -ne 0) { throw "OBS 29.1.3 silent install exited $($P.ExitCode)" }
+          $ObsDll = Get-ChildItem $Root -Filter 'obs.dll' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $ObsDll) { throw 'Official OBS 29.1.3 runtime obs.dll not found after install' }
+          Write-Host "OBS 29.1.3 runtime: $($ObsDll.FullName)"
+          "bin=$($ObsDll.Directory.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Verify module loads on real OBS 29.1.3 runtime and advertises ABI floor
         shell: pwsh
         run: |
           $Plugin = Get-ChildItem build/compat -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
           if (-not $Plugin) { throw 'plugin DLL missing' }
-          $ObsDll = Get-ChildItem .obs-sdk -Filter 'obs.dll' -File -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '[\\/]rundir[\\/].*[\\/]Release[\\/].*[\\/]64bit[\\/]' } |
-            Select-Object -First 1
-          if (-not $ObsDll) {
-            $ObsDll = Get-ChildItem .obs-sdk -Filter 'obs.dll' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if (-not $ObsDll) { throw 'OBS runtime obs.dll not found for loader probe' }
-          $ObsBin = $ObsDll.Directory.FullName
+          $ObsBin = '${{ steps.obs29.outputs.bin }}'
+          if (-not (Test-Path (Join-Path $ObsBin 'obs.dll'))) { throw 'OBS 29.1.3 obs.dll missing for loader probe' }
           $env:PATH = "$ObsBin;$env:PATH"
           Add-Type @'
           using System;
@@ -126,7 +142,7 @@ jobs:
           $Handle = [SafeVst3ModuleProbe]::LoadLibrary($Plugin.FullName)
           if ($Handle -eq [IntPtr]::Zero) {
             $Err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            throw "LoadLibrary(obs-safe-vst3.dll) failed with Win32 error $Err"
+            throw "LoadLibrary(obs-safe-vst3.dll) against OBS 29.1.3 failed with Win32 error $Err"
           }
           try {
             $Proc = [SafeVst3ModuleProbe]::GetProcAddress($Handle, 'obs_module_ver')
@@ -154,7 +170,7 @@ jobs:
 
       - name: Package compatibility test build
         shell: pwsh
-        run: .\scripts\package-windows.ps1 -BuildDir build/compat -Version '0.4.1-compat-test1' -OutDir dist -Iscc '${{ steps.inno.outputs.path }}'
+        run: .\scripts\package-windows.ps1 -BuildDir build/compat -Version '0.4.1-compat-test2' -OutDir dist -Iscc '${{ steps.inno.outputs.path }}'
 
       - name: Inspect PE dependencies
         shell: pwsh
@@ -188,7 +204,7 @@ jobs:
       - name: Upload compatibility test artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OBS-Safe-VST3-Host-v0.4.1-compat-test1-windows-x64
+          name: OBS-Safe-VST3-Host-v0.4.1-compat-test2-windows-x64
           path: |
             dist/*Setup-x64.exe
             dist/*Portable.zip
