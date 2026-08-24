@@ -14,46 +14,35 @@ jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout stabilization branch
+        uses: actions/checkout@v4
         with:
           ref: fix/obs-load-compatibility
           fetch-depth: 0
 
-      - name: Apply exact stabilization replacements
-        shell: python
+      - name: Apply runtime and release-gate patch
+        shell: bash
         run: |
+          cat > /tmp/apply_patch.py <<'PY'
           from pathlib import Path
 
-          path = Path('src/obs-plugin/plugin.cpp')
-          text = path.read_text(encoding='utf-8')
+          plugin = Path('src/obs-plugin/plugin.cpp')
+          text = plugin.read_text(encoding='utf-8')
 
-          def replace_once(old, new, label):
+          def replace_once(old: str, new: str, label: str):
               global text
               if old not in text:
-                  raise SystemExit(f'missing expected block: {label}')
+                  raise SystemExit(f'missing expected plugin block: {label}')
               text = text.replace(old, new, 1)
 
           replace_once(
-          '''std::mutex scanner_mutex;
-          std::jthread startup_scanner_thread;
-          ''',
-          '''enum class ScannerRunResult {
-              Success,
-              Failed,
-              Busy,
-              Cancelled,
-          };
+              'std::mutex scanner_mutex;\nstd::jthread startup_scanner_thread;\n',
+              '''enum class ScannerRunResult {\n    Success,\n    Failed,\n    Busy,\n    Cancelled,\n};\n\nstd::atomic<bool> scanner_in_progress{false};\nstd::jthread startup_scanner_thread;\nstd::jthread manual_scanner_thread;\nstd::mutex manual_scanner_thread_mutex;\n''',
+              'scanner globals')
 
-          std::atomic<bool> scanner_in_progress{false};
-          std::jthread startup_scanner_thread;
-          std::jthread manual_scanner_thread;
-          std::mutex manual_scanner_thread_mutex;
-          ''',
-          'scanner globals')
-
-          old_start = text.index('bool run_scanner(std::stop_token stop = {})')
-          old_end = text.index('\nvoid start_startup_scanner()', old_start)
-          new_run = r'''ScannerRunResult run_scanner(std::stop_token stop = {})
+          start = text.index('bool run_scanner(std::stop_token stop = {})')
+          end = text.index('\nvoid start_startup_scanner()', start)
+          text = text[:start] + r'''ScannerRunResult run_scanner(std::stop_token stop = {})
           {
               bool expected = false;
               if (!scanner_in_progress.compare_exchange_strong(
@@ -73,7 +62,8 @@ jobs:
               const auto scanner = scanner_path();
               const auto cache = scan_cache_path();
               if (scanner.empty() || cache.empty() || !std::filesystem::exists(scanner)) {
-                  blog(LOG_ERROR, "[obs-safe-vst3] isolated scanner executable not found next to the loaded module");
+                  blog(LOG_ERROR, "[obs-safe-vst3] isolated scanner executable not found next to loaded module: %s",
+                       scanner.string().c_str());
                   return ScannerRunResult::Failed;
               }
 
@@ -126,19 +116,18 @@ jobs:
               }
               return ScannerRunResult::Success;
           }
-          '''
-          text = text[:old_start] + new_run + text[old_end:]
+          ''' + text[end:]
 
-          old_start = text.index('void start_startup_scanner()')
-          old_end = text.index('\nstd::vector<ScanEntry> load_scan_cache()', old_start)
-          new_startstop = r'''void start_startup_scanner()
+          start = text.index('void start_startup_scanner()')
+          end = text.index('\nstd::vector<ScanEntry> load_scan_cache()', start)
+          text = text[:start] + r'''void start_startup_scanner()
           {
               if (startup_scanner_thread.joinable())
                   return;
 
               startup_scanner_thread = std::jthread([](std::stop_token stop) {
                   // Start almost immediately after module registration. Discovery and
-                  // all vendor probing remain outside OBS UI/audio threads.
+                  // vendor probing remain completely outside OBS UI/audio threads.
                   std::this_thread::sleep_for(std::chrono::milliseconds(100));
                   if (stop.stop_requested())
                       return;
@@ -164,42 +153,25 @@ jobs:
                   manual_scanner_thread = std::jthread{};
               }
           }
-          '''
-          text = text[:old_start] + new_startstop + text[old_end:]
+          ''' + text[end:]
 
           replace_once(
-          '''    const auto entries = load_scan_cache();
-              if (entries.empty()) {
-                  obs_property_list_add_string(list, obs_module_text("NoPluginsScanned"), "");
-                  return;
-              }
-          ''',
-          '''    const auto entries = load_scan_cache();
-              if (entries.empty()) {
-                  obs_property_list_add_string(
-                      list,
-                      obs_module_text(scanner_in_progress.load(std::memory_order_acquire)
-                                          ? "ScanningPlugins"
-                                          : "NoPluginsScanned"),
-                      "");
-                  return;
-              }
-          ''',
-          'empty-list scanner status')
+              '''    const auto entries = load_scan_cache();\n    if (entries.empty()) {\n        obs_property_list_add_string(list, obs_module_text("NoPluginsScanned"), "");\n        return;\n    }\n''',
+              '''    const auto entries = load_scan_cache();\n    if (entries.empty()) {\n        obs_property_list_add_string(\n            list,\n            obs_module_text(scanner_in_progress.load(std::memory_order_acquire)\n                                ? "ScanningPlugins"\n                                : "NoPluginsScanned"),\n            "");\n        return;\n    }\n''',
+              'empty list status')
 
-          old_start = text.index('bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)')
-          old_end = text.index('\nbool split_selection(', old_start)
-          new_rescan = r'''bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
+          start = text.index('bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)')
+          end = text.index('\nbool split_selection(', start)
+          text = text[:start] + r'''bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
           {
               auto* filter = static_cast<Filter*>(data);
               hide_editor_before_scan(filter);
 
-              // Never wait on vendor probing from the OBS UI thread. If startup
-              // discovery is already active, expose its current seed cache and
-              // let that scan finish instead of launching a duplicate process.
+              // Refresh immediately from the discovery seed/cache. Never wait for
+              // vendor probing on the OBS UI thread.
               populate_plugin_list(obs_properties_get(props, kPluginPath));
               if (scanner_in_progress.load(std::memory_order_acquire)) {
-                  blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already running; reusing active scan");
+                  blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already active; reusing active scan");
                   return true;
               }
 
@@ -208,12 +180,14 @@ jobs:
                   context = obs_source_get_ref(filter->context);
 
               std::lock_guard lock(manual_scanner_thread_mutex);
+              if (manual_scanner_thread.joinable())
+                  manual_scanner_thread = std::jthread{};
               manual_scanner_thread = std::jthread([context](std::stop_token stop) {
                   const auto result = run_scanner(stop);
                   if (result == ScannerRunResult::Success)
                       blog(LOG_INFO, "[obs-safe-vst3] installed VST3 cache refreshed");
                   else if (result == ScannerRunResult::Busy)
-                      blog(LOG_INFO, "[obs-safe-vst3] manual Rescan joined an already active discovery pass");
+                      blog(LOG_INFO, "[obs-safe-vst3] manual Rescan reused an already active discovery pass");
 
                   if (context) {
                       if (!stop.stop_requested())
@@ -223,68 +197,67 @@ jobs:
               });
               return true;
           }
-          '''
-          text = text[:old_start] + new_rescan + text[old_end:]
+          ''' + text[end:]
 
           replace_once(
-          '''    blog(LOG_INFO, "[obs-safe-vst3] Phase S stable module loaded");
-              return true;
-          }
+              '''    blog(LOG_INFO, "[obs-safe-vst3] Phase S stable module loaded");\n    return true;\n}\n\nvoid obs_module_unload(void)\n{\n    stop_startup_scanner();\n''',
+              '''    const auto module_dir = module_binary_dir();\n    const auto scanner = scanner_path();\n    const auto cache = scan_cache_path();\n    blog(LOG_INFO,\n         "[obs-safe-vst3] Phase S module loaded; module_dir=%s scanner=%s cache=%s",\n         module_dir.string().c_str(), scanner.string().c_str(), cache.string().c_str());\n    return true;\n}\n\nvoid obs_module_unload(void)\n{\n    stop_scanners();\n''',
+              'module unload/log')
 
-          void obs_module_unload(void)
-          {
-              stop_startup_scanner();
-          ''',
-          '''    const auto module_dir = module_binary_dir();
-              const auto scanner = scanner_path();
-              const auto cache = scan_cache_path();
-              blog(LOG_INFO,
-                   "[obs-safe-vst3] Phase S module loaded; module_dir=%s scanner=%s cache=%s",
-                   module_dir.string().c_str(), scanner.string().c_str(), cache.string().c_str());
-              return true;
-          }
+          plugin.write_text(text, encoding='utf-8')
 
-          void obs_module_unload(void)
-          {
-              stop_scanners();
-          ''',
-          'module scanner shutdown/logging')
-
-          path.write_text(text, encoding='utf-8')
+          locale = Path('data/locale/en-US.ini')
+          loc = locale.read_text(encoding='utf-8')
+          if 'ScanningPlugins=' not in loc:
+              loc = loc.replace(
+                  'NoPluginsScanned="No installed VST3 plug-ins found — use Browse below [root-test4]"\n',
+                  'NoPluginsScanned="No installed VST3 plug-ins found — use Browse below [stabilize-test5]"\n'
+                  'ScanningPlugins="Scanning installed VST3 plug-ins in background… [stabilize-test5]"\n')
+          loc = loc.replace('[root-test4]', '[stabilize-test5]')
+          locale.write_text(loc, encoding='utf-8')
 
           release = Path('.github/workflows/release-windows.yml')
           r = release.read_text(encoding='utf-8')
-          replacements = [
-              ('Smoke-test Smart Installer and remembered portable target',
-               'Smoke-test Smart Installer and remembered OBS root'),
-              ('# First install: explicit portable root, as a first-time user would choose.\n          $PortableArg = "/PortableObsDir=`"$SyntheticObs`""\n          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList \'/VERYSILENT\', \'/SUPPRESSMSGBOXES\', \'/NORESTART\', $PortableArg -Wait -PassThru',
-               '# First install: explicit canonical OBS root.\n          $ObsRootArg = "/ObsRoot=`"$SyntheticObs`""\n          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList \'/VERYSILENT\', \'/SUPPRESSMSGBOXES\', \'/NORESTART\', $ObsRootArg -Wait -PassThru'),
-              ('''          $Remembered = Get-ItemProperty -Path $SettingsReg
+          r = r.replace('Smoke-test Smart Installer and remembered portable target',
+                        'Smoke-test Smart Installer and remembered OBS root', 1)
+          r = r.replace(
+              '# First install: explicit portable root, as a first-time user would choose.\n'
+              '          $PortableArg = "/PortableObsDir=`"$SyntheticObs`""\n'
+              "          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $PortableArg -Wait -PassThru",
+              '# First install: explicit canonical OBS root.\n'
+              '          $ObsRootArg = "/ObsRoot=`"$SyntheticObs`""\n'
+              "          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $ObsRootArg -Wait -PassThru",
+              1)
+          old = '''          $Remembered = Get-ItemProperty -Path $SettingsReg
           if ($Remembered.LastInstallMode -ne 'portable') {
             throw "Installer remembered unexpected mode '$($Remembered.LastInstallMode)'."
           }
           $ExpectedRoot = [IO.Path]::GetFullPath($SyntheticObs).TrimEnd('\\')
           $RememberedRoot = [IO.Path]::GetFullPath([string]$Remembered.LastPortableObsDir).TrimEnd('\\')
-''',
-               '''          $Remembered = Get-ItemProperty -Path $SettingsReg
+'''
+          new = '''          $Remembered = Get-ItemProperty -Path $SettingsReg
           $ExpectedRoot = [IO.Path]::GetFullPath($SyntheticObs).TrimEnd('\\')
           $RememberedRoot = [IO.Path]::GetFullPath([string]$Remembered.LastObsRoot).TrimEnd('\\')
-'''),
-              ('# Second install: no /PortableObsDir at all. The remembered portable\n          # mode/path must make a future update one-click and target the same OBS.',
-               '# Second install: no target argument. The remembered canonical OBS\n          # root must make a future update one-click and target the same installation.'),
-          ]
-          for old, new in replacements:
-              if old not in r:
-                  raise SystemExit(f'missing release workflow block: {old[:80]}')
-              r = r.replace(old, new, 1)
+'''
+          if old not in r:
+              raise SystemExit('missing release remembered-target block')
+          r = r.replace(old, new, 1)
+          r = r.replace(
+              '# Second install: no /PortableObsDir at all. The remembered portable\n'
+              '          # mode/path must make a future update one-click and target the same OBS.',
+              '# Second install: no target argument. The remembered canonical OBS\n'
+              '          # root must make a future update one-click and target the same installation.',
+              1)
           release.write_text(r, encoding='utf-8')
+          PY
+          python /tmp/apply_patch.py
+          git diff --check
 
-      - name: Commit stabilization patch
+      - name: Commit and push stabilization patch
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/obs-plugin/plugin.cpp .github/workflows/release-windows.yml
-          git diff --cached --check
-          git commit -m "fix: make scanner refresh asynchronous and release installer root-aware"
+          git add src/obs-plugin/plugin.cpp data/locale/en-US.ini .github/workflows/release-windows.yml
+          git commit -m "fix: stabilize scanner UI and OBS-root packaging"
           git push origin HEAD:fix/obs-load-compatibility
