@@ -1,0 +1,130 @@
+name: Compatibility Test Build
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/compat-test-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-compat-package:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch OBS 29.1.3 compatibility SDK
+        shell: pwsh
+        run: git clone --branch 29.1.3 --depth 1 --recurse-submodules --shallow-submodules https://github.com/obsproject/obs-studio.git .obs-sdk
+
+      - name: Build OBS/libobs compatibility SDK
+        shell: pwsh
+        working-directory: .obs-sdk
+        env:
+          CI: 'true'
+        run: .\.github\scripts\Build-Windows.ps1 -Target x64 -Configuration Release
+
+      - name: Stage libobs development package
+        id: libobs
+        shell: pwsh
+        run: |
+          $Generated = Get-ChildItem -Path '.obs-sdk' -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '[\\/]install[\\/]' } |
+            Select-Object -First 1
+          if (-not $Generated) { throw 'Generated libobsConfig.cmake was not found.' }
+          $BuildRoot = Split-Path $Generated.Directory.FullName -Parent
+          $SdkPrefix = Join-Path $env:RUNNER_TEMP 'obs-libobs-sdk'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SdkPrefix
+          cmake --install $BuildRoot --prefix $SdkPrefix --config Release --component Development
+          if ($LASTEXITCODE -ne 0) { throw "Installing OBS Development component failed: $LASTEXITCODE" }
+          $Config = Get-ChildItem -Path $SdkPrefix -Filter 'libobsConfig.cmake' -File -Recurse | Select-Object -First 1
+          if (-not $Config) { throw 'Staged libobsConfig.cmake missing.' }
+          $ObsDepsRoot = Join-Path '.obs-sdk' '.deps'
+          $ObsDepsPrefix = Get-ChildItem -Path $ObsDepsRoot -Directory -Filter 'obs-deps-*-x64' -ErrorAction SilentlyContinue | Select-Object -First 1
+          "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
+          "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
+          if ($ObsDepsPrefix) { "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT }
+
+      - name: Configure compatibility build
+        shell: pwsh
+        run: |
+          $Prefix = '${{ steps.libobs.outputs.prefix }}'
+          if ('${{ steps.libobs.outputs.deps_prefix }}') { $Prefix += ';${{ steps.libobs.outputs.deps_prefix }}' }
+          cmake -S . -B build/compat -A x64 `
+            "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
+            "-DCMAKE_PREFIX_PATH=$Prefix" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
+            -DSAFEVST3_BUILD_TESTS=ON
+
+      - name: Build plugin, helper, scanner and tests
+        shell: pwsh
+        run: cmake --build build/compat --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
+
+      - name: Run Windows tests
+        shell: pwsh
+        run: ctest --test-dir build/compat -C Release --output-on-failure
+
+      - name: Scanner smoke test
+        shell: pwsh
+        run: |
+          $Scanner = Get-ChildItem build/compat -Filter 'obs-safe-vst3-scanner.exe' -File -Recurse | Select-Object -First 1
+          if (-not $Scanner) { throw 'scanner executable missing' }
+          $Cache = Join-Path $env:RUNNER_TEMP 'plugins.tsv'
+          $P = Start-Process -FilePath $Scanner.FullName -ArgumentList '--scan-to', "`"$Cache`"" -Wait -PassThru
+          if ($P.ExitCode -ne 0) { throw "scanner exited $($P.ExitCode)" }
+          if (-not (Test-Path $Cache)) { throw 'scanner did not create cache' }
+
+      - name: Ensure Inno Setup 6
+        id: inno
+        shell: pwsh
+        run: |
+          $Candidates = @('C:\Program Files (x86)\Inno Setup 6\ISCC.exe','C:\Program Files\Inno Setup 6\ISCC.exe')
+          $Iscc = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $Iscc) { choco install innosetup -y --no-progress; $Iscc = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1 }
+          if (-not $Iscc) { throw 'Inno Setup 6 not found' }
+          "path=$Iscc" >> $env:GITHUB_OUTPUT
+
+      - name: Package compatibility test build
+        shell: pwsh
+        run: .\scripts\package-windows.ps1 -BuildDir build/compat -Version '0.4.1-compat-test1' -OutDir dist -Iscc '${{ steps.inno.outputs.path }}'
+
+      - name: Inspect PE dependencies
+        shell: pwsh
+        run: |
+          $Dll = Get-ChildItem build/compat -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
+          if (-not $Dll) { throw 'plugin DLL missing' }
+          $Dumpbin = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC' -Filter dumpbin.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($Dumpbin) {
+            $Imports = & $Dumpbin.FullName /DEPENDENTS $Dll.FullName | Out-String
+            Write-Host $Imports
+            if ($Imports -match 'MSVCP140\.dll|MSVCP140_ATOMIC_WAIT\.dll|VCRUNTIME140') { throw 'Dynamic MSVC runtime dependency still present' }
+          }
+
+      - name: Validate package
+        shell: pwsh
+        run: |
+          $Zip = Get-ChildItem dist -Filter '*Portable.zip' -File | Select-Object -First 1
+          $Setup = Get-ChildItem dist -Filter '*Setup-x64.exe' -File | Select-Object -First 1
+          $Sums = Join-Path (Resolve-Path dist) 'SHA256SUMS.txt'
+          if (-not $Zip -or -not $Setup -or -not (Test-Path $Sums)) { throw 'package assets missing' }
+          $Check = Join-Path $env:RUNNER_TEMP 'package-check'
+          Expand-Archive $Zip.FullName -DestinationPath $Check -Force
+          foreach ($Rel in @('obs-plugins\64bit\obs-safe-vst3.dll','obs-plugins\64bit\obs-safe-vst3-host.exe','obs-plugins\64bit\obs-safe-vst3-scanner.exe','data\obs-plugins\obs-safe-vst3\locale\en-US.ini')) {
+            if (-not (Test-Path (Join-Path $Check $Rel))) { throw "missing $Rel" }
+          }
+
+      - name: Upload compatibility test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBS-Safe-VST3-Host-v0.4.1-compat-test1-windows-x64
+          path: |
+            dist/*Setup-x64.exe
+            dist/*Portable.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
