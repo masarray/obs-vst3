@@ -14,31 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  apply-stabilize-test5-fixes:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-      - name: Apply deterministic review fixes
-        run: python tools/apply-stabilize-test5-review-fixes.py
-      - name: Commit fixes when needed
-        shell: bash
-        run: |
-          if git diff --quiet; then
-            echo "Review fixes already present"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/obs-plugin/plugin.cpp installer/windows/obs-safe-vst3.iss
-          git commit -m "fix: close stabilize-test5 scanner lifecycle and OBS-root blockers"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
   protocol-linux:
     runs-on: ubuntu-latest
     steps:
