@@ -1,0 +1,290 @@
+name: Apply stabilization source patch
+
+on:
+  push:
+    branches:
+      - fix/obs-load-compatibility
+    paths:
+      - '.github/workflows/apply-stabilization.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/obs-load-compatibility
+          fetch-depth: 0
+
+      - name: Apply exact stabilization replacements
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/obs-plugin/plugin.cpp')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'missing expected block: {label}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+          '''std::mutex scanner_mutex;
+          std::jthread startup_scanner_thread;
+          ''',
+          '''enum class ScannerRunResult {
+              Success,
+              Failed,
+              Busy,
+              Cancelled,
+          };
+
+          std::atomic<bool> scanner_in_progress{false};
+          std::jthread startup_scanner_thread;
+          std::jthread manual_scanner_thread;
+          std::mutex manual_scanner_thread_mutex;
+          ''',
+          'scanner globals')
+
+          old_start = text.index('bool run_scanner(std::stop_token stop = {})')
+          old_end = text.index('\nvoid start_startup_scanner()', old_start)
+          new_run = r'''ScannerRunResult run_scanner(std::stop_token stop = {})
+          {
+              bool expected = false;
+              if (!scanner_in_progress.compare_exchange_strong(
+                      expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+                  return ScannerRunResult::Busy;
+
+              struct ScanRunReset {
+                  ~ScanRunReset()
+                  {
+                      scanner_in_progress.store(false, std::memory_order_release);
+                  }
+              } reset;
+
+              if (stop.stop_requested())
+                  return ScannerRunResult::Cancelled;
+
+              const auto scanner = scanner_path();
+              const auto cache = scan_cache_path();
+              if (scanner.empty() || cache.empty() || !std::filesystem::exists(scanner)) {
+                  blog(LOG_ERROR, "[obs-safe-vst3] isolated scanner executable not found next to the loaded module");
+                  return ScannerRunResult::Failed;
+              }
+
+              std::error_code ec;
+              std::filesystem::create_directories(cache.parent_path(), ec);
+
+              std::wstring command = quote(scanner.wstring()) + L" --scan-to " + quote(cache.wstring());
+              STARTUPINFOW si{};
+              si.cb = sizeof(si);
+              PROCESS_INFORMATION pi{};
+              if (!CreateProcessW(scanner.c_str(), command.data(), nullptr, nullptr, FALSE,
+                                  CREATE_NO_WINDOW, nullptr, scanner.parent_path().c_str(), &si, &pi)) {
+                  blog(LOG_ERROR, "[obs-safe-vst3] failed to start isolated VST3 scanner (Win32 error %lu)",
+                       static_cast<unsigned long>(GetLastError()));
+                  return ScannerRunResult::Failed;
+              }
+
+              const ULONGLONG deadline = GetTickCount64() + 180000;
+              DWORD wait = WAIT_TIMEOUT;
+              while (!stop.stop_requested()) {
+                  const ULONGLONG now = GetTickCount64();
+                  if (now >= deadline)
+                      break;
+                  const DWORD slice = static_cast<DWORD>(std::min<ULONGLONG>(250, deadline - now));
+                  wait = WaitForSingleObject(pi.hProcess, slice);
+                  if (wait == WAIT_OBJECT_0 || wait == WAIT_FAILED)
+                      break;
+              }
+
+              DWORD code = 1;
+              if (stop.stop_requested()) {
+                  TerminateProcess(pi.hProcess, ERROR_CANCELLED);
+                  (void)WaitForSingleObject(pi.hProcess, 2000);
+              } else if (wait == WAIT_OBJECT_0) {
+                  GetExitCodeProcess(pi.hProcess, &code);
+              } else {
+                  TerminateProcess(pi.hProcess, 0xDEAD);
+                  (void)WaitForSingleObject(pi.hProcess, 2000);
+                  if (wait != WAIT_FAILED)
+                      blog(LOG_WARNING, "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; current cache kept");
+              }
+              CloseHandle(pi.hThread);
+              CloseHandle(pi.hProcess);
+
+              if (stop.stop_requested())
+                  return ScannerRunResult::Cancelled;
+              if (wait != WAIT_OBJECT_0 || code != 0) {
+                  blog(LOG_WARNING, "[obs-safe-vst3] isolated VST3 scan did not complete successfully");
+                  return ScannerRunResult::Failed;
+              }
+              return ScannerRunResult::Success;
+          }
+          '''
+          text = text[:old_start] + new_run + text[old_end:]
+
+          old_start = text.index('void start_startup_scanner()')
+          old_end = text.index('\nstd::vector<ScanEntry> load_scan_cache()', old_start)
+          new_startstop = r'''void start_startup_scanner()
+          {
+              if (startup_scanner_thread.joinable())
+                  return;
+
+              startup_scanner_thread = std::jthread([](std::stop_token stop) {
+                  // Start almost immediately after module registration. Discovery and
+                  // all vendor probing remain outside OBS UI/audio threads.
+                  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                  if (stop.stop_requested())
+                      return;
+                  blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery started");
+                  const auto result = run_scanner(stop);
+                  if (result == ScannerRunResult::Success)
+                      blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery completed");
+                  else if (result == ScannerRunResult::Failed)
+                      blog(LOG_WARNING, "[obs-safe-vst3] background installed VST3 discovery failed; existing cache kept");
+              });
+          }
+
+          void stop_scanners()
+          {
+              startup_scanner_thread.request_stop();
+              {
+                  std::lock_guard lock(manual_scanner_thread_mutex);
+                  manual_scanner_thread.request_stop();
+              }
+              startup_scanner_thread = std::jthread{};
+              {
+                  std::lock_guard lock(manual_scanner_thread_mutex);
+                  manual_scanner_thread = std::jthread{};
+              }
+          }
+          '''
+          text = text[:old_start] + new_startstop + text[old_end:]
+
+          replace_once(
+          '''    const auto entries = load_scan_cache();
+              if (entries.empty()) {
+                  obs_property_list_add_string(list, obs_module_text("NoPluginsScanned"), "");
+                  return;
+              }
+          ''',
+          '''    const auto entries = load_scan_cache();
+              if (entries.empty()) {
+                  obs_property_list_add_string(
+                      list,
+                      obs_module_text(scanner_in_progress.load(std::memory_order_acquire)
+                                          ? "ScanningPlugins"
+                                          : "NoPluginsScanned"),
+                      "");
+                  return;
+              }
+          ''',
+          'empty-list scanner status')
+
+          old_start = text.index('bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)')
+          old_end = text.index('\nbool split_selection(', old_start)
+          new_rescan = r'''bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
+          {
+              auto* filter = static_cast<Filter*>(data);
+              hide_editor_before_scan(filter);
+
+              // Never wait on vendor probing from the OBS UI thread. If startup
+              // discovery is already active, expose its current seed cache and
+              // let that scan finish instead of launching a duplicate process.
+              populate_plugin_list(obs_properties_get(props, kPluginPath));
+              if (scanner_in_progress.load(std::memory_order_acquire)) {
+                  blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already running; reusing active scan");
+                  return true;
+              }
+
+              obs_source_t* context = nullptr;
+              if (filter && filter->context && !filter->shutting_down.load(std::memory_order_acquire))
+                  context = obs_source_get_ref(filter->context);
+
+              std::lock_guard lock(manual_scanner_thread_mutex);
+              manual_scanner_thread = std::jthread([context](std::stop_token stop) {
+                  const auto result = run_scanner(stop);
+                  if (result == ScannerRunResult::Success)
+                      blog(LOG_INFO, "[obs-safe-vst3] installed VST3 cache refreshed");
+                  else if (result == ScannerRunResult::Busy)
+                      blog(LOG_INFO, "[obs-safe-vst3] manual Rescan joined an already active discovery pass");
+
+                  if (context) {
+                      if (!stop.stop_requested())
+                          obs_source_update_properties(context);
+                      obs_source_release(context);
+                  }
+              });
+              return true;
+          }
+          '''
+          text = text[:old_start] + new_rescan + text[old_end:]
+
+          replace_once(
+          '''    blog(LOG_INFO, "[obs-safe-vst3] Phase S stable module loaded");
+              return true;
+          }
+
+          void obs_module_unload(void)
+          {
+              stop_startup_scanner();
+          ''',
+          '''    const auto module_dir = module_binary_dir();
+              const auto scanner = scanner_path();
+              const auto cache = scan_cache_path();
+              blog(LOG_INFO,
+                   "[obs-safe-vst3] Phase S module loaded; module_dir=%s scanner=%s cache=%s",
+                   module_dir.string().c_str(), scanner.string().c_str(), cache.string().c_str());
+              return true;
+          }
+
+          void obs_module_unload(void)
+          {
+              stop_scanners();
+          ''',
+          'module scanner shutdown/logging')
+
+          path.write_text(text, encoding='utf-8')
+
+          release = Path('.github/workflows/release-windows.yml')
+          r = release.read_text(encoding='utf-8')
+          replacements = [
+              ('Smoke-test Smart Installer and remembered portable target',
+               'Smoke-test Smart Installer and remembered OBS root'),
+              ('# First install: explicit portable root, as a first-time user would choose.\n          $PortableArg = "/PortableObsDir=`"$SyntheticObs`""\n          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList \'/VERYSILENT\', \'/SUPPRESSMSGBOXES\', \'/NORESTART\', $PortableArg -Wait -PassThru',
+               '# First install: explicit canonical OBS root.\n          $ObsRootArg = "/ObsRoot=`"$SyntheticObs`""\n          $FirstInstall = Start-Process -FilePath $Setup.FullName -ArgumentList \'/VERYSILENT\', \'/SUPPRESSMSGBOXES\', \'/NORESTART\', $ObsRootArg -Wait -PassThru'),
+              ('''          $Remembered = Get-ItemProperty -Path $SettingsReg
+          if ($Remembered.LastInstallMode -ne 'portable') {
+            throw "Installer remembered unexpected mode '$($Remembered.LastInstallMode)'."
+          }
+          $ExpectedRoot = [IO.Path]::GetFullPath($SyntheticObs).TrimEnd('\\')
+          $RememberedRoot = [IO.Path]::GetFullPath([string]$Remembered.LastPortableObsDir).TrimEnd('\\')
+''',
+               '''          $Remembered = Get-ItemProperty -Path $SettingsReg
+          $ExpectedRoot = [IO.Path]::GetFullPath($SyntheticObs).TrimEnd('\\')
+          $RememberedRoot = [IO.Path]::GetFullPath([string]$Remembered.LastObsRoot).TrimEnd('\\')
+'''),
+              ('# Second install: no /PortableObsDir at all. The remembered portable\n          # mode/path must make a future update one-click and target the same OBS.',
+               '# Second install: no target argument. The remembered canonical OBS\n          # root must make a future update one-click and target the same installation.'),
+          ]
+          for old, new in replacements:
+              if old not in r:
+                  raise SystemExit(f'missing release workflow block: {old[:80]}')
+              r = r.replace(old, new, 1)
+          release.write_text(r, encoding='utf-8')
+
+      - name: Commit stabilization patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/obs-plugin/plugin.cpp .github/workflows/release-windows.yml
+          git diff --cached --check
+          git commit -m "fix: make scanner refresh asynchronous and release installer root-aware"
+          git push origin HEAD:fix/obs-load-compatibility
