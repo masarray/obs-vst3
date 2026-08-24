@@ -26,7 +26,7 @@ jobs:
         working-directory: .obs-sdk
         env:
           CI: 'true'
-        run: .\.github\scripts\Build-Windows.ps1 -Target x64 -Configuration Release
+        run: .\CI\build-windows.ps1 -BuildArch x64 -BuildConfiguration Release
 
       - name: Stage libobs development package
         id: libobs
