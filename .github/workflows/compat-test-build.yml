@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-compat-package:
     runs-on: windows-2022
