@@ -37,6 +37,7 @@ constexpr const char* kPluginPath = "vst3_path";
 constexpr const char* kCustomPath = "custom_vst3_path";
 constexpr const char* kClassId = "class_id"; // Backward compatibility with early scenes.
 constexpr const char* kEnabled = "enabled";  // Legacy saved key; normal UI now follows OBS filter visibility.
+constexpr const char* kBrowseAutoOpenDone = "browse_auto_open_done";
 constexpr const char* kRescan = "rescan_vst3";
 constexpr const char* kOpenEditor = "open_plugin_ui";
 constexpr const char* kPluginStatus = "plugin_status";
@@ -83,12 +84,12 @@ struct Filter {
     std::stop_source shutdown_source;
     std::string path;
     std::string class_id;
-    // Protected by config_mutex. A brand-new empty filter may auto-open exactly
-    // once when the user chooses its first custom Browse path. Scene restore,
-    // installed-list selection, recovery, properties refresh and rescans never
-    // auto-open the vendor GUI.
-    bool initial_update_complete = false;
+    // Protected by config_mutex. Only an actual first custom-path change from
+    // the OBS Browse control may arm one automatic editor open. Scene restore,
+    // opening Properties, installed-list selection, recovery and scan never do.
+    std::string observed_custom_path;
     bool browse_auto_open_consumed = false;
+    bool browse_auto_open_pending = false;
     // Protected by restart_mutex. These fields describe the helper that is
     // actually published, not the possibly newer identity selected in the UI.
     std::string bridge_path;
@@ -113,6 +114,9 @@ std::jthread retired_bridge_reaper;
 
 std::mutex retired_filters_mutex;
 std::vector<std::unique_ptr<Filter>> retired_filters;
+
+std::mutex scanner_mutex;
+std::jthread startup_scanner_thread;
 
 void retire_bridge(std::unique_ptr<WinObsBridge> bridge, std::shared_ptr<BridgeRtState> state)
 {
@@ -297,8 +301,12 @@ std::wstring quote(const std::wstring& value)
     return out;
 }
 
-bool run_scanner()
+bool run_scanner(std::stop_token stop = {})
 {
+    std::unique_lock scan_lock(scanner_mutex);
+    if (stop.stop_requested())
+        return false;
+
     const auto scanner = scanner_path();
     const auto cache = scan_cache_path();
     if (scanner.empty() || cache.empty() || !std::filesystem::exists(scanner)) {
@@ -319,23 +327,65 @@ bool run_scanner()
         return false;
     }
 
-    const DWORD wait = WaitForSingleObject(pi.hProcess, 180000);
+    const ULONGLONG deadline = GetTickCount64() + 180000;
+    DWORD wait = WAIT_TIMEOUT;
+    while (!stop.stop_requested()) {
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline)
+            break;
+        const DWORD slice = static_cast<DWORD>(std::min<ULONGLONG>(250, deadline - now));
+        wait = WaitForSingleObject(pi.hProcess, slice);
+        if (wait == WAIT_OBJECT_0 || wait == WAIT_FAILED)
+            break;
+    }
+
     DWORD code = 1;
-    if (wait == WAIT_OBJECT_0) {
+    if (stop.stop_requested()) {
+        TerminateProcess(pi.hProcess, ERROR_CANCELLED);
+        (void)WaitForSingleObject(pi.hProcess, 2000);
+    } else if (wait == WAIT_OBJECT_0) {
         GetExitCodeProcess(pi.hProcess, &code);
-    } else if (wait == WAIT_TIMEOUT) {
+    } else {
         TerminateProcess(pi.hProcess, 0xDEAD);
         (void)WaitForSingleObject(pi.hProcess, 2000);
-        blog(LOG_WARNING, "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; previous cache kept");
+        if (wait != WAIT_FAILED)
+            blog(LOG_WARNING, "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; current cache kept");
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
 
+    if (stop.stop_requested())
+        return false;
     if (wait != WAIT_OBJECT_0 || code != 0) {
         blog(LOG_WARNING, "[obs-safe-vst3] isolated VST3 scan did not complete successfully");
         return false;
     }
     return true;
+}
+
+void start_startup_scanner()
+{
+    if (startup_scanner_thread.joinable())
+        return;
+
+    startup_scanner_thread = std::jthread([](std::stop_token stop) {
+        // Let OBS finish its critical startup work, then scan fully out of the
+        // UI/audio threads. The scanner publishes bundle-name fallbacks before
+        // probing vendor code, so the installed list becomes useful quickly.
+        for (int i = 0; i < 5 && !stop.stop_requested(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (stop.stop_requested())
+            return;
+        blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery started");
+        if (run_scanner(stop))
+            blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery completed");
+    });
+}
+
+void stop_startup_scanner()
+{
+    startup_scanner_thread.request_stop();
+    startup_scanner_thread = std::jthread{};
 }
 
 std::vector<ScanEntry> load_scan_cache()
@@ -432,6 +482,37 @@ std::pair<std::string, std::string> current_identity(Filter* filter)
         return {};
     std::lock_guard lock(filter->config_mutex);
     return {filter->path, filter->class_id};
+}
+
+bool custom_path_modified(void* data, obs_properties_t*, obs_property_t*, obs_data_t* settings)
+{
+    auto* filter = static_cast<Filter*>(data);
+    if (!filter || !settings || filter->shutting_down.load(std::memory_order_acquire))
+        return false;
+
+    const std::string selected = obs_data_get_string(settings, kPluginPath);
+    const std::string custom = obs_data_get_string(settings, kCustomPath);
+    bool armed = false;
+    {
+        std::lock_guard lock(filter->config_mutex);
+        if (filter->shutting_down.load(std::memory_order_acquire))
+            return false;
+
+        const bool actual_custom_change = custom != filter->observed_custom_path;
+        filter->observed_custom_path = custom;
+        if (actual_custom_change && selected.empty() && !custom.empty() &&
+            !filter->browse_auto_open_consumed) {
+            filter->browse_auto_open_consumed = true;
+            filter->browse_auto_open_pending = true;
+            armed = true;
+        }
+    }
+
+    if (armed) {
+        obs_data_set_bool(settings, kBrowseAutoOpenDone, true);
+        blog(LOG_INFO, "[obs-safe-vst3] first custom Browse gesture armed one native-editor open");
+    }
+    return false;
 }
 
 bool capture_bridge_state(Filter* filter,
@@ -680,6 +761,7 @@ const char* filter_name(void*) { return obs_module_text("SafeVST3Filter"); }
 void filter_defaults(obs_data_t* settings)
 {
     obs_data_set_default_bool(settings, kEnabled, true);
+    obs_data_set_default_bool(settings, kBrowseAutoOpenDone, false);
     obs_data_set_default_string(settings, kCustomPath, "");
 }
 
@@ -711,28 +793,29 @@ void filter_update(void* data, obs_data_t* settings)
         (void)capture_bridge_state(filter, old_path, old_class_id, true);
 
     bool auto_open_after_first_browse = false;
+    bool persist_consumed = false;
     {
         std::lock_guard lock(filter->config_mutex);
         if (filter->shutting_down.load(std::memory_order_acquire))
             return;
 
-        if (!filter->initial_update_complete) {
-            // Loading an existing scene/filter is never a user Browse gesture.
-            // Mark the one-shot as consumed when a saved identity already exists.
-            filter->browse_auto_open_consumed = !path.empty();
-        } else if (!filter->browse_auto_open_consumed && identity_changed && !path.empty()) {
-            // The first non-empty identity consumes the one-shot. It opens the
-            // vendor GUI only when that first selection is a custom Browse from
-            // an otherwise-empty brand-new filter. Installed-list selection
-            // consumes the allowance without opening anything.
-            auto_open_after_first_browse = old_path.empty() && custom_browse_active;
+        // Selecting from the installed list consumes the new-filter one-shot
+        // without opening an editor. This preserves the established behavior.
+        if (!filter->browse_auto_open_consumed && !selected.empty() && !path.empty()) {
             filter->browse_auto_open_consumed = true;
+            persist_consumed = true;
         }
 
+        auto_open_after_first_browse = filter->browse_auto_open_pending &&
+                                       identity_changed && custom_browse_active && !path.empty();
+        filter->browse_auto_open_pending = false;
+        filter->observed_custom_path = custom;
         filter->path = path;
         filter->class_id = class_id;
-        filter->initial_update_complete = true;
     }
+
+    if (persist_consumed)
+        obs_data_set_bool(settings, kBrowseAutoOpenDone, true);
 
     const bool new_enabled = true;
     const bool enabled_changed = filter->enabled.exchange(new_enabled, std::memory_order_relaxed) != new_enabled;
@@ -746,17 +829,25 @@ void filter_update(void* data, obs_data_t* settings)
     }
 
     if (auto_open_after_first_browse)
-        (void)request_editor_open(filter, "first custom Browse selection");
+        (void)request_editor_open(filter, "first custom Browse gesture");
 
     if (needs_restart && filter->context)
         obs_source_update_properties(filter->context);
 }
 
-void filter_save(void* data, obs_data_t*)
+void filter_save(void* data, obs_data_t* settings)
 {
     auto* filter = static_cast<Filter*>(data);
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return;
+
+    bool consumed = false;
+    {
+        std::lock_guard lock(filter->config_mutex);
+        consumed = filter->browse_auto_open_consumed;
+    }
+    if (settings && consumed)
+        obs_data_set_bool(settings, kBrowseAutoOpenDone, true);
     (void)capture_current_bridge_state(filter, true);
 }
 
@@ -764,6 +855,12 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
 {
     auto* filter = new Filter{};
     filter->context = context;
+
+    const std::string saved_selection = obs_data_get_string(settings, kPluginPath);
+    const std::string saved_custom = obs_data_get_string(settings, kCustomPath);
+    filter->observed_custom_path = saved_custom;
+    filter->browse_auto_open_consumed = obs_data_get_bool(settings, kBrowseAutoOpenDone) ||
+                                        !saved_selection.empty() || !saved_custom.empty();
 
     obs_audio_info audio_info{};
     if (obs_get_audio_info(&audio_info)) {
@@ -895,7 +992,9 @@ obs_properties_t* filter_properties(void* data)
                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     populate_plugin_list(list);
     obs_properties_add_button2(props, kRescan, obs_module_text("RescanVST3"), rescan_button, filter);
-    obs_properties_add_path(props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+    auto* custom_path = obs_properties_add_path(
+        props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+    obs_property_set_modified_callback2(custom_path, custom_path_modified, filter);
 
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return props;
@@ -1015,12 +1114,18 @@ bool obs_module_load(void)
     }
 
     obs_register_source(&source_info);
+    try {
+        start_startup_scanner();
+    } catch (const std::exception& e) {
+        blog(LOG_WARNING, "[obs-safe-vst3] background VST3 discovery could not start: %s", e.what());
+    }
     blog(LOG_INFO, "[obs-safe-vst3] Phase S stable module loaded");
     return true;
 }
 
 void obs_module_unload(void)
 {
+    stop_startup_scanner();
     stop_retired_bridge_reaper();
     release_retired_filters();
 }
