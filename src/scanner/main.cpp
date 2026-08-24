@@ -23,6 +23,21 @@ using namespace Steinberg::Vst;
 
 namespace {
 
+enum class ProbeOutcome {
+    AudioEffects,
+    NoAudioEffects,
+    Failed,
+};
+
+ProbeOutcome classify_probe_exit(DWORD exit_code) noexcept
+{
+    if (exit_code == 0)
+        return ProbeOutcome::AudioEffects;
+    if (exit_code == 5)
+        return ProbeOutcome::NoAudioEffects;
+    return ProbeOutcome::Failed;
+}
+
 std::wstring quote(const std::wstring& value)
 {
     std::wstring out = L"\"";
@@ -206,6 +221,9 @@ int probe(const fs::path& plugin, const fs::path& output)
             << sanitize(plugin_utf8) << '\t'
             << sanitize(info.ID().toString()) << '\n';
     }
+    // Exit 5 is a successful module/factory probe with no audio-effect class.
+    // The parent must distinguish it from crashes/timeouts/launch failures so
+    // an obsolete cache can correctly become empty when effects are removed.
     return found ? 0 : 5;
 }
 
@@ -233,7 +251,7 @@ std::jthread start_parent_watchdog(DWORD parent_pid)
     });
 }
 
-bool run_probe_child(const fs::path& self, const fs::path& plugin, const fs::path& output)
+ProbeOutcome run_probe_child(const fs::path& self, const fs::path& plugin, const fs::path& output)
 {
     std::wstring command = quote(self.wstring()) +
                            L" --probe " + quote(plugin.wstring()) +
@@ -254,7 +272,7 @@ bool run_probe_child(const fs::path& self, const fs::path& plugin, const fs::pat
                         CREATE_NO_WINDOW, nullptr, self.parent_path().c_str(), &si, &pi)) {
         std::wcerr << L"probe launch failed for " << plugin.wstring()
                    << L" (Win32 error " << GetLastError() << L")\n";
-        return false;
+        return ProbeOutcome::Failed;
     }
 
     const DWORD wait = WaitForSingleObject(pi.hProcess, 15000);
@@ -269,7 +287,7 @@ bool run_probe_child(const fs::path& self, const fs::path& plugin, const fs::pat
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    return wait == WAIT_OBJECT_0 && exit_code == 0;
+    return wait == WAIT_OBJECT_0 ? classify_probe_exit(exit_code) : ProbeOutcome::Failed;
 }
 
 int scan_all(const fs::path& self, const fs::path& cache)
@@ -286,6 +304,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
 
     unsigned found = 0;
     unsigned failed = 0;
+    unsigned valid_without_effects = 0;
     unsigned serial = 0;
     const auto temp_dir = fs::temp_directory_path(ec);
 
@@ -293,7 +312,8 @@ int scan_all(const fs::path& self, const fs::path& cache)
         const auto probe_out = temp_dir / (L"obs-safe-vst3-probe-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(serial++) + L".tsv");
         DeleteFileW(probe_out.c_str());
 
-        if (run_probe_child(self, bundle, probe_out)) {
+        const ProbeOutcome outcome = run_probe_child(self, bundle, probe_out);
+        if (outcome == ProbeOutcome::AudioEffects) {
             std::ifstream in(probe_out, std::ios::binary);
             std::string line;
             while (std::getline(in, line)) {
@@ -302,6 +322,8 @@ int scan_all(const fs::path& self, const fs::path& cache)
                     ++found;
                 }
             }
+        } else if (outcome == ProbeOutcome::NoAudioEffects) {
+            ++valid_without_effects;
         } else {
             ++failed;
         }
@@ -310,12 +332,13 @@ int scan_all(const fs::path& self, const fs::path& cache)
 
     combined.close();
 
-    // If actual bundles were discovered but every child probe failed, keep the
-    // previous known-good cache instead of replacing it with an empty list.
-    if (!bundles.empty() && found == 0 && failed == bundles.size()) {
+    // Preserve the previous cache only when every discovered bundle genuinely
+    // failed to probe. A valid bundle with zero audio effects is a successful
+    // scan result and must be allowed to replace stale cache with an empty one.
+    if (!bundles.empty() && failed == bundles.size()) {
         DeleteFileW(staging.c_str());
         std::cerr << "roots=" << roots.size() << " bundles=" << bundles.size()
-                  << " plugins=0 failed_bundles=" << failed
+                  << " plugins=0 no_audio_effects=0 failed_bundles=" << failed
                   << " previous_cache=kept\n";
         return 9;
     }
@@ -326,7 +349,9 @@ int scan_all(const fs::path& self, const fs::path& cache)
     }
 
     std::cout << "roots=" << roots.size() << " bundles=" << bundles.size()
-              << " plugins=" << found << " failed_bundles=" << failed << '\n';
+              << " plugins=" << found
+              << " no_audio_effects=" << valid_without_effects
+              << " failed_bundles=" << failed << '\n';
     return 0;
 }
 
@@ -352,8 +377,13 @@ int self_test_discovery()
         saw_nested_inside_bundle |= _wcsicmp(name.c_str(), L"ShouldNotRecurse.vst3") == 0;
     }
 
+    const bool probe_classification_ok =
+        classify_probe_exit(0) == ProbeOutcome::AudioEffects &&
+        classify_probe_exit(5) == ProbeOutcome::NoAudioEffects &&
+        classify_probe_exit(3) == ProbeOutcome::Failed;
+
     fs::remove_all(root, ec);
-    if (bundles.size() != 2 || !saw_a || !saw_b || saw_nested_inside_bundle) {
+    if (bundles.size() != 2 || !saw_a || !saw_b || saw_nested_inside_bundle || !probe_classification_ok) {
         std::cerr << "scanner discovery self-test failed\n";
         return 10;
     }
