@@ -252,12 +252,15 @@ std::string fallback_cache_line(const fs::path& bundle)
     const std::string path = sanitize(utf8(bundle.wstring()));
     if (name.empty() || path.empty())
         return {};
-    // Empty class id is intentional. The isolated host already falls back to
-    // the first VST audio-effect class when class_id is empty.
+    // Empty class id is intentional. The isolated host falls back to the first
+    // VST audio-effect class when an installed-list entry explicitly carries
+    // an empty class field.
     return name + "\t" + path + "\t";
 }
 
-bool publish_discovery_seed(const fs::path& cache, const std::vector<fs::path>& bundles)
+bool publish_discovery_seed(const fs::path& cache,
+                            const std::vector<fs::path>& bundles,
+                            const CachedLinesByPath& cached)
 {
     if (bundles.empty())
         return true;
@@ -269,6 +272,15 @@ bool publish_discovery_seed(const fs::path& cache, const std::vector<fs::path>& 
 
     unsigned written = 0;
     for (const auto& bundle : bundles) {
+        const auto previous = cached.find(normalized_path_key(bundle));
+        if (previous != cached.end()) {
+            for (const auto& line : previous->second) {
+                out << line << '\n';
+                ++written;
+            }
+            continue;
+        }
+
         const auto line = fallback_cache_line(bundle);
         if (line.empty())
             continue;
@@ -397,11 +409,13 @@ int scan_all(const fs::path& self, const fs::path& cache)
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
 
-    // First run: publish bundle names immediately, before any third-party code
-    // is probed. This gives OBS a useful installed list even when a vendor
-    // module later crashes, times out, or cannot be inspected.
-    if (cached.empty() && !bundles.empty())
-        (void)publish_discovery_seed(cache, bundles);
+    // Always publish a discovery seed before probing vendor code. Existing
+    // bundles keep their exact cached class identities; newly discovered ones
+    // get a name-only fallback immediately. Removed bundles disappear from the
+    // seed. This keeps startup/rescan lists responsive on every scan, not only
+    // on a pristine first run.
+    if (!bundles.empty())
+        (void)publish_discovery_seed(cache, bundles, cached);
 
     const auto staging = cache.wstring() + L".tmp";
     std::ofstream combined(fs::path(staging), std::ios::binary | std::ios::trunc);
@@ -510,9 +524,12 @@ int self_test_discovery()
                              !fallback.empty() && fallback.back() == '\t';
 
     const auto seed_cache = root / L"seed.tsv";
-    const bool seed_published = publish_discovery_seed(seed_cache, bundles);
+    const bool seed_published = publish_discovery_seed(seed_cache, bundles, cached_entries);
     const auto seed_entries = load_cached_lines_by_path(seed_cache);
-    const bool seed_ok = seed_published && seed_entries.size() == 2;
+    const auto seeded_a = seed_entries.find(normalized_path_key(root / L"VendorA.vst3"));
+    const bool seed_ok = seed_published && seed_entries.size() == 2 &&
+                         seeded_a != seed_entries.end() && !seeded_a->second.empty() &&
+                         seeded_a->second.front().rfind("Cached A\t", 0) == 0;
 
     std::jthread no_watchdog;
     const bool watchdog_fail_closed = !start_parent_watchdog(0, no_watchdog);
