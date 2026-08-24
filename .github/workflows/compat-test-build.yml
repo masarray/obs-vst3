@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/compat-test-build.yml'
+      - 'CMakeLists.txt'
+      - 'src/obs-plugin/obs_compat_floor.hpp'
 
 permissions:
   contents: read
@@ -64,38 +66,19 @@ jobs:
           "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
           "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT
 
-      - name: Create OBS 29.1 ABI-floor forced include
-        id: compat
-        shell: pwsh
-        run: |
-          $Header = Join-Path $env:RUNNER_TEMP 'safevst3_obs_compat_floor.hpp'
-          @'
-          #pragma once
-          #include <obs-module.h>
-          #undef LIBOBS_API_VER
-          #define LIBOBS_API_VER MAKE_SEMANTIC_VERSION(29, 1, 0)
-          '@ | Set-Content -Path $Header -Encoding ASCII
-          "header=$Header" >> $env:GITHUB_OUTPUT
-
       - name: Configure compatibility build
         shell: pwsh
         run: |
           cmake -S . -B build/compat -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
             "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }}" `
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DSAFEVST3_STATIC_MSVC_RUNTIME=ON `
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
 
-      - name: Build helper, scanner and tests with static MSVC runtime
+      - name: Build plugin, helper, scanner and tests
         shell: pwsh
-        run: cmake --build build/compat --config Release --target obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
-
-      - name: Build OBS module with ABI floor 29.1
-        shell: pwsh
-        env:
-          CL: '/FI${{ steps.compat.outputs.header }}'
-        run: cmake --build build/compat --config Release --target obs-safe-vst3 --parallel
+        run: cmake --build build/compat --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
 
       - name: Run Windows tests
         shell: pwsh
@@ -110,6 +93,54 @@ jobs:
           $P = Start-Process -FilePath $Scanner.FullName -ArgumentList '--scan-to', "`"$Cache`"" -Wait -PassThru
           if ($P.ExitCode -ne 0) { throw "scanner exited $($P.ExitCode)" }
           if (-not (Test-Path $Cache)) { throw 'scanner did not create cache' }
+
+      - name: Verify OBS module load and ABI floor
+        shell: pwsh
+        run: |
+          $Plugin = Get-ChildItem build/compat -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
+          if (-not $Plugin) { throw 'plugin DLL missing' }
+          $ObsDll = Get-ChildItem .obs-sdk -Filter 'obs.dll' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]rundir[\\/].*[\\/]Release[\\/].*[\\/]64bit[\\/]' } |
+            Select-Object -First 1
+          if (-not $ObsDll) {
+            $ObsDll = Get-ChildItem .obs-sdk -Filter 'obs.dll' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $ObsDll) { throw 'OBS runtime obs.dll not found for loader probe' }
+          $ObsBin = $ObsDll.Directory.FullName
+          $env:PATH = "$ObsBin;$env:PATH"
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class SafeVst3ModuleProbe {
+              [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
+              public static extern IntPtr LoadLibrary(string path);
+              [DllImport("kernel32", CharSet = CharSet.Ansi, SetLastError = true)]
+              public static extern IntPtr GetProcAddress(IntPtr module, string name);
+              [DllImport("kernel32", SetLastError = true)]
+              [return: MarshalAs(UnmanagedType.Bool)]
+              public static extern bool FreeLibrary(IntPtr module);
+              [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+              public delegate UInt32 ModuleVersion();
+          }
+          '@
+          $Handle = [SafeVst3ModuleProbe]::LoadLibrary($Plugin.FullName)
+          if ($Handle -eq [IntPtr]::Zero) {
+            $Err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw "LoadLibrary(obs-safe-vst3.dll) failed with Win32 error $Err"
+          }
+          try {
+            $Proc = [SafeVst3ModuleProbe]::GetProcAddress($Handle, 'obs_module_ver')
+            if ($Proc -eq [IntPtr]::Zero) { throw 'obs_module_ver export missing' }
+            $Delegate = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($Proc, [type][SafeVst3ModuleProbe+ModuleVersion])
+            [uint32]$Version = $Delegate.Invoke()
+            [uint32]$Expected = (29 -shl 24) -bor (1 -shl 16)
+            Write-Host ("obs_module_ver=0x{0:X8}, expected=0x{1:X8}" -f $Version, $Expected)
+            if (($Version -band 0xFFFF0000) -ne $Expected) {
+              throw ("Unexpected OBS ABI floor 0x{0:X8}" -f $Version)
+            }
+          } finally {
+            [void][SafeVst3ModuleProbe]::FreeLibrary($Handle)
+          }
 
       - name: Ensure Inno Setup 6
         id: inno
@@ -128,13 +159,18 @@ jobs:
       - name: Inspect PE dependencies
         shell: pwsh
         run: |
-          $Dll = Get-ChildItem build/compat -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
-          if (-not $Dll) { throw 'plugin DLL missing' }
           $Dumpbin = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC' -Filter dumpbin.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $Dumpbin) { throw 'dumpbin.exe not found' }
-          $Imports = & $Dumpbin.FullName /DEPENDENTS $Dll.FullName | Out-String
-          Write-Host $Imports
-          if ($Imports -match 'MSVCP140\.dll|MSVCP140_ATOMIC_WAIT\.dll|VCRUNTIME140') { throw 'Dynamic MSVC runtime dependency still present' }
+          foreach ($Name in @('obs-safe-vst3.dll','obs-safe-vst3-host.exe','obs-safe-vst3-scanner.exe')) {
+            $Binary = Get-ChildItem build/compat -Filter $Name -File -Recurse | Select-Object -First 1
+            if (-not $Binary) { throw "$Name missing" }
+            $Imports = & $Dumpbin.FullName /DEPENDENTS $Binary.FullName | Out-String
+            Write-Host "=== $Name ==="
+            Write-Host $Imports
+            if ($Imports -match 'MSVCP140(?:_ATOMIC_WAIT)?\.dll|VCRUNTIME140(?:_1)?\.dll') {
+              throw "$Name still has a dynamic MSVC runtime dependency"
+            }
+          }
 
       - name: Validate package
         shell: pwsh
