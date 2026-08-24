@@ -4,6 +4,8 @@
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 
 #include <windows.h>
+#include <knownfolders.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -12,6 +14,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -64,36 +67,83 @@ std::wstring env_w(const wchar_t* name)
     return value;
 }
 
-std::vector<fs::path> scan_roots()
+fs::path known_folder(REFKNOWNFOLDERID id)
 {
-    std::vector<fs::path> roots;
-    const auto common = env_w(L"CommonProgramFiles");
-    const auto local = env_w(L"LOCALAPPDATA");
-
-    if (!common.empty())
-        roots.emplace_back(fs::path(common) / L"VST3");
-    if (!local.empty())
-        roots.emplace_back(fs::path(local) / L"Programs" / L"Common" / L"VST3");
-
-    std::vector<fs::path> unique;
-    for (const auto& root : roots) {
-        std::error_code ec;
-        if (!fs::exists(root, ec))
-            continue;
-        const auto canonical = fs::weakly_canonical(root, ec);
-        const auto candidate = ec ? root : canonical;
-        if (std::find(unique.begin(), unique.end(), candidate) == unique.end())
-            unique.push_back(candidate);
-    }
-    return unique;
+    PWSTR raw = nullptr;
+    if (FAILED(SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, nullptr, &raw)) || !raw)
+        return {};
+    fs::path result(raw);
+    CoTaskMemFree(raw);
+    return result;
 }
 
-std::vector<fs::path> discover_bundles()
+void append_unique_root(std::vector<fs::path>& roots, const fs::path& root)
+{
+    if (root.empty())
+        return;
+    std::error_code ec;
+    if (!fs::exists(root, ec) || ec)
+        return;
+    const auto canonical = fs::weakly_canonical(root, ec);
+    const auto candidate = ec ? root : canonical;
+    if (std::find(roots.begin(), roots.end(), candidate) == roots.end())
+        roots.push_back(candidate);
+}
+
+std::vector<fs::path> override_scan_roots()
+{
+    const std::wstring raw = env_w(L"OBS_SAFE_VST3_SCAN_ROOTS");
+    if (raw.empty())
+        return {};
+
+    std::vector<fs::path> roots;
+    std::size_t start = 0;
+    while (start <= raw.size()) {
+        const auto end = raw.find(L';', start);
+        const auto length = end == std::wstring::npos ? raw.size() - start : end - start;
+        if (length != 0)
+            append_unique_root(roots, fs::path(raw.substr(start, length)));
+        if (end == std::wstring::npos)
+            break;
+        start = end + 1;
+    }
+    return roots;
+}
+
+std::vector<fs::path> scan_roots()
+{
+    if (auto overrides = override_scan_roots(); !overrides.empty())
+        return overrides;
+
+    std::vector<fs::path> roots;
+
+    // Use the Windows Known Folder API first. These match Steinberg's official
+    // VST3 locations and do not depend on environment-variable redirection.
+    const auto user_common = known_folder(FOLDERID_UserProgramFilesCommon);
+    const auto global_common = known_folder(FOLDERID_ProgramFilesCommon);
+    if (!user_common.empty())
+        append_unique_root(roots, user_common / L"VST3");
+    if (!global_common.empty())
+        append_unique_root(roots, global_common / L"VST3");
+
+    // Environment fallbacks keep discovery working on unusual Windows images
+    // where Known Folder resolution is unavailable.
+    const auto common = env_w(L"CommonProgramFiles");
+    const auto local = env_w(L"LOCALAPPDATA");
+    if (!common.empty())
+        append_unique_root(roots, fs::path(common) / L"VST3");
+    if (!local.empty())
+        append_unique_root(roots, fs::path(local) / L"Programs" / L"Common" / L"VST3");
+
+    return roots;
+}
+
+std::vector<fs::path> discover_bundles_from_roots(const std::vector<fs::path>& roots)
 {
     std::vector<fs::path> bundles;
     std::set<std::wstring> seen;
 
-    for (const auto& root : scan_roots()) {
+    for (const auto& root : roots) {
         std::error_code ec;
         fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
         while (it != end) {
@@ -127,6 +177,11 @@ std::vector<fs::path> discover_bundles()
     return bundles;
 }
 
+std::vector<fs::path> discover_bundles()
+{
+    return discover_bundles_from_roots(scan_roots());
+}
+
 int probe(const fs::path& plugin, const fs::path& output)
 {
     std::string error;
@@ -154,60 +209,53 @@ int probe(const fs::path& plugin, const fs::path& output)
     return found ? 0 : 5;
 }
 
-HANDLE make_probe_job()
+std::jthread start_parent_watchdog(DWORD parent_pid)
 {
-    HANDLE job = CreateJobObjectW(nullptr, nullptr);
-    if (!job)
-        return nullptr;
+    if (!parent_pid)
+        return {};
 
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
-        CloseHandle(job);
-        return nullptr;
-    }
-    return job;
+    HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, parent_pid);
+    if (!parent)
+        return {};
+
+    return std::jthread([parent](std::stop_token stop) {
+        while (!stop.stop_requested()) {
+            const DWORD wait = WaitForSingleObject(parent, 100);
+            if (wait == WAIT_OBJECT_0) {
+                CloseHandle(parent);
+                TerminateProcess(GetCurrentProcess(), ERROR_CANCELLED);
+                return;
+            }
+            if (wait == WAIT_FAILED)
+                break;
+        }
+        CloseHandle(parent);
+    });
 }
 
-bool run_probe_child(HANDLE probe_job, const fs::path& self, const fs::path& plugin, const fs::path& output)
+bool run_probe_child(const fs::path& self, const fs::path& plugin, const fs::path& output)
 {
-    if (!probe_job)
-        return false;
+    std::wstring command = quote(self.wstring()) +
+                           L" --probe " + quote(plugin.wstring()) +
+                           L" --out " + quote(output.wstring()) +
+                           L" --parent-pid " + std::to_wstring(GetCurrentProcessId());
 
-    std::wstring command = quote(self.wstring()) + L" --probe " + quote(plugin.wstring()) + L" --out " + quote(output.wstring());
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    std::wstring mutable_command = command;
 
-    // Attach the child to the kill-on-close job at process creation time. If
-    // OBS terminates the scanner because the whole scan exceeded its ceiling,
-    // the scanner's job handle closes and Windows terminates any active probe
-    // even though third-party VST3 code is running inside that descendant.
-    SIZE_T attribute_bytes = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_bytes);
-    if (attribute_bytes == 0)
-        return false;
-
-    std::vector<unsigned char> attribute_storage(attribute_bytes);
-    auto* attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attribute_storage.data());
-    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attribute_bytes))
-        return false;
-
-    HANDLE jobs[] = {probe_job};
-    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
-                                   jobs, sizeof(jobs), nullptr, nullptr)) {
-        DeleteProcThreadAttributeList(attributes);
+    // Avoid PROC_THREAD_ATTRIBUTE_JOB_LIST here. OBS, Steam and enterprise
+    // launchers can already place processes inside restrictive Job Objects;
+    // nested job attachment then makes every probe child fail to start. Each
+    // probe still has a hard timeout, and the child also watches the scanner
+    // parent so it cannot survive if OBS terminates the whole scan.
+    if (!CreateProcessW(self.c_str(), mutable_command.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, self.parent_path().c_str(), &si, &pi)) {
+        std::wcerr << L"probe launch failed for " << plugin.wstring()
+                   << L" (Win32 error " << GetLastError() << L")\n";
         return false;
     }
-
-    STARTUPINFOEXW si{};
-    si.StartupInfo.cb = sizeof(si);
-    si.lpAttributeList = attributes;
-    PROCESS_INFORMATION pi{};
-
-    const BOOL created = CreateProcessW(self.c_str(), command.data(), nullptr, nullptr, FALSE,
-                                        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
-                                        nullptr, self.parent_path().c_str(), &si.StartupInfo, &pi);
-    DeleteProcThreadAttributeList(attributes);
-    if (!created)
-        return false;
 
     const DWORD wait = WaitForSingleObject(pi.hProcess, 15000);
     if (wait == WAIT_TIMEOUT) {
@@ -226,20 +274,15 @@ bool run_probe_child(HANDLE probe_job, const fs::path& self, const fs::path& plu
 
 int scan_all(const fs::path& self, const fs::path& cache)
 {
-    const auto bundles = discover_bundles();
+    const auto roots = scan_roots();
+    const auto bundles = discover_bundles_from_roots(roots);
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
 
-    HANDLE probe_job = make_probe_job();
-    if (!probe_job)
-        return 8;
-
     const auto staging = cache.wstring() + L".tmp";
     std::ofstream combined(fs::path(staging), std::ios::binary | std::ios::trunc);
-    if (!combined) {
-        CloseHandle(probe_job);
+    if (!combined)
         return 6;
-    }
 
     unsigned found = 0;
     unsigned failed = 0;
@@ -250,7 +293,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
         const auto probe_out = temp_dir / (L"obs-safe-vst3-probe-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(serial++) + L".tsv");
         DeleteFileW(probe_out.c_str());
 
-        if (run_probe_child(probe_job, self, bundle, probe_out)) {
+        if (run_probe_child(self, bundle, probe_out)) {
             std::ifstream in(probe_out, std::ios::binary);
             std::string line;
             while (std::getline(in, line)) {
@@ -266,14 +309,55 @@ int scan_all(const fs::path& self, const fs::path& cache)
     }
 
     combined.close();
+
+    // If actual bundles were discovered but every child probe failed, keep the
+    // previous known-good cache instead of replacing it with an empty list.
+    if (!bundles.empty() && found == 0 && failed == bundles.size()) {
+        DeleteFileW(staging.c_str());
+        std::cerr << "roots=" << roots.size() << " bundles=" << bundles.size()
+                  << " plugins=0 failed_bundles=" << failed
+                  << " previous_cache=kept\n";
+        return 9;
+    }
+
     if (!MoveFileExW(staging.c_str(), cache.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         DeleteFileW(staging.c_str());
-        CloseHandle(probe_job);
         return 7;
     }
 
-    CloseHandle(probe_job); // Kill-on-close also guarantees no probe survives scan completion.
-    std::cout << "plugins=" << found << " failed_bundles=" << failed << '\n';
+    std::cout << "roots=" << roots.size() << " bundles=" << bundles.size()
+              << " plugins=" << found << " failed_bundles=" << failed << '\n';
+    return 0;
+}
+
+int self_test_discovery()
+{
+    std::error_code ec;
+    const auto root = fs::temp_directory_path(ec) /
+        (L"obs-safe-vst3-scanner-selftest-" + std::to_wstring(GetCurrentProcessId()));
+    fs::remove_all(root, ec);
+    fs::create_directories(root / L"VendorA.vst3" / L"Contents", ec);
+    fs::create_directories(root / L"Nested" / L"VendorB.vst3" / L"Contents", ec);
+    fs::create_directories(root / L"VendorA.vst3" / L"ShouldNotRecurse.vst3", ec);
+    std::ofstream(root / L"not-a-plugin.txt") << "test";
+
+    const auto bundles = discover_bundles_from_roots({root});
+    bool saw_a = false;
+    bool saw_b = false;
+    bool saw_nested_inside_bundle = false;
+    for (const auto& bundle : bundles) {
+        const auto name = bundle.filename().wstring();
+        saw_a |= _wcsicmp(name.c_str(), L"VendorA.vst3") == 0;
+        saw_b |= _wcsicmp(name.c_str(), L"VendorB.vst3") == 0;
+        saw_nested_inside_bundle |= _wcsicmp(name.c_str(), L"ShouldNotRecurse.vst3") == 0;
+    }
+
+    fs::remove_all(root, ec);
+    if (bundles.size() != 2 || !saw_a || !saw_b || saw_nested_inside_bundle) {
+        std::cerr << "scanner discovery self-test failed\n";
+        return 10;
+    }
+    std::cout << "scanner discovery self-test passed\n";
     return 0;
 }
 
@@ -284,6 +368,8 @@ int wmain(int argc, wchar_t** argv)
     fs::path probe_path;
     fs::path out_path;
     fs::path cache_path;
+    DWORD parent_pid = 0;
+    bool self_test = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg = argv[i];
@@ -293,10 +379,19 @@ int wmain(int argc, wchar_t** argv)
             out_path = argv[++i];
         else if (arg == L"--scan-to" && i + 1 < argc)
             cache_path = argv[++i];
+        else if (arg == L"--parent-pid" && i + 1 < argc)
+            parent_pid = static_cast<DWORD>(std::wcstoul(argv[++i], nullptr, 10));
+        else if (arg == L"--self-test")
+            self_test = true;
     }
 
-    if (!probe_path.empty() && !out_path.empty())
+    if (self_test)
+        return self_test_discovery();
+
+    if (!probe_path.empty() && !out_path.empty()) {
+        auto parent_watchdog = start_parent_watchdog(parent_pid);
         return probe(probe_path, out_path);
+    }
 
     if (!cache_path.empty()) {
         wchar_t self_buffer[32768]{};
@@ -306,7 +401,7 @@ int wmain(int argc, wchar_t** argv)
         return scan_all(fs::path(std::wstring(self_buffer, len)), cache_path);
     }
 
-    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv>\n";
+    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv> | --self-test\n";
     return 1;
 }
 
