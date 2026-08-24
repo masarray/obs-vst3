@@ -339,3 +339,5 @@ jobs:
           git add src/obs-plugin/plugin.cpp installer/windows/obs-safe-vst3.iss
           git commit -m "fix: close stabilize-test5 scanner lifecycle and OBS-root blockers"
           git push origin HEAD:fix/obs-load-compatibility
+
+# trigger: 2026-08-25 stabilize-test5
