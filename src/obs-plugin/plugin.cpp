@@ -115,8 +115,17 @@ std::jthread retired_bridge_reaper;
 std::mutex retired_filters_mutex;
 std::vector<std::unique_ptr<Filter>> retired_filters;
 
-std::mutex scanner_mutex;
+enum class ScannerRunResult {
+    Success,
+    Failed,
+    Busy,
+    Cancelled,
+};
+
+std::atomic<bool> scanner_in_progress{false};
 std::jthread startup_scanner_thread;
+std::jthread manual_scanner_thread;
+std::mutex manual_scanner_thread_mutex;
 
 void retire_bridge(std::unique_ptr<WinObsBridge> bridge, std::shared_ptr<BridgeRtState> state)
 {
@@ -301,17 +310,29 @@ std::wstring quote(const std::wstring& value)
     return out;
 }
 
-bool run_scanner(std::stop_token stop = {})
+ScannerRunResult run_scanner(std::stop_token stop = {})
 {
-    std::unique_lock scan_lock(scanner_mutex);
+    bool expected = false;
+    if (!scanner_in_progress.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
+        return ScannerRunResult::Busy;
+
+    struct ScanRunReset {
+        ~ScanRunReset()
+        {
+            scanner_in_progress.store(false, std::memory_order_release);
+        }
+    } reset;
+
     if (stop.stop_requested())
-        return false;
+        return ScannerRunResult::Cancelled;
 
     const auto scanner = scanner_path();
     const auto cache = scan_cache_path();
     if (scanner.empty() || cache.empty() || !std::filesystem::exists(scanner)) {
-        blog(LOG_ERROR, "[obs-safe-vst3] isolated scanner executable not found");
-        return false;
+        blog(LOG_ERROR, "[obs-safe-vst3] isolated scanner executable not found next to loaded module: %s",
+             scanner.string().c_str());
+        return ScannerRunResult::Failed;
     }
 
     std::error_code ec;
@@ -323,8 +344,9 @@ bool run_scanner(std::stop_token stop = {})
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(scanner.c_str(), command.data(), nullptr, nullptr, FALSE,
                         CREATE_NO_WINDOW, nullptr, scanner.parent_path().c_str(), &si, &pi)) {
-        blog(LOG_ERROR, "[obs-safe-vst3] failed to start isolated VST3 scanner");
-        return false;
+        blog(LOG_ERROR, "[obs-safe-vst3] failed to start isolated VST3 scanner (Win32 error %lu)",
+             static_cast<unsigned long>(GetLastError()));
+        return ScannerRunResult::Failed;
     }
 
     const ULONGLONG deadline = GetTickCount64() + 180000;
@@ -355,12 +377,12 @@ bool run_scanner(std::stop_token stop = {})
     CloseHandle(pi.hProcess);
 
     if (stop.stop_requested())
-        return false;
+        return ScannerRunResult::Cancelled;
     if (wait != WAIT_OBJECT_0 || code != 0) {
         blog(LOG_WARNING, "[obs-safe-vst3] isolated VST3 scan did not complete successfully");
-        return false;
+        return ScannerRunResult::Failed;
     }
-    return true;
+    return ScannerRunResult::Success;
 }
 
 void start_startup_scanner()
@@ -369,23 +391,32 @@ void start_startup_scanner()
         return;
 
     startup_scanner_thread = std::jthread([](std::stop_token stop) {
-        // Let OBS finish its critical startup work, then scan fully out of the
-        // UI/audio threads. The scanner publishes bundle-name fallbacks before
-        // probing vendor code, so the installed list becomes useful quickly.
-        for (int i = 0; i < 5 && !stop.stop_requested(); ++i)
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Start almost immediately after module registration. Discovery and
+        // vendor probing remain completely outside OBS UI/audio threads.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (stop.stop_requested())
             return;
         blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery started");
-        if (run_scanner(stop))
+        const auto result = run_scanner(stop);
+        if (result == ScannerRunResult::Success)
             blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery completed");
+        else if (result == ScannerRunResult::Failed)
+            blog(LOG_WARNING, "[obs-safe-vst3] background installed VST3 discovery failed; existing cache kept");
     });
 }
 
-void stop_startup_scanner()
+void stop_scanners()
 {
     startup_scanner_thread.request_stop();
+    {
+        std::lock_guard lock(manual_scanner_thread_mutex);
+        manual_scanner_thread.request_stop();
+    }
     startup_scanner_thread = std::jthread{};
+    {
+        std::lock_guard lock(manual_scanner_thread_mutex);
+        manual_scanner_thread = std::jthread{};
+    }
 }
 
 std::vector<ScanEntry> load_scan_cache()
@@ -428,7 +459,12 @@ void populate_plugin_list(obs_property_t* list)
     obs_property_list_clear(list);
     const auto entries = load_scan_cache();
     if (entries.empty()) {
-        obs_property_list_add_string(list, obs_module_text("NoPluginsScanned"), "");
+        obs_property_list_add_string(
+            list,
+            obs_module_text(scanner_in_progress.load(std::memory_order_acquire)
+                                ? "ScanningPlugins"
+                                : "NoPluginsScanned"),
+            "");
         return;
     }
 
@@ -454,14 +490,50 @@ void hide_editor_before_scan(Filter* filter)
         (void)filter->bridge_owner->hide_editor();
 }
 
+void refresh_source_properties_on_ui(void* param)
+{
+    auto* context = static_cast<obs_source_t*>(param);
+    if (!context)
+        return;
+    obs_source_update_properties(context);
+    obs_source_release(context);
+}
+
 bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
 {
     auto* filter = static_cast<Filter*>(data);
     hide_editor_before_scan(filter);
-    const bool ok = run_scanner();
+
+    // Refresh immediately from the discovery seed/cache. Never wait for vendor
+    // probing on the OBS UI thread.
     populate_plugin_list(obs_properties_get(props, kPluginPath));
-    if (ok)
-        blog(LOG_INFO, "[obs-safe-vst3] installed VST3 cache refreshed");
+    if (scanner_in_progress.load(std::memory_order_acquire)) {
+        blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already active; reusing active scan");
+        return true;
+    }
+
+    obs_source_t* context = nullptr;
+    if (filter && filter->context && !filter->shutting_down.load(std::memory_order_acquire))
+        context = obs_source_get_ref(filter->context);
+
+    std::lock_guard lock(manual_scanner_thread_mutex);
+    if (manual_scanner_thread.joinable())
+        manual_scanner_thread = std::jthread{};
+    manual_scanner_thread = std::jthread([context](std::stop_token stop) {
+        const auto result = run_scanner(stop);
+        if (result == ScannerRunResult::Success)
+            blog(LOG_INFO, "[obs-safe-vst3] installed VST3 cache refreshed");
+        else if (result == ScannerRunResult::Busy)
+            blog(LOG_INFO, "[obs-safe-vst3] manual Rescan reused an already active discovery pass");
+
+        if (!context)
+            return;
+        if (stop.stop_requested()) {
+            obs_source_release(context);
+            return;
+        }
+        obs_queue_task(OBS_TASK_UI, refresh_source_properties_on_ui, context, false);
+    });
     return true;
 }
 
@@ -813,10 +885,10 @@ void filter_update(void* data, obs_data_t* settings)
         if (filter->shutting_down.load(std::memory_order_acquire))
             return;
 
-        // Any non-Browse transition that gives a previously empty filter an
-        // identity consumes the one-shot without opening the editor. The real
-        // Browse callback has already consumed + armed the one-shot before this
-        // update arrives, so it is not caught here.
+        // Any transition that gives a previously empty filter an identity
+        // consumes the one-shot unless the actual Browse callback has already
+        // armed it. This prevents programmatic or installed-list changes from
+        // leaving a future surprise auto-open behind.
         if (!filter->browse_auto_open_consumed && identity_changed && !path.empty()) {
             filter->browse_auto_open_consumed = true;
             persist_consumed = true;
@@ -844,6 +916,9 @@ void filter_update(void* data, obs_data_t* settings)
         apply_current_parameter_settings(filter, settings);
     }
 
+    // This is intentionally the only automatic editor-open path in the OBS
+    // module. Opening Filters/Properties, recovery, startup, scan/rescan and
+    // installed-list selection can never set browse_auto_open_pending.
     if (auto_open_after_first_browse)
         (void)request_editor_open(filter, "first custom Browse gesture");
 
@@ -1135,13 +1210,18 @@ bool obs_module_load(void)
     } catch (const std::exception& e) {
         blog(LOG_WARNING, "[obs-safe-vst3] background VST3 discovery could not start: %s", e.what());
     }
-    blog(LOG_INFO, "[obs-safe-vst3] Phase S stable module loaded");
+    const auto module_dir = module_binary_dir();
+    const auto scanner = scanner_path();
+    const auto cache = scan_cache_path();
+    blog(LOG_INFO,
+         "[obs-safe-vst3] Phase S module loaded; module_dir=%s scanner=%s cache=%s",
+         module_dir.string().c_str(), scanner.string().c_str(), cache.string().c_str());
     return true;
 }
 
 void obs_module_unload(void)
 {
-    stop_startup_scanner();
+    stop_scanners();
     stop_retired_bridge_reaper();
     release_retired_filters();
 }
