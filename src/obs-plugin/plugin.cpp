@@ -465,15 +465,18 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
     return true;
 }
 
-void split_selection(const std::string& selection, std::string& path, std::string& class_id)
+bool split_selection(const std::string& selection, std::string& path, std::string& class_id)
 {
+    path.clear();
+    class_id.clear();
     const auto tab = selection.find('\t');
     if (tab == std::string::npos) {
         path = selection;
-        return;
+        return false;
     }
     path = selection.substr(0, tab);
     class_id = selection.substr(tab + 1);
+    return true;
 }
 
 std::pair<std::string, std::string> current_identity(Filter* filter)
@@ -493,6 +496,7 @@ bool custom_path_modified(void* data, obs_properties_t*, obs_property_t*, obs_da
     const std::string selected = obs_data_get_string(settings, kPluginPath);
     const std::string custom = obs_data_get_string(settings, kCustomPath);
     bool armed = false;
+    bool clear_legacy_class = false;
     {
         std::lock_guard lock(filter->config_mutex);
         if (filter->shutting_down.load(std::memory_order_acquire))
@@ -500,13 +504,20 @@ bool custom_path_modified(void* data, obs_properties_t*, obs_property_t*, obs_da
 
         const bool actual_custom_change = custom != filter->observed_custom_path;
         filter->observed_custom_path = custom;
-        if (actual_custom_change && selected.empty() && !custom.empty() &&
+        clear_legacy_class = actual_custom_change && !custom.empty();
+        if (actual_custom_change && filter->path.empty() && selected.empty() && !custom.empty() &&
             !filter->browse_auto_open_consumed) {
             filter->browse_auto_open_consumed = true;
             filter->browse_auto_open_pending = true;
             armed = true;
         }
     }
+
+    // A newly browsed bundle has no proven relationship to an early-preview
+    // class_id left in the settings. Let the isolated host choose its first
+    // audio-effect class instead of accidentally requesting a stale class.
+    if (clear_legacy_class)
+        obs_data_set_string(settings, kClassId, "");
 
     if (armed) {
         obs_data_set_bool(settings, kBrowseAutoOpenDone, true);
@@ -777,12 +788,15 @@ void filter_update(void* data, obs_data_t* settings)
 
     std::string path;
     std::string class_id;
-    split_selection(selected, path, class_id);
+    const bool selection_has_class_field = split_selection(selected, path, class_id);
     const bool custom_browse_active = path.empty() && !custom.empty();
     if (custom_browse_active) {
         path = custom;
         class_id = legacy_class;
-    } else if (class_id.empty()) {
+    } else if (!selection_has_class_field && class_id.empty()) {
+        // Early scenes stored a path without a tab-delimited class field.
+        // A modern scanner fallback deliberately stores "path\t" and must keep
+        // that class id empty so Vst3Engine selects its first audio-effect.
         class_id = legacy_class;
     }
 
@@ -799,9 +813,11 @@ void filter_update(void* data, obs_data_t* settings)
         if (filter->shutting_down.load(std::memory_order_acquire))
             return;
 
-        // Selecting from the installed list consumes the new-filter one-shot
-        // without opening an editor. This preserves the established behavior.
-        if (!filter->browse_auto_open_consumed && !selected.empty() && !path.empty()) {
+        // Any non-Browse transition that gives a previously empty filter an
+        // identity consumes the one-shot without opening the editor. The real
+        // Browse callback has already consumed + armed the one-shot before this
+        // update arrives, so it is not caught here.
+        if (!filter->browse_auto_open_consumed && identity_changed && !path.empty()) {
             filter->browse_auto_open_consumed = true;
             persist_consumed = true;
         }
