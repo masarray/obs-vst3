@@ -60,8 +60,8 @@ Copy-Item $ScannerExe (Join-Path $InstallerPayload 'obs-safe-vst3-scanner.exe')
 Copy-Item $LocaleFile (Join-Path $InstallerPayload 'en-US.ini')
 
 $Readme = @"
-OBS Safe VST3 Host v$Version - Native OBS-like VST3 Recovery Preview
-=====================================================================
+OBS Safe VST3 Host v$Version - Phase S Stable
+==============================================
 
 QUICK INSTALL
 1. Close OBS Studio completely.
@@ -71,7 +71,7 @@ QUICK INSTALL
    obs-plugins\64bit\obs-safe-vst3-host.exe
    obs-plugins\64bit\obs-safe-vst3-scanner.exe
    data\obs-plugins\obs-safe-vst3\locale\en-US.ini
-4. Start OBS Studio and add: VST 3.x Plug-in.
+4. Start OBS Studio and add: VST 3.x Plug-in (Safe Host).
 5. Click Rescan Installed Plug-ins.
 6. Select an effect from Installed VST 3 Plug-in, or select Browse / Custom VST3...
    and browse to a development/non-standard bundle.
@@ -79,21 +79,28 @@ QUICK INSTALL
    <plug-in name> - Ready - <N> samples latency
 8. Click Open Plug-in Interface to open the vendor's real VST3 editor.
 
-RECOVERED PREVIEW FEATURES
+PHASE S STABLE FEATURES
 - Installed VST3 discovery and isolated per-candidate scanner probing.
 - Native vendor VST3 editor hosted by obs-safe-vst3-host.exe, not obs64.exe.
-- Plug-in name and reported latency status in the OBS properties panel.
-- Native editor control gestures bridged to the VST3 processor.
-- Generic parameter controls appear as fallback only when native editor is unavailable.
-- Automatic isolated-helper recovery attempt.
-- Dry fail-open audio if the helper crashes, exits or misses the internal realtime budget.
+- Generic parameter controls as fallback when native editor is unavailable.
+- Full opaque VST3 component + controller state persistence with CRC validation.
+- Last-known-good state checkpoint used for helper recreation.
+- Dedicated MMCSS Pro Audio DSP worker separated from vendor UI/control work.
+- Protocol v6 with separate control and DSP heartbeats.
+- Watchdog recovery for exited or live-but-hung DSP helpers.
+- Bounded exponential restart backoff and stable-run reset.
+- Fixed-capacity control/DSP queues and audio-first bounded command servicing.
+- Fail-closed recovery on processor-delivery/flush/process contract failures.
+- Dry fail-open audio when no valid wet result is available in time.
 
-CURRENT PREVIEW LIMITATIONS
+CURRENT SCOPE / LIMITATIONS
 - Windows x64 only.
-- Mono/stereo float32 effects only.
-- Full VST3 component/controller state-blob persistence is not complete yet.
-- Complete restartComponent() reconfiguration, sidechain, instruments/MIDI and arbitrary
-  multichannel are not supported yet.
+- Mono/stereo float32 audio effects only.
+- Complete restartComponent() I/O reconfiguration is partial.
+- Sidechain/multiple audio buses are not fully supported.
+- VST3 instruments/MIDI and arbitrary multichannel are not supported.
+- Safe VST3 Rack is a later phase; this release remains one effect per OBS filter.
+- Phase S stable does not guarantee compatibility with every third-party VST3.
 
 The scanner and VST3 DSP run outside OBS. Crash isolation is not a malware sandbox;
 only load plug-ins you trust.
