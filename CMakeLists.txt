@@ -7,6 +7,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(SAFEVST3_BUILD_OBS_PLUGIN "Build the OBS module when libobs is available" ON)
 option(SAFEVST3_BUILD_TESTS "Build protocol/layout tests" ON)
+option(SAFEVST3_STATIC_MSVC_RUNTIME "Link Windows binaries with the static MSVC runtime" ON)
+
+if(MSVC AND SAFEVST3_STATIC_MSVC_RUNTIME)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 if(NOT WIN32)
     message(STATUS "Stable runtime is Windows x86-64 only. Building portable tests only.")
@@ -31,6 +36,23 @@ if(WIN32)
         GIT_SUBMODULES_RECURSE TRUE
     )
     FetchContent_MakeAvailable(vst3sdk)
+
+    # The Steinberg SDK creates its own CMake targets. Pin their runtime
+    # explicitly so sdk.lib/sdk_hosting.lib cannot remain /MD while the host,
+    # scanner and OBS module use /MT. Mixing the two CRT models produces
+    # LNK4098/LNK2001 failures and can also make deployed binaries depend on a
+    # Visual C++ redistributable that is absent on the user's machine.
+    if(MSVC AND SAFEVST3_STATIC_MSVC_RUNTIME)
+        foreach(_safevst3_sdk_target IN ITEMS base sdk_common sdk sdk_hosting)
+            if(TARGET ${_safevst3_sdk_target})
+                get_target_property(_safevst3_sdk_target_type ${_safevst3_sdk_target} TYPE)
+                if(NOT _safevst3_sdk_target_type STREQUAL "INTERFACE_LIBRARY")
+                    set_property(TARGET ${_safevst3_sdk_target} PROPERTY
+                        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+                endif()
+            endif()
+        endforeach()
+    endif()
 
     add_library(safevst3_vst3_hosting_runtime STATIC
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/common/memorystream.cpp
@@ -76,6 +98,14 @@ if(WIN32)
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(obs-safe-vst3 PRIVATE OBS::libobs safevst3_win_ipc)
             target_compile_definitions(obs-safe-vst3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            if(MSVC)
+                # Force the OBS compatibility floor header before obs-module.h
+                # in every translation unit. OBS_DECLARE_MODULE() therefore
+                # exports obs_module_ver() as 29.1 even when built with a newer
+                # SDK, while all imported APIs remain within that audited floor.
+                target_compile_options(obs-safe-vst3 PRIVATE
+                    "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/obs-plugin/obs_compat_floor.hpp")
+            endif()
             set_target_properties(obs-safe-vst3 PROPERTIES PREFIX "" OUTPUT_NAME "obs-safe-vst3")
             add_custom_command(TARGET obs-safe-vst3 POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
