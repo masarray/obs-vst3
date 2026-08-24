@@ -123,9 +123,12 @@ enum class ScannerRunResult {
 };
 
 std::atomic<bool> scanner_in_progress{false};
+std::atomic<bool> scanner_shutting_down{false};
 std::jthread startup_scanner_thread;
 std::jthread manual_scanner_thread;
 std::mutex manual_scanner_thread_mutex;
+std::mutex scan_refresh_mutex;
+std::vector<obs_weak_source_t*> scan_refresh_waiters;
 
 bool try_claim_scanner() noexcept
 {
@@ -395,6 +398,60 @@ ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
     return ScannerRunResult::Success;
 }
 
+void request_scan_completion_refresh(Filter* filter)
+{
+    if (!filter || !filter->context ||
+        filter->shutting_down.load(std::memory_order_acquire) ||
+        scanner_shutting_down.load(std::memory_order_acquire))
+        return;
+
+    obs_weak_source_t* weak = obs_source_get_weak_source(filter->context);
+    if (!weak)
+        return;
+
+    std::lock_guard lock(scan_refresh_mutex);
+    if (scanner_shutting_down.load(std::memory_order_acquire)) {
+        obs_weak_source_release(weak);
+        return;
+    }
+    scan_refresh_waiters.push_back(weak);
+}
+
+void refresh_scan_waiters()
+{
+    std::vector<obs_weak_source_t*> waiters;
+    {
+        std::lock_guard lock(scan_refresh_mutex);
+        waiters.swap(scan_refresh_waiters);
+    }
+
+    const bool unloading = scanner_shutting_down.load(std::memory_order_acquire);
+    for (obs_weak_source_t* weak : waiters) {
+        if (!unloading) {
+            if (obs_source_t* source = obs_weak_source_get_source(weak)) {
+                // No module callback is queued here. The scanner worker emits
+                // the core properties-update signal while it is still joined
+                // by stop_scanners(); the weak source avoids extending a
+                // filter lifetime across module unload.
+                obs_source_update_properties(source);
+                obs_source_release(source);
+            }
+        }
+        obs_weak_source_release(weak);
+    }
+}
+
+void cancel_scan_refresh_waiters()
+{
+    std::vector<obs_weak_source_t*> waiters;
+    {
+        std::lock_guard lock(scan_refresh_mutex);
+        waiters.swap(scan_refresh_waiters);
+    }
+    for (obs_weak_source_t* weak : waiters)
+        obs_weak_source_release(weak);
+}
+
 void start_startup_scanner()
 {
     if (startup_scanner_thread.joinable())
@@ -413,11 +470,16 @@ void start_startup_scanner()
             blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery completed");
         else if (result == ScannerRunResult::Failed)
             blog(LOG_WARNING, "[obs-safe-vst3] background installed VST3 discovery failed; existing cache kept");
+        refresh_scan_waiters();
     });
 }
 
 void stop_scanners()
 {
+    // Block new refresh registrations before stopping workers. Joining both
+    // workers guarantees no module-owned completion code is still executing;
+    // remaining weak waiters are then released before the DLL can unload.
+    scanner_shutting_down.store(true, std::memory_order_release);
     startup_scanner_thread.request_stop();
     {
         std::lock_guard lock(manual_scanner_thread_mutex);
@@ -428,6 +490,7 @@ void stop_scanners()
         std::lock_guard lock(manual_scanner_thread_mutex);
         manual_scanner_thread = std::jthread{};
     }
+    cancel_scan_refresh_waiters();
 }
 
 std::vector<ScanEntry> load_scan_cache()
@@ -509,20 +572,17 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
     // Refresh immediately from the discovery seed/cache. Never wait for vendor
     // probing on the OBS UI thread.
     populate_plugin_list(obs_properties_get(props, kPluginPath));
+    request_scan_completion_refresh(filter);
     if (!try_claim_scanner()) {
         blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already active; reusing active scan");
         return true;
     }
 
-    obs_source_t* context = nullptr;
-    if (filter && filter->context && !filter->shutting_down.load(std::memory_order_acquire))
-        context = obs_source_get_ref(filter->context);
-
     try {
         std::lock_guard lock(manual_scanner_thread_mutex);
         if (manual_scanner_thread.joinable())
             manual_scanner_thread = std::jthread{};
-        manual_scanner_thread = std::jthread([context](std::stop_token stop) {
+        manual_scanner_thread = std::jthread([](std::stop_token stop) {
             ScannerClaimGuard claim(true);
             const auto result = run_scanner_claimed(stop);
             if (result == ScannerRunResult::Success)
@@ -530,16 +590,12 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
             else if (result == ScannerRunResult::Failed)
                 blog(LOG_WARNING, "[obs-safe-vst3] manual installed VST3 discovery failed; existing cache kept");
 
-            if (context) {
-                if (!stop.stop_requested())
-                    obs_source_update_properties(context);
-                obs_source_release(context);
-            }
+            if (!stop.stop_requested())
+                refresh_scan_waiters();
         });
     } catch (const std::exception& e) {
         scanner_in_progress.store(false, std::memory_order_release);
-        if (context)
-            obs_source_release(context);
+        refresh_scan_waiters();
         blog(LOG_ERROR, "[obs-safe-vst3] could not start background Rescan worker: %s", e.what());
     }
     return true;
@@ -1205,6 +1261,7 @@ obs_source_info source_info = make_source_info();
 
 bool obs_module_load(void)
 {
+    scanner_shutting_down.store(false, std::memory_order_release);
     try {
         start_retired_bridge_reaper();
     } catch (const std::exception& e) {

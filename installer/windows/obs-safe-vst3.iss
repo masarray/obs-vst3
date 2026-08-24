@@ -48,6 +48,12 @@ Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3.dll"
 Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3-host.exe"
 Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3-scanner.exe"
 Type: filesandordirs; Name: "{code:GetPluginDataDir}"
+; If an earlier installer remembered a different valid OBS root, remove only
+; this product from that old root before LastObsRoot is updated to the new one.
+Type: files; Name: "{code:GetPreviousPluginBinDir}\obs-safe-vst3.dll"; Check: ShouldCleanPreviousObsRoot
+Type: files; Name: "{code:GetPreviousPluginBinDir}\obs-safe-vst3-host.exe"; Check: ShouldCleanPreviousObsRoot
+Type: files; Name: "{code:GetPreviousPluginBinDir}\obs-safe-vst3-scanner.exe"; Check: ShouldCleanPreviousObsRoot
+Type: filesandordirs; Name: "{code:GetPreviousPluginDataDir}"; Check: ShouldCleanPreviousObsRoot
 
 [Code]
 const
@@ -60,6 +66,7 @@ var
   ObsRootParam: String;
   LegacyPortableObsDirParam: String;
   CloseObsParam: String;
+  PreviousObsRoot: String;
 
 function AddSlash(const Path: String): String;
 begin
@@ -96,6 +103,23 @@ end;
 function GetPluginLocaleDir(Param: String): String;
 begin
   Result := GetPluginDataDir('') + '\locale';
+end;
+
+function ShouldCleanPreviousObsRoot: Boolean;
+begin
+  Result := (PreviousObsRoot <> '') and IsObsRootValid(PreviousObsRoot) and
+    (CompareText(RemoveBackslashUnlessRoot(PreviousObsRoot),
+      RemoveBackslashUnlessRoot(SelectedObsRoot)) <> 0);
+end;
+
+function GetPreviousPluginBinDir(Param: String): String;
+begin
+  Result := AddSlash(PreviousObsRoot) + 'obs-plugins\64bit';
+end;
+
+function GetPreviousPluginDataDir(Param: String): String;
+begin
+  Result := AddSlash(PreviousObsRoot) + 'data\obs-plugins\obs-safe-vst3';
 end;
 
 function IsObsRunning: Boolean;
@@ -241,7 +265,8 @@ begin
     False, '');
   ObsRootPage.Add('');
 
-  InitialRoot := LoadRememberedObsRoot;
+  PreviousObsRoot := LoadRememberedObsRoot;
+  InitialRoot := PreviousObsRoot;
   if InitialRoot = '' then
   begin
     if IsObsRootValid(DefaultObsRoot) then
