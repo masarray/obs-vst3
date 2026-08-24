@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "common/parameter_utils.hpp"
+#include "common/spsc_ring.hpp"
 #include "host/native_editor.hpp"
 #include "host/vst3_engine.hpp"
 #include "platform/windows/win_ipc.hpp"
@@ -18,10 +19,62 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <thread>
 
 #pragma comment(lib, "Avrt.lib")
 
 namespace {
+
+constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
+constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
+constexpr std::size_t kMaxPausedHostCatchupPasses = 4;
+constexpr ULONGLONG kPausedHeartbeatGraceMs = 2000;
+using ParameterQueue = safevst3::SpscRing<safevst3::EngineParameterUpdate, kParameterTransferCapacity>;
+
+class NativeOverrideBuffer {
+public:
+    bool record(const safevst3::EngineParameterUpdate& update) noexcept
+    {
+        for (std::size_t i = 0; i < count_; ++i) {
+            if (updates_[i].id == update.id) {
+                updates_[i].normalized = update.normalized;
+                return true;
+            }
+        }
+        if (count_ >= updates_.size()) {
+            overflowed_ = true;
+            return false;
+        }
+        updates_[count_++] = update;
+        return true;
+    }
+
+    bool contains(std::uint32_t id) const noexcept
+    {
+        for (std::size_t i = 0; i < count_; ++i) {
+            if (updates_[i].id == id)
+                return true;
+        }
+        return false;
+    }
+
+    bool empty() const noexcept { return count_ == 0 && !overflowed_; }
+    bool overflowed() const noexcept { return overflowed_; }
+    std::size_t size() const noexcept { return count_; }
+    const safevst3::EngineParameterUpdate& at(std::size_t index) const noexcept { return updates_[index]; }
+
+    void clear() noexcept
+    {
+        count_ = 0;
+        overflowed_ = false;
+    }
+
+private:
+    std::array<safevst3::EngineParameterUpdate, kParameterTransferCapacity> updates_{};
+    std::size_t count_ = 0;
+    bool overflowed_ = false;
+};
+
 std::string narrow(const std::wstring& value)
 {
     if (value.empty()) return {};
@@ -63,7 +116,15 @@ void copy_text(char* destination, std::size_t capacity, const std::string& value
     destination[count] = '\0';
 }
 
-void publish_heartbeat(safevst3::SharedAudioRegion* region) noexcept
+void request_consistency_recovery(safevst3::SharedAudioRegion* region, long error_code) noexcept
+{
+    if (!region)
+        return;
+    InterlockedExchange(&region->last_error, error_code);
+    InterlockedExchange(&region->shutdown_requested, 1);
+}
+
+void publish_control_heartbeat(safevst3::SharedAudioRegion* region) noexcept
 {
     if (!region)
         return;
@@ -71,6 +132,16 @@ void publish_heartbeat(safevst3::SharedAudioRegion* region) noexcept
         reinterpret_cast<volatile LONG64*>(&region->helper_heartbeat_ms),
         static_cast<LONG64>(GetTickCount64()));
     InterlockedIncrement(&region->helper_progress_generation);
+}
+
+void publish_dsp_heartbeat(safevst3::SharedAudioRegion* region) noexcept
+{
+    if (!region)
+        return;
+    InterlockedExchange64(
+        reinterpret_cast<volatile LONG64*>(&region->dsp_heartbeat_ms),
+        static_cast<LONG64>(GetTickCount64()));
+    InterlockedIncrement(&region->dsp_progress_generation);
 }
 
 void publish_parameter_value(safevst3::SharedAudioRegion* region,
@@ -90,21 +161,228 @@ void publish_parameter_value(safevst3::SharedAudioRegion* region,
     }
 }
 
-void publish_parameter_feedback(safevst3::SharedAudioRegion* region, safevst3::Vst3Engine& engine) noexcept
+bool enqueue_processor_feedback(safevst3::SharedAudioRegion* region,
+                                safevst3::Vst3Engine& engine,
+                                ParameterQueue& feedback,
+                                std::atomic<bool>& resync_required) noexcept
 {
-    if (!region)
-        return;
+    bool notify_control = false;
+    std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
+    const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        publish_parameter_value(region, updates[i].id, updates[i].normalized);
+        if (!feedback.push(updates[i])) {
+            resync_required.store(true, std::memory_order_release);
+            if (region)
+                InterlockedExchange(&region->last_error, 4);
+            notify_control = true;
+            continue;
+        }
+        notify_control = true;
+    }
+    return notify_control;
+}
 
+struct ProcessorCommandDrainResult {
+    std::size_t drained = 0;
+    bool failed = false;
+};
+
+ProcessorCommandDrainResult drain_processor_commands(safevst3::SharedAudioRegion* region,
+                                                      safevst3::Vst3Engine& engine,
+                                                      ParameterQueue& commands,
+                                                      std::size_t max_commands) noexcept
+{
+    ProcessorCommandDrainResult result{};
+    safevst3::EngineParameterUpdate update{};
+    while (result.drained < max_commands && commands.pop(update)) {
+        ++result.drained;
+        if (engine.queue_processor_parameter(update.id, update.normalized))
+            continue;
+
+        // The command has already left the bounded SPSC queue. Continuing would
+        // silently advance the controller/shared mirror without proving delivery
+        // to the processor. Taint this helper and let the outer watchdog rebuild
+        // it from S1's last-known-good checkpoint instead of serializing a mixed
+        // component/controller state.
+        result.failed = true;
+        request_consistency_recovery(region, 5);
+        break;
+    }
+    return result;
+}
+
+void drain_controller_feedback(safevst3::SharedAudioRegion* region,
+                               safevst3::Vst3Engine& engine,
+                               ParameterQueue& feedback) noexcept
+{
+    safevst3::EngineParameterUpdate update{};
+    while (feedback.pop(update)) {
+        (void)engine.set_controller_parameter(update.id, update.normalized);
+        publish_parameter_value(region, update.id, update.normalized);
+    }
+}
+
+void drain_controller_feedback_preserving_native_overrides(
+    safevst3::SharedAudioRegion* region,
+    safevst3::Vst3Engine& engine,
+    ParameterQueue& feedback,
+    const NativeOverrideBuffer& native_overrides) noexcept
+{
+    safevst3::EngineParameterUpdate update{};
+    while (feedback.pop(update)) {
+        if (native_overrides.contains(update.id))
+            continue;
+        (void)engine.set_controller_parameter(update.id, update.normalized);
+        publish_parameter_value(region, update.id, update.normalized);
+    }
+}
+
+void sync_engine_mirror_to_controller(safevst3::SharedAudioRegion* region,
+                                      safevst3::Vst3Engine& engine) noexcept
+{
+    for (const auto& parameter : engine.parameters()) {
+        (void)engine.set_controller_parameter(parameter.id, parameter.current_normalized);
+        publish_parameter_value(region, parameter.id, parameter.current_normalized);
+    }
+}
+
+void reconcile_controller_feedback_after_pause(safevst3::SharedAudioRegion* region,
+                                               safevst3::Vst3Engine& engine,
+                                               ParameterQueue& feedback,
+                                               std::atomic<bool>& resync_required) noexcept
+{
+    drain_controller_feedback(region, engine, feedback);
+    if (!resync_required.exchange(false, std::memory_order_acq_rel))
+        return;
+    sync_engine_mirror_to_controller(region, engine);
+}
+
+void publish_engine_updates_direct(safevst3::SharedAudioRegion* region,
+                                   safevst3::Vst3Engine& engine) noexcept
+{
     std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> updates{};
     const std::size_t count = engine.take_parameter_updates(updates.data(), updates.size());
     for (std::size_t i = 0; i < count; ++i)
         publish_parameter_value(region, updates[i].id, updates[i].normalized);
 }
 
+bool reconcile_native_edits_after_pause(safevst3::SharedAudioRegion* region,
+                                        safevst3::Vst3Engine& engine,
+                                        ParameterQueue& feedback,
+                                        NativeOverrideBuffer& native_overrides) noexcept
+{
+    if (native_overrides.empty())
+        return true;
+    if (native_overrides.overflowed()) {
+        request_consistency_recovery(region, 15);
+        return false;
+    }
+
+    drain_controller_feedback_preserving_native_overrides(
+        region, engine, feedback, native_overrides);
+
+    for (std::size_t i = 0; i < native_overrides.size(); ++i) {
+        const auto& update = native_overrides.at(i);
+        if (!engine.set_controller_parameter(update.id, update.normalized) ||
+            !engine.queue_processor_parameter(update.id, update.normalized)) {
+            request_consistency_recovery(region, 13);
+            return false;
+        }
+        publish_parameter_value(region, update.id, update.normalized);
+    }
+
+    if (!engine.flush_parameter_changes()) {
+        request_consistency_recovery(region, 13);
+        return false;
+    }
+
+    publish_engine_updates_direct(region, engine);
+    sync_engine_mirror_to_controller(region, engine);
+    native_overrides.clear();
+    return true;
+}
+
+bool catch_up_pending_host_parameters_after_pause(safevst3::SharedAudioRegion* region,
+                                                  safevst3::Vst3Engine& engine) noexcept
+{
+    if (!region)
+        return false;
+
+    const std::uint32_t count = std::min(region->parameter_count, safevst3::kMaxParameters);
+    for (std::size_t pass = 0; pass < kMaxPausedHostCatchupPasses; ++pass) {
+        std::array<long, safevst3::kMaxParameters> ack_generations{};
+        std::array<bool, safevst3::kMaxParameters> touched{};
+        bool queued_any = false;
+
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto& descriptor = region->parameters[i];
+            const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
+            const long applied = InterlockedCompareExchange(&descriptor.applied_generation, 0, 0);
+            if (generation == applied)
+                continue;
+
+            const auto raw_bits = InterlockedCompareExchange64(
+                reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
+            const double value = safevst3::normalize_parameter_value(
+                bits_to_double(static_cast<std::int64_t>(raw_bits)), descriptor.step_count);
+
+            if (!engine.set_controller_parameter(descriptor.id, value) ||
+                !engine.queue_processor_parameter(descriptor.id, value)) {
+                request_consistency_recovery(region, 12);
+                return false;
+            }
+
+            publish_parameter_value(region, descriptor.id, value);
+            ack_generations[i] = generation;
+            touched[i] = true;
+            queued_any = true;
+        }
+
+        if (queued_any && !engine.flush_parameter_changes()) {
+            request_consistency_recovery(region, 12);
+            return false;
+        }
+        if (queued_any) {
+            publish_engine_updates_direct(region, engine);
+            sync_engine_mirror_to_controller(region, engine);
+        }
+
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (!touched[i])
+                continue;
+            InterlockedExchange(&region->parameters[i].applied_generation, ack_generations[i]);
+            InterlockedIncrement(&region->state_dirty_generation);
+        }
+
+        MemoryBarrier();
+        bool pending = false;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto& descriptor = region->parameters[i];
+            if (InterlockedCompareExchange(&descriptor.pending_generation, 0, 0) !=
+                InterlockedCompareExchange(&descriptor.applied_generation, 0, 0)) {
+                pending = true;
+                break;
+            }
+        }
+        if (!pending)
+            return true;
+    }
+
+    InterlockedExchange(&region->last_error, 12);
+    return false;
+}
+
 class ComponentHandler final : public Steinberg::Vst::IComponentHandler {
 public:
-    ComponentHandler(safevst3::Vst3Engine& engine, safevst3::SharedAudioRegion* region)
-        : engine_(engine), region_(region)
+    ComponentHandler(safevst3::SharedAudioRegion* region,
+                     ParameterQueue& control_to_dsp,
+                     NativeOverrideBuffer& native_overrides,
+                     HANDLE dsp_event,
+                     HANDLE control_event)
+        : region_(region), control_to_dsp_(control_to_dsp),
+          native_overrides_(native_overrides), dsp_event_(dsp_event),
+          control_event_(control_event)
     {
     }
 
@@ -116,11 +394,46 @@ public:
     Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id,
                                               Steinberg::Vst::ParamValue value) override
     {
-        if (!engine_.queue_parameter_from_controller(static_cast<std::uint32_t>(id), value))
-            return Steinberg::kResultFalse;
-        publish_parameter_value(region_, static_cast<std::uint32_t>(id), value);
+        const safevst3::EngineParameterUpdate update{static_cast<std::uint32_t>(id), value};
+
+        if (native_overrides_.contains(update.id)) {
+            const bool retained = native_overrides_.record(update);
+            publish_parameter_value(region_, update.id, value);
+            if (region_) {
+                InterlockedIncrement(&region_->state_dirty_generation);
+                InterlockedExchange(&region_->last_error, retained ? 6 : 15);
+            }
+            if (!retained && region_)
+                InterlockedExchange(&region_->shutdown_requested, 1);
+            if (dsp_event_)
+                SetEvent(dsp_event_);
+            if (control_event_)
+                SetEvent(control_event_);
+            edit_pending_.store(true, std::memory_order_release);
+            return retained ? Steinberg::kResultOk : Steinberg::kResultFalse;
+        }
+
+        if (!control_to_dsp_.push(update)) {
+            const bool retained = native_overrides_.record(update);
+            publish_parameter_value(region_, update.id, value);
+            if (region_) {
+                InterlockedIncrement(&region_->state_dirty_generation);
+                InterlockedExchange(&region_->last_error, retained ? 6 : 15);
+            }
+            if (!retained && region_)
+                InterlockedExchange(&region_->shutdown_requested, 1);
+            if (dsp_event_)
+                SetEvent(dsp_event_);
+            if (control_event_)
+                SetEvent(control_event_);
+            edit_pending_.store(true, std::memory_order_release);
+            return retained ? Steinberg::kResultOk : Steinberg::kResultFalse;
+        }
+        publish_parameter_value(region_, update.id, value);
         if (region_)
             InterlockedIncrement(&region_->state_dirty_generation);
+        if (dsp_event_)
+            SetEvent(dsp_event_);
         edit_pending_.store(true, std::memory_order_release);
         return Steinberg::kResultOk;
     }
@@ -166,10 +479,277 @@ public:
     Steinberg::uint32 PLUGIN_API release() override { return 1000; }
 
 private:
-    safevst3::Vst3Engine& engine_;
     safevst3::SharedAudioRegion* region_ = nullptr;
+    ParameterQueue& control_to_dsp_;
+    NativeOverrideBuffer& native_overrides_;
+    HANDLE dsp_event_ = nullptr;
+    HANDLE control_event_ = nullptr;
     std::atomic<bool> edit_pending_{false};
     std::atomic<Steinberg::int32> restart_flags_{0};
+};
+
+class DspWorker {
+public:
+    DspWorker(safevst3::SharedAudioRegion* region,
+              safevst3::Vst3Engine& engine,
+              ParameterQueue& control_to_dsp,
+              ParameterQueue& dsp_to_control,
+              std::atomic<bool>& feedback_resync_required,
+              HANDLE dsp_event,
+              HANDLE control_event,
+              HANDLE response_event)
+        : region_(region), engine_(engine), control_to_dsp_(control_to_dsp),
+          dsp_to_control_(dsp_to_control), feedback_resync_required_(feedback_resync_required),
+          dsp_event_(dsp_event), control_event_(control_event), response_event_(response_event)
+    {
+    }
+
+    ~DspWorker() { stop(); }
+
+    bool start(std::string& error)
+    {
+        transition_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!transition_event_) {
+            error = "Failed to create DSP transition acknowledgement event";
+            return false;
+        }
+        try {
+            thread_ = std::jthread([this](std::stop_token stop) { run(stop); });
+        } catch (...) {
+            CloseHandle(transition_event_);
+            transition_event_ = nullptr;
+            error = "Failed to start dedicated DSP worker";
+            return false;
+        }
+        return true;
+    }
+
+    void stop() noexcept
+    {
+        if (thread_.joinable()) {
+            thread_.request_stop();
+            if (dsp_event_)
+                SetEvent(dsp_event_);
+            if (transition_event_)
+                SetEvent(transition_event_);
+            thread_ = std::jthread{};
+        }
+        if (transition_event_) {
+            CloseHandle(transition_event_);
+            transition_event_ = nullptr;
+        }
+    }
+
+    bool pause(DWORD timeout_ms) noexcept
+    {
+        if (!thread_.joinable() || !transition_event_)
+            return false;
+
+        const std::uint64_t token = request_transition(true);
+        if (wait_for_transition(token, timeout_ms))
+            return true;
+
+        (void)request_transition(false);
+        return false;
+    }
+
+    bool resume(DWORD timeout_ms) noexcept
+    {
+        if (!thread_.joinable() || !transition_event_)
+            return false;
+        const std::uint64_t token = request_transition(false);
+        return wait_for_transition(token, timeout_ms);
+    }
+
+private:
+    static constexpr std::uint64_t kPausedTokenBit = 1u;
+
+    static bool token_requests_pause(std::uint64_t token) noexcept
+    {
+        return (token & kPausedTokenBit) != 0;
+    }
+
+    std::uint64_t request_transition(bool paused) noexcept
+    {
+        const std::uint64_t generation =
+            next_transition_generation_.fetch_add(1u, std::memory_order_relaxed);
+        const std::uint64_t token = (generation << 1u) | (paused ? kPausedTokenBit : 0u);
+        requested_transition_.store(token, std::memory_order_release);
+        if (dsp_event_)
+            SetEvent(dsp_event_);
+        return token;
+    }
+
+    bool wait_for_transition(std::uint64_t token, DWORD timeout_ms) noexcept
+    {
+        const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+        while (acknowledged_transition_.load(std::memory_order_acquire) != token) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline)
+                return false;
+            const DWORD remaining = static_cast<DWORD>(deadline - now);
+            const DWORD wait = WaitForSingleObject(transition_event_, remaining);
+            if (wait == WAIT_FAILED)
+                return false;
+        }
+        return true;
+    }
+
+    void acknowledge_transition(std::uint64_t token) noexcept
+    {
+        acknowledged_transition_.store(token, std::memory_order_release);
+        if (transition_event_)
+            SetEvent(transition_event_);
+    }
+
+    void run(std::stop_token stop) noexcept
+    {
+        DWORD task_index = 0;
+        HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
+        if (mmcss)
+            AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
+
+        std::uint64_t acknowledged = acknowledged_transition_.load(std::memory_order_relaxed);
+        publish_dsp_heartbeat(region_);
+
+        while (!stop.stop_requested() &&
+               InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
+            const std::uint64_t requested = requested_transition_.load(std::memory_order_acquire);
+            if (requested != acknowledged) {
+                if (!token_requests_pause(requested)) {
+                    acknowledged = requested;
+                    acknowledge_transition(acknowledged);
+                } else {
+                    bool feedback_pending = false;
+                    const auto drained = drain_processor_commands(
+                        region_, engine_, control_to_dsp_, kParameterTransferCapacity);
+                    if (drained.failed)
+                        return;
+                    if (!engine_.flush_parameter_changes()) {
+                        request_consistency_recovery(region_, 2);
+                        return;
+                    }
+                    feedback_pending |= enqueue_processor_feedback(
+                        region_, engine_, dsp_to_control_, feedback_resync_required_);
+                    if (feedback_pending && control_event_)
+                        SetEvent(control_event_);
+
+                    if (requested_transition_.load(std::memory_order_acquire) != requested)
+                        continue;
+
+                    acknowledged = requested;
+                    acknowledge_transition(acknowledged);
+                    ULONGLONG pause_started = GetTickCount64();
+                    std::uint64_t running_to_ack = 0;
+
+                    while (!stop.stop_requested() &&
+                           InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0) {
+                        const std::uint64_t latest =
+                            requested_transition_.load(std::memory_order_acquire);
+                        if (latest != acknowledged) {
+                            if (!token_requests_pause(latest)) {
+                                running_to_ack = latest;
+                                break;
+                            }
+
+                            acknowledged = latest;
+                            acknowledge_transition(acknowledged);
+                            pause_started = GetTickCount64();
+                        }
+
+                        if (GetTickCount64() - pause_started <= kPausedHeartbeatGraceMs)
+                            publish_dsp_heartbeat(region_);
+                        WaitForSingleObject(dsp_event_, 100);
+                    }
+
+                    if (running_to_ack != 0) {
+                        acknowledged = running_to_ack;
+                        acknowledge_transition(acknowledged);
+                    }
+                    continue;
+                }
+            }
+
+            publish_dsp_heartbeat(region_);
+            const DWORD wait = WaitForSingleObject(dsp_event_, 250);
+            if (stop.stop_requested())
+                break;
+            if (wait == WAIT_FAILED) {
+                InterlockedExchange(&region_->last_error, 7);
+                break;
+            }
+            if (wait == WAIT_TIMEOUT)
+                continue;
+
+            bool processed_any = false;
+            bool feedback_pending = false;
+            for (std::uint32_t i = 0; i < safevst3::kSlotCount; ++i) {
+                auto& slot = region_->slots[i];
+                if (InterlockedCompareExchange(&slot.state,
+                                               static_cast<long>(safevst3::SlotState::Processing),
+                                               static_cast<long>(safevst3::SlotState::Ready)) !=
+                    static_cast<long>(safevst3::SlotState::Ready))
+                    continue;
+
+                processed_any = true;
+                const bool ok = engine_.process(slot);
+                if (!ok) {
+                    InterlockedExchange(&slot.result,
+                                        static_cast<long>(safevst3::ProcessResult::VstProcessError));
+                    MemoryBarrier();
+                    InterlockedExchange(&slot.state, static_cast<long>(safevst3::SlotState::Done));
+                    SetEvent(response_event_);
+                    request_consistency_recovery(region_, 16);
+                    return;
+                }
+
+                feedback_pending |= enqueue_processor_feedback(
+                    region_, engine_, dsp_to_control_, feedback_resync_required_);
+                InterlockedExchange(&slot.result, static_cast<long>(safevst3::ProcessResult::Ok));
+                MemoryBarrier();
+                InterlockedExchange(&slot.state, static_cast<long>(safevst3::SlotState::Done));
+                SetEvent(response_event_);
+            }
+
+            const auto drained = drain_processor_commands(
+                region_, engine_, control_to_dsp_, kMaxProcessorCommandsPerWake);
+            if (drained.failed)
+                return;
+            if (drained.drained > 0 && !processed_any) {
+                if (!engine_.flush_parameter_changes()) {
+                    request_consistency_recovery(region_, 2);
+                    return;
+                }
+                feedback_pending |= enqueue_processor_feedback(
+                    region_, engine_, dsp_to_control_, feedback_resync_required_);
+            }
+            if (drained.drained == kMaxProcessorCommandsPerWake && dsp_event_)
+                SetEvent(dsp_event_);
+
+            if (feedback_pending && control_event_)
+                SetEvent(control_event_);
+            publish_dsp_heartbeat(region_);
+        }
+
+        if (transition_event_)
+            SetEvent(transition_event_);
+        if (mmcss)
+            AvRevertMmThreadCharacteristics(mmcss);
+    }
+
+    safevst3::SharedAudioRegion* region_ = nullptr;
+    safevst3::Vst3Engine& engine_;
+    ParameterQueue& control_to_dsp_;
+    ParameterQueue& dsp_to_control_;
+    std::atomic<bool>& feedback_resync_required_;
+    HANDLE dsp_event_ = nullptr;
+    HANDLE control_event_ = nullptr;
+    HANDLE response_event_ = nullptr;
+    HANDLE transition_event_ = nullptr;
+    std::atomic<std::uint64_t> requested_transition_{0};
+    std::atomic<std::uint64_t> acknowledged_transition_{0};
+    std::atomic<std::uint64_t> next_transition_generation_{1};
+    std::jthread thread_;
 };
 
 void handle_editor_command(safevst3::SharedAudioRegion* region,
@@ -215,6 +795,16 @@ void handle_editor_command(safevst3::SharedAudioRegion* region,
 
     InterlockedExchange(&region->editor_command, static_cast<long>(safevst3::EditorCommand::None));
     InterlockedExchange(&region->editor_applied_generation, requested);
+}
+
+void complete_state_failure(safevst3::SharedAudioRegion* region, HANDLE state_event) noexcept
+{
+    const long requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
+    InterlockedExchange(&region->state_status, static_cast<long>(safevst3::StateStatus::VstError));
+    InterlockedExchange(&region->state_command, static_cast<long>(safevst3::StateCommand::None));
+    InterlockedExchange(&region->state_applied_generation, requested);
+    if (state_event)
+        SetEvent(state_event);
 }
 
 void handle_state_command(safevst3::SharedAudioRegion* region,
@@ -270,7 +860,7 @@ void handle_state_command(safevst3::SharedAudioRegion* region,
                 transfer->payload + static_cast<std::ptrdiff_t>(component_bytes + controller_bytes));
             if (engine.restore_state(snapshot, error)) {
                 region->latency_samples = engine.latency_samples();
-                publish_parameter_feedback(region, engine);
+                publish_engine_updates_direct(region, engine);
                 status = safevst3::StateStatus::Ok;
             } else {
                 status = safevst3::StateStatus::VstError;
@@ -310,7 +900,8 @@ int wmain(int argc, wchar_t** argv)
     };
 
     BridgeNames names{get(L"--mapping"), get(L"--state-mapping"), get(L"--request-event"),
-                      get(L"--response-event"), get(L"--ready-event"), get(L"--state-event")};
+                      get(L"--dsp-event"), get(L"--response-event"), get(L"--ready-event"),
+                      get(L"--state-event")};
     const std::wstring vst_path_w = get(L"--vst");
     const std::string class_id = narrow(get(L"--class-id"));
 
@@ -334,7 +925,13 @@ int wmain(int argc, wchar_t** argv)
     copy_text(region->plugin_name, kPluginNameBytes, engine.plugin_name());
     region->latency_samples = engine.latency_samples();
 
-    ComponentHandler component_handler(engine, region);
+    ParameterQueue control_to_dsp;
+    ParameterQueue dsp_to_control;
+    std::atomic<bool> feedback_resync_required{false};
+    NativeOverrideBuffer native_overrides;
+    ComponentHandler component_handler(
+        region, control_to_dsp, native_overrides,
+        endpoint.dsp_event(), endpoint.request_event());
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
 
@@ -356,48 +953,78 @@ int wmain(int argc, wchar_t** argv)
         copy_text(destination.units, kParameterUnitsBytes, source.units);
     }
 
-    // Never run arbitrary vendor UI code before the DSP helper is Ready. If a
-    // controller exists, editor capability remains Unknown until the user
-    // explicitly requests Open and attached(HWND) succeeds or fails. This
-    // keeps a broken/hanging GUI from preventing healthy DSP + fallback use.
     InterlockedExchange(
         &region->editor_status,
         static_cast<long>(engine.edit_controller() ? EditorStatus::Unknown
                                                     : EditorStatus::Unsupported));
     MemoryBarrier();
 
-    DWORD task_index = 0;
-    HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
-    if (mmcss)
-        AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
+    DspWorker dsp(region, engine, control_to_dsp, dsp_to_control, feedback_resync_required,
+                  endpoint.dsp_event(), endpoint.request_event(), endpoint.response_event());
+    if (!dsp.start(error)) {
+        region->last_error = 8;
+        InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Error));
+        SetEvent(endpoint.ready_event());
+        std::cerr << error << '\n';
+        return 4;
+    }
 
-    publish_heartbeat(region);
+    publish_control_heartbeat(region);
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Ready));
     SetEvent(endpoint.ready_event());
 
     HANDLE request_handle = endpoint.request_event();
     while (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) == 0) {
-        // Wake periodically even when OBS is idle. If this main/helper thread
-        // becomes stuck inside vendor DSP/UI/lifecycle code, this heartbeat
-        // stops and the OBS-side watchdog can distinguish a hang from idleness.
-        publish_heartbeat(region);
+        publish_control_heartbeat(region);
         const DWORD wait = MsgWaitForMultipleObjectsEx(1, &request_handle, 250,
                                                        QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (wait == WAIT_FAILED)
             break;
         if (InterlockedCompareExchange(&region->shutdown_requested, 0, 0) != 0)
             break;
-        if (wait == WAIT_TIMEOUT) {
-            publish_heartbeat(region);
-            continue;
+
+        if (native_overrides.empty()) {
+            drain_controller_feedback(region, engine, dsp_to_control);
+            if (feedback_resync_required.load(std::memory_order_acquire)) {
+                if (dsp.pause(2000)) {
+                    reconcile_controller_feedback_after_pause(
+                        region, engine, dsp_to_control, feedback_resync_required);
+                    if (!dsp.resume(2000))
+                        InterlockedExchange(&region->last_error, 14);
+                } else {
+                    InterlockedExchange(&region->last_error, 11);
+                }
+            }
+        } else {
+            drain_controller_feedback_preserving_native_overrides(
+                region, engine, dsp_to_control, native_overrides);
         }
 
         if (wait == WAIT_OBJECT_0 + 1)
             pump_windows_messages();
 
-        handle_editor_command(region, engine, editor);
+        bool native_resync_failed = false;
+        if (!native_overrides.empty()) {
+            if (dsp.pause(2000)) {
+                if (reconcile_native_edits_after_pause(
+                        region, engine, dsp_to_control, native_overrides)) {
+                    feedback_resync_required.store(false, std::memory_order_release);
+                } else {
+                    native_resync_failed = true;
+                }
+                if (!dsp.resume(2000)) {
+                    native_resync_failed = true;
+                    InterlockedExchange(&region->last_error, 14);
+                }
+            } else {
+                native_resync_failed = true;
+                InterlockedExchange(&region->last_error, 13);
+            }
+        }
 
-        bool parameter_edits = false;
+        if (wait != WAIT_TIMEOUT)
+            handle_editor_command(region, engine, editor);
+
         for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
             auto& descriptor = region->parameters[i];
             const long generation = InterlockedCompareExchange(&descriptor.pending_generation, 0, 0);
@@ -408,65 +1035,99 @@ int wmain(int argc, wchar_t** argv)
             const auto raw_bits = InterlockedCompareExchange64(
                 reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), 0, 0);
             const double value = bits_to_double(static_cast<std::int64_t>(raw_bits));
-            if (engine.queue_parameter(descriptor.id, value)) {
-                publish_parameter_value(region, descriptor.id,
-                    normalize_parameter_value(value, descriptor.step_count));
+            const EngineParameterUpdate update{descriptor.id,
+                normalize_parameter_value(value, descriptor.step_count)};
+            if (engine.set_controller_parameter(update.id, update.normalized) &&
+                control_to_dsp.push(update)) {
+                publish_parameter_value(region, update.id, update.normalized);
                 InterlockedIncrement(&region->state_dirty_generation);
-                parameter_edits = true;
+                InterlockedExchange(&descriptor.applied_generation, generation);
+                SetEvent(endpoint.dsp_event());
+            } else {
+                InterlockedExchange(&region->last_error, 6);
             }
-            InterlockedExchange(&descriptor.applied_generation, generation);
         }
 
-        const bool editor_edits = component_handler.take_edit_pending();
-
-        bool processed_any = false;
-        for (std::uint32_t i = 0; i < kSlotCount; ++i) {
-            auto& slot = region->slots[i];
-            if (InterlockedCompareExchange(&slot.state,
-                                           static_cast<long>(SlotState::Processing),
-                                           static_cast<long>(SlotState::Ready)) != static_cast<long>(SlotState::Ready))
-                continue;
-
-            processed_any = true;
-            const bool ok = engine.process(slot);
-            publish_parameter_feedback(region, engine);
-            InterlockedExchange(&slot.result, static_cast<long>(ok ? ProcessResult::Ok : ProcessResult::VstProcessError));
-            MemoryBarrier();
-            InterlockedExchange(&slot.state, static_cast<long>(SlotState::Done));
-            SetEvent(endpoint.response_event());
-        }
-
-        if ((parameter_edits || editor_edits) && !processed_any) {
-            if (!engine.flush_parameter_changes())
-                region->last_error = 2;
-            publish_parameter_feedback(region, engine);
-        }
+        (void)component_handler.take_edit_pending();
 
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         if ((restart_flags & Steinberg::Vst::kParamValuesChanged) != 0) {
-            engine.refresh_parameter_values();
-            publish_parameter_feedback(region, engine);
+            if (dsp.pause(2000)) {
+                if (native_overrides.empty()) {
+                    reconcile_controller_feedback_after_pause(
+                        region, engine, dsp_to_control, feedback_resync_required);
+                    engine.refresh_parameter_values();
+                    publish_engine_updates_direct(region, engine);
+                } else if (reconcile_native_edits_after_pause(
+                               region, engine, dsp_to_control, native_overrides)) {
+                    feedback_resync_required.store(false, std::memory_order_release);
+                }
+                if (!dsp.resume(2000))
+                    InterlockedExchange(&region->last_error, 14);
+            } else {
+                InterlockedExchange(&region->last_error, 9);
+            }
         }
         if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
-            region->last_error = 3;
+            InterlockedExchange(&region->last_error, 3);
 
-        // State commands run after this control cycle's parameter/process work
-        // so getState() cannot snapshot one edit behind the visible controller.
-        handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
+        const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
+        const long state_applied = InterlockedCompareExchange(&region->state_applied_generation, 0, 0);
+        if (state_requested != state_applied) {
+            if (native_resync_failed || native_overrides.overflowed()) {
+                complete_state_failure(region, endpoint.state_event());
+                InterlockedExchange(&region->last_error, 12);
+            } else if (dsp.pause(2000)) {
+                bool frontier_ok = true;
+
+                if (!native_overrides.empty()) {
+                    frontier_ok = reconcile_native_edits_after_pause(
+                        region, engine, dsp_to_control, native_overrides);
+                    if (frontier_ok)
+                        feedback_resync_required.store(false, std::memory_order_release);
+                } else {
+                    reconcile_controller_feedback_after_pause(
+                        region, engine, dsp_to_control, feedback_resync_required);
+                }
+
+                if (frontier_ok)
+                    frontier_ok = catch_up_pending_host_parameters_after_pause(region, engine);
+                if (!native_overrides.empty())
+                    frontier_ok = false;
+
+                if (frontier_ok) {
+                    handle_state_command(region, endpoint.state_region(), engine, endpoint.state_event());
+                } else {
+                    complete_state_failure(region, endpoint.state_event());
+                    InterlockedExchange(&region->last_error, 12);
+                }
+
+                if (!dsp.resume(2000))
+                    InterlockedExchange(&region->last_error, 14);
+            } else {
+                complete_state_failure(region, endpoint.state_event());
+                InterlockedExchange(&region->last_error, 10);
+            }
+        }
+
+        if (native_overrides.empty())
+            drain_controller_feedback(region, engine, dsp_to_control);
+        else
+            drain_controller_feedback_preserving_native_overrides(
+                region, engine, dsp_to_control, native_overrides);
 
         if (editor.created()) {
             InterlockedExchange(&region->editor_status,
                                 static_cast<long>(editor.visible() ? EditorStatus::Open : EditorStatus::Closed));
         }
-        publish_heartbeat(region);
+        publish_control_heartbeat(region);
     }
 
     InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::ShuttingDown));
+    dsp.stop();
     editor.close();
     engine.set_component_handler(nullptr);
     engine.close();
-    if (mmcss)
-        AvRevertMmThreadCharacteristics(mmcss);
     return 0;
 }
 

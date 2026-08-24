@@ -88,8 +88,8 @@ BridgeNames WinObsBridge::make_names()
     std::wstringstream ss;
     ss << L"Local\\obs-safe-vst3-" << pid << L'-' << tick << L'-' << serial;
     const auto base = ss.str();
-    return {base + L"-map", base + L"-state-map", base + L"-req", base + L"-rsp",
-            base + L"-ready", base + L"-state-done"};
+    return {base + L"-map", base + L"-state-map", base + L"-req", base + L"-dsp",
+            base + L"-rsp", base + L"-ready", base + L"-state-done"};
 }
 
 bool WinObsBridge::start(const std::filesystem::path& helper,
@@ -154,18 +154,17 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
         stop();
         return false;
     }
-    // A fresh page-file mapping is zero initialized. Do not touch the large
-    // payload here: keeping it demand-paged avoids committing 16 MiB per filter.
     state_region_->magic = kStateTransferMagic;
     state_region_->version = kStateTransferVersion;
     state_region_->capacity = static_cast<std::uint32_t>(kMaxStateBytes);
     state_region_->reserved = 0;
 
     request_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.request_event.c_str());
+    dsp_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.dsp_event.c_str());
     response_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.response_event.c_str());
     ready_event_ = CreateEventW(nullptr, TRUE, FALSE, names_.ready_event.c_str());
     state_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.state_event.c_str());
-    if (!request_event_ || !response_event_ || !ready_event_ || !state_event_) {
+    if (!request_event_ || !dsp_event_ || !response_event_ || !ready_event_ || !state_event_) {
         error = win_error("CreateEventW");
         stop();
         return false;
@@ -181,6 +180,7 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
         L" --mapping " + quote(names_.mapping) +
         L" --state-mapping " + quote(names_.state_mapping) +
         L" --request-event " + quote(names_.request_event) +
+        L" --dsp-event " + quote(names_.dsp_event) +
         L" --response-event " + quote(names_.response_event) +
         L" --ready-event " + quote(names_.ready_event) +
         L" --state-event " + quote(names_.state_event) +
@@ -248,9 +248,12 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
 
 void WinObsBridge::stop() noexcept
 {
-    if (region_ && request_event_) {
+    if (region_) {
         InterlockedExchange(&region_->shutdown_requested, 1);
-        SetEvent(request_event_);
+        if (request_event_)
+            SetEvent(request_event_);
+        if (dsp_event_)
+            SetEvent(dsp_event_);
     }
     if (process_.hProcess) {
         const DWORD wait = WaitForSingleObject(process_.hProcess, 1500);
@@ -267,10 +270,11 @@ void WinObsBridge::stop() noexcept
     if (state_event_) CloseHandle(state_event_);
     if (ready_event_) CloseHandle(ready_event_);
     if (response_event_) CloseHandle(response_event_);
+    if (dsp_event_) CloseHandle(dsp_event_);
     if (request_event_) CloseHandle(request_event_);
     if (state_mapping_) CloseHandle(state_mapping_);
     if (mapping_) CloseHandle(mapping_);
-    state_event_ = ready_event_ = response_event_ = request_event_ = nullptr;
+    state_event_ = ready_event_ = response_event_ = dsp_event_ = request_event_ = nullptr;
     state_mapping_ = mapping_ = nullptr;
 }
 
@@ -396,7 +400,7 @@ bool WinObsBridge::process(float* const* channels,
 
     MemoryBarrier();
     InterlockedExchange(&slot->state, static_cast<long>(SlotState::Ready));
-    SetEvent(request_event_);
+    SetEvent(dsp_event_);
 
     deadline_fraction = std::clamp(deadline_fraction, 0.10, 0.95);
     const double block_seconds = static_cast<double>(frames) / static_cast<double>(region_->sample_rate);
@@ -429,7 +433,6 @@ bool WinObsBridge::process(float* const* channels,
     }
 
     ++deadline_misses_;
-    // Cancel only if helper has not started this slot. A Processing slot is never reused by OBS.
     InterlockedCompareExchange(&slot->state, static_cast<long>(SlotState::Free), static_cast<long>(SlotState::Ready));
     return false;
 }
@@ -451,10 +454,11 @@ bool WinHostEndpoint::open(const BridgeNames& names, std::string& error)
     if (!state_region_) { error = win_error("MapViewOfFile(state)"); close(); return false; }
 
     request_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.request_event.c_str());
+    dsp_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.dsp_event.c_str());
     response_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.response_event.c_str());
     ready_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.ready_event.c_str());
     state_event_ = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, names.state_event.c_str());
-    if (!request_event_ || !response_event_ || !ready_event_ || !state_event_) {
+    if (!request_event_ || !dsp_event_ || !response_event_ || !ready_event_ || !state_event_) {
         error = win_error("OpenEventW");
         close();
         return false;
@@ -483,10 +487,11 @@ void WinHostEndpoint::close() noexcept
     if (state_event_) CloseHandle(state_event_);
     if (ready_event_) CloseHandle(ready_event_);
     if (response_event_) CloseHandle(response_event_);
+    if (dsp_event_) CloseHandle(dsp_event_);
     if (request_event_) CloseHandle(request_event_);
     if (state_mapping_) CloseHandle(state_mapping_);
     if (mapping_) CloseHandle(mapping_);
-    state_event_ = ready_event_ = response_event_ = request_event_ = nullptr;
+    state_event_ = ready_event_ = response_event_ = dsp_event_ = request_event_ = nullptr;
     state_mapping_ = mapping_ = nullptr;
 }
 
