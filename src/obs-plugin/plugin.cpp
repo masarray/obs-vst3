@@ -127,6 +127,28 @@ std::jthread startup_scanner_thread;
 std::jthread manual_scanner_thread;
 std::mutex manual_scanner_thread_mutex;
 
+bool try_claim_scanner() noexcept
+{
+    bool expected = false;
+    return scanner_in_progress.compare_exchange_strong(
+        expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+class ScannerClaimGuard {
+public:
+    explicit ScannerClaimGuard(bool owns) noexcept : owns_(owns) {}
+    ScannerClaimGuard(const ScannerClaimGuard&) = delete;
+    ScannerClaimGuard& operator=(const ScannerClaimGuard&) = delete;
+    ~ScannerClaimGuard()
+    {
+        if (owns_)
+            scanner_in_progress.store(false, std::memory_order_release);
+    }
+
+private:
+    bool owns_ = false;
+};
+
 void retire_bridge(std::unique_ptr<WinObsBridge> bridge, std::shared_ptr<BridgeRtState> state)
 {
     if (!bridge || !state)
@@ -310,20 +332,8 @@ std::wstring quote(const std::wstring& value)
     return out;
 }
 
-ScannerRunResult run_scanner(std::stop_token stop = {})
+ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
 {
-    bool expected = false;
-    if (!scanner_in_progress.compare_exchange_strong(
-            expected, true, std::memory_order_acq_rel, std::memory_order_acquire))
-        return ScannerRunResult::Busy;
-
-    struct ScanRunReset {
-        ~ScanRunReset()
-        {
-            scanner_in_progress.store(false, std::memory_order_release);
-        }
-    } reset;
-
     if (stop.stop_requested())
         return ScannerRunResult::Cancelled;
 
@@ -394,10 +404,11 @@ void start_startup_scanner()
         // Start almost immediately after module registration. Discovery and
         // vendor probing remain completely outside OBS UI/audio threads.
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (stop.stop_requested())
+        if (stop.stop_requested() || !try_claim_scanner())
             return;
+        ScannerClaimGuard claim(true);
         blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery started");
-        const auto result = run_scanner(stop);
+        const auto result = run_scanner_claimed(stop);
         if (result == ScannerRunResult::Success)
             blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery completed");
         else if (result == ScannerRunResult::Failed)
@@ -490,15 +501,6 @@ void hide_editor_before_scan(Filter* filter)
         (void)filter->bridge_owner->hide_editor();
 }
 
-void refresh_source_properties_on_ui(void* param)
-{
-    auto* context = static_cast<obs_source_t*>(param);
-    if (!context)
-        return;
-    obs_source_update_properties(context);
-    obs_source_release(context);
-}
-
 bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
 {
     auto* filter = static_cast<Filter*>(data);
@@ -507,7 +509,7 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
     // Refresh immediately from the discovery seed/cache. Never wait for vendor
     // probing on the OBS UI thread.
     populate_plugin_list(obs_properties_get(props, kPluginPath));
-    if (scanner_in_progress.load(std::memory_order_acquire)) {
+    if (!try_claim_scanner()) {
         blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already active; reusing active scan");
         return true;
     }
@@ -516,24 +518,30 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
     if (filter && filter->context && !filter->shutting_down.load(std::memory_order_acquire))
         context = obs_source_get_ref(filter->context);
 
-    std::lock_guard lock(manual_scanner_thread_mutex);
-    if (manual_scanner_thread.joinable())
-        manual_scanner_thread = std::jthread{};
-    manual_scanner_thread = std::jthread([context](std::stop_token stop) {
-        const auto result = run_scanner(stop);
-        if (result == ScannerRunResult::Success)
-            blog(LOG_INFO, "[obs-safe-vst3] installed VST3 cache refreshed");
-        else if (result == ScannerRunResult::Busy)
-            blog(LOG_INFO, "[obs-safe-vst3] manual Rescan reused an already active discovery pass");
+    try {
+        std::lock_guard lock(manual_scanner_thread_mutex);
+        if (manual_scanner_thread.joinable())
+            manual_scanner_thread = std::jthread{};
+        manual_scanner_thread = std::jthread([context](std::stop_token stop) {
+            ScannerClaimGuard claim(true);
+            const auto result = run_scanner_claimed(stop);
+            if (result == ScannerRunResult::Success)
+                blog(LOG_INFO, "[obs-safe-vst3] installed VST3 cache refreshed");
+            else if (result == ScannerRunResult::Failed)
+                blog(LOG_WARNING, "[obs-safe-vst3] manual installed VST3 discovery failed; existing cache kept");
 
-        if (!context)
-            return;
-        if (stop.stop_requested()) {
+            if (context) {
+                if (!stop.stop_requested())
+                    obs_source_update_properties(context);
+                obs_source_release(context);
+            }
+        });
+    } catch (const std::exception& e) {
+        scanner_in_progress.store(false, std::memory_order_release);
+        if (context)
             obs_source_release(context);
-            return;
-        }
-        obs_queue_task(OBS_TASK_UI, refresh_source_properties_on_ui, context, false);
-    });
+        blog(LOG_ERROR, "[obs-safe-vst3] could not start background Rescan worker: %s", e.what());
+    }
     return true;
 }
 
