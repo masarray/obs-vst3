@@ -6,6 +6,7 @@
 #include "common/io_restart_transaction.hpp"
 #include "common/latency_restart_transaction.hpp"
 #include "common/process_context_policy.hpp"
+#include "common/startup_error.hpp"
 #include "common/state_snapshot.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -54,6 +55,7 @@ public:
               std::uint32_t sample_rate,
               std::uint32_t channels,
               Steinberg::Vst::IComponentHandler* component_handler,
+              StartupPhaseSink* startup_phase_sink,
               std::string& error);
     void close() noexcept;
     bool process(AudioSlot& slot) noexcept;
@@ -109,6 +111,7 @@ private:
     bool io_start_processing() noexcept override;
     void io_commit_layout(const IoLayout& layout, std::uint32_t latency_samples) noexcept override;
 
+    void report_startup_phase(StartupErrorCode phase) noexcept;
     bool configure_buses(std::uint32_t channels, std::string& error);
     bool activate_configured_buses(std::string& error);
     bool collect_io_layout_candidate(IoLayout& layout) noexcept;
@@ -133,6 +136,7 @@ private:
     Steinberg::Vst::ProcessSetup process_setup_{};
     Steinberg::Vst::ProcessContext process_context_{};
     ProcessContextPolicy process_context_policy_{};
+    StartupPhaseSink* startup_phase_sink_ = nullptr;
     Steinberg::int32 main_input_bus_ = -1;
     Steinberg::int32 main_output_bus_ = -1;
     static constexpr std::size_t kMaxDynamicAudioBuses = 16;
