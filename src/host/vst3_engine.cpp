@@ -3,6 +3,7 @@
 #include "host/vst3_engine.hpp"
 
 #include "common/parameter_utils.hpp"
+#include "common/channel_adapter.hpp"
 #include "common/state_restore_policy.hpp"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "public.sdk/source/common/memorystream.h"
@@ -253,6 +254,8 @@ bool Vst3Engine::open(const std::string& path,
 
     sample_rate_ = sample_rate;
     channels_ = channels;
+    plugin_input_channels_ = channels;
+    plugin_output_channels_ = channels;
     process_setup_.processMode = kRealtime;
     process_setup_.symbolicSampleSize = kSample32;
     process_setup_.maxSamplesPerBlock = static_cast<int32>(kMaxFrames);
@@ -385,6 +388,141 @@ bool Vst3Engine::restore_state(const PluginStateSnapshot& snapshot, std::string&
     return true;
 }
 
+bool Vst3Engine::inspect_io_topology(IoLayout& layout, bool capture_arrangements) noexcept
+{
+    layout = {};
+    if (!component_ || !processor_)
+        return false;
+
+    const int32 input_count = component_->getBusCount(kAudio, kInput);
+    const int32 output_count = component_->getBusCount(kAudio, kOutput);
+    if (input_count <= 0 || output_count <= 0)
+        return false;
+
+    if (capture_arrangements) {
+        candidate_input_arrangements_.assign(static_cast<std::size_t>(input_count), SpeakerArr::kEmpty);
+        candidate_output_arrangements_.assign(static_cast<std::size_t>(output_count), SpeakerArr::kEmpty);
+    } else if (candidate_input_arrangements_.size() != static_cast<std::size_t>(input_count) ||
+               candidate_output_arrangements_.size() != static_cast<std::size_t>(output_count)) {
+        return false;
+    }
+
+    candidate_main_input_bus_ = -1;
+    candidate_main_output_bus_ = -1;
+    unsigned main_inputs = 0;
+    unsigned main_outputs = 0;
+
+    for (int32 i = 0; i < input_count; ++i) {
+        BusInfo info{};
+        if (component_->getBusInfo(kAudio, kInput, i, info) != kResultTrue)
+            return false;
+        SpeakerArrangement arrangement = SpeakerArr::kEmpty;
+        if (processor_->getBusArrangement(kInput, i, arrangement) != kResultTrue)
+            return false;
+        if (capture_arrangements)
+            candidate_input_arrangements_[static_cast<std::size_t>(i)] = arrangement;
+        if (info.busType == BusTypes::kMain) {
+            ++main_inputs;
+            candidate_main_input_bus_ = i;
+            layout.input_channels = static_cast<std::uint32_t>(SpeakerArr::getChannelCount(arrangement));
+        } else {
+            (void)component_->activateBus(kAudio, kInput, i, false);
+        }
+    }
+
+    for (int32 i = 0; i < output_count; ++i) {
+        BusInfo info{};
+        if (component_->getBusInfo(kAudio, kOutput, i, info) != kResultTrue)
+            return false;
+        SpeakerArrangement arrangement = SpeakerArr::kEmpty;
+        if (processor_->getBusArrangement(kOutput, i, arrangement) != kResultTrue)
+            return false;
+        if (capture_arrangements)
+            candidate_output_arrangements_[static_cast<std::size_t>(i)] = arrangement;
+        if (info.busType == BusTypes::kMain) {
+            ++main_outputs;
+            candidate_main_output_bus_ = i;
+            layout.output_channels = static_cast<std::uint32_t>(SpeakerArr::getChannelCount(arrangement));
+        } else {
+            (void)component_->activateBus(kAudio, kOutput, i, false);
+        }
+    }
+
+    return main_inputs == 1 && main_outputs == 1 &&
+           candidate_main_input_bus_ >= 0 && candidate_main_output_bus_ >= 0 &&
+           layout.supported();
+}
+
+bool Vst3Engine::inspect_requested_io(IoLayout& layout) noexcept
+{
+    return inspect_io_topology(layout, true);
+}
+
+bool Vst3Engine::confirm_requested_io(const IoLayout&) noexcept
+{
+    if (!processor_ || candidate_input_arrangements_.empty() || candidate_output_arrangements_.empty())
+        return false;
+    return processor_->setBusArrangements(
+               candidate_input_arrangements_.data(), static_cast<int32>(candidate_input_arrangements_.size()),
+               candidate_output_arrangements_.data(), static_cast<int32>(candidate_output_arrangements_.size())) == kResultTrue;
+}
+
+bool Vst3Engine::inspect_confirmed_io(IoLayout& layout) noexcept
+{
+    return inspect_io_topology(layout, false);
+}
+
+bool Vst3Engine::rebuild_process_data(const IoLayout&) noexcept
+{
+    if (!component_ || candidate_main_input_bus_ < 0 || candidate_main_output_bus_ < 0)
+        return false;
+
+    process_data_.unprepare();
+    for (int32 i = 0; i < component_->getBusCount(kAudio, kInput); ++i)
+        (void)component_->activateBus(kAudio, kInput, i, i == candidate_main_input_bus_);
+    for (int32 i = 0; i < component_->getBusCount(kAudio, kOutput); ++i)
+        (void)component_->activateBus(kAudio, kOutput, i, i == candidate_main_output_bus_);
+
+    if (!process_data_.prepare(*component_, 0, kSample32))
+        return false;
+    process_data_.processContext = &process_context_;
+    return true;
+}
+
+std::uint32_t Vst3Engine::query_latency() noexcept
+{
+    return processor_ ? processor_->getLatencySamples() : 0;
+}
+
+bool Vst3Engine::commit_io(const IoLayout& layout, std::uint32_t latency_samples) noexcept
+{
+    if (!layout.supported() || candidate_main_input_bus_ < 0 || candidate_main_output_bus_ < 0)
+        return false;
+    main_input_bus_ = candidate_main_input_bus_;
+    main_output_bus_ = candidate_main_output_bus_;
+    plugin_input_channels_ = layout.input_channels;
+    plugin_output_channels_ = layout.output_channels;
+    latency_samples_ = latency_samples;
+    return true;
+}
+
+void Vst3Engine::request_recovery() noexcept
+{
+    io_recovery_requested_ = true;
+}
+
+bool Vst3Engine::refresh_io_after_restart(std::string& error)
+{
+    error.clear();
+    io_recovery_requested_ = false;
+    const auto result = run_io_restart_transaction(*this);
+    if (!result.committed) {
+        error = "VST3 dynamic I/O restart failed at step " + std::to_string(static_cast<int>(result.failed_step));
+        return false;
+    }
+    return true;
+}
+
 bool Vst3Engine::refresh_latency_after_restart(std::string& error)
 {
     error.clear();
@@ -448,6 +586,13 @@ void Vst3Engine::close() noexcept
     host_ = nullptr;
     main_input_bus_ = -1;
     main_output_bus_ = -1;
+    candidate_main_input_bus_ = -1;
+    candidate_main_output_bus_ = -1;
+    candidate_input_arrangements_.clear();
+    candidate_output_arrangements_.clear();
+    plugin_input_channels_ = 0;
+    plugin_output_channels_ = 0;
+    io_recovery_requested_ = false;
     plugin_name_.clear();
     latency_samples_ = 0;
     sample_position_ = 0;
@@ -646,13 +791,16 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
 
     Sample32* in[kMaxChannels]{};
     Sample32* out[kMaxChannels]{};
-    for (std::uint32_t ch = 0; ch < channels_; ++ch) {
-        in[ch] = slot.input[ch];
-        out[ch] = slot.output[ch];
-    }
+    const float* transport_in1 = channels_ == 2 ? slot.input[1] : nullptr;
+    float* transport_out1 = channels_ == 2 ? slot.output[1] : nullptr;
+    if (!prepare_input_channels(slot.input[0], transport_in1, channels_, plugin_input_channels_,
+                                slot.frames, input_adapter_[0].data(), input_adapter_[1].data(), in) ||
+        !prepare_output_channels(slot.output[0], transport_out1, channels_, plugin_output_channels_,
+                                 output_adapter_[0].data(), output_adapter_[1].data(), out))
+        return false;
 
-    if (!process_data_.setChannelBuffers(kInput, main_input_bus_, in, static_cast<int32>(channels_)) ||
-        !process_data_.setChannelBuffers(kOutput, main_output_bus_, out, static_cast<int32>(channels_)))
+    if (!process_data_.setChannelBuffers(kInput, main_input_bus_, in, static_cast<int32>(plugin_input_channels_)) ||
+        !process_data_.setChannelBuffers(kOutput, main_output_bus_, out, static_cast<int32>(plugin_output_channels_)))
         return false;
 
     process_data_.numSamples = static_cast<int32>(slot.frames);
@@ -667,7 +815,10 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
     const tresult result = processor_->process(process_data_);
     finish_parameter_changes();
     capture_output_parameter_changes();
-    return result == kResultOk;
+    if (result != kResultOk)
+        return false;
+    return finalize_output_channels(slot.output[0], transport_out1, channels_, plugin_output_channels_,
+                                    slot.frames, out[0], out[1]);
 }
 
 } // namespace safevst3

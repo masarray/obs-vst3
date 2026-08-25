@@ -45,6 +45,11 @@ add_library(safevst3_parameter_refresh_transaction STATIC
 )
 target_include_directories(safevst3_parameter_refresh_transaction PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_library(safevst3_io_restart_transaction STATIC
+    src/common/io_restart_transaction.cpp
+)
+target_include_directories(safevst3_io_restart_transaction PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 if(WIN32)
     include(FetchContent)
     set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -107,7 +112,7 @@ if(WIN32)
     target_link_libraries(obs-safe-vst3-host PRIVATE
         safevst3_win_ipc safevst3_vst3_hosting_runtime safevst3_lifecycle_policy
         safevst3_state_restore_policy safevst3_latency_restart_transaction
-        safevst3_parameter_refresh_transaction Avrt)
+        safevst3_parameter_refresh_transaction safevst3_io_restart_transaction Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
@@ -171,6 +176,10 @@ if(SAFEVST3_BUILD_TESTS)
     add_executable(parameter-refresh-transaction-test tests/parameter_refresh_transaction.cpp)
     target_link_libraries(parameter-refresh-transaction-test PRIVATE safevst3_parameter_refresh_transaction)
     add_test(NAME parameter-refresh-transaction COMMAND parameter-refresh-transaction-test)
+
+    add_executable(io-restart-transaction-test tests/io_restart_transaction.cpp)
+    target_link_libraries(io-restart-transaction-test PRIVATE safevst3_io_restart_transaction)
+    add_test(NAME io-restart-transaction COMMAND io-restart-transaction-test)
 
     add_test(
         NAME obs-properties-ownership
@@ -246,7 +255,7 @@ if(SAFEVST3_BUILD_TESTS)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
     add_dependencies(protocol-layout-test
         vst3-source-selection-test lifecycle-restart-policy-test state-restore-policy-test
-        latency-restart-transaction-test parameter-refresh-transaction-test
+        latency-restart-transaction-test parameter-refresh-transaction-test io-restart-transaction-test
         parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test

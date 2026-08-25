@@ -30,6 +30,7 @@ namespace {
 
 constexpr long kLatencyRestartFailedError = 17;
 constexpr long kParameterRefreshFailedError = 18;
+constexpr long kIoRestartFailedError = 19;
 
 constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
 constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
@@ -991,6 +992,53 @@ private:
     bool metadata_refresh_ = false;
 };
 
+class HelperIoRestartTarget {
+public:
+    HelperIoRestartTarget(DspWorker& dsp,
+                          safevst3::Vst3Engine& engine,
+                          safevst3::SharedAudioRegion* region,
+                          ParameterQueue& dsp_to_control,
+                          NativeOverrideBuffer& native_overrides,
+                          std::atomic<bool>& feedback_resync_required)
+        : dsp_(dsp), engine_(engine), region_(region), dsp_to_control_(dsp_to_control),
+          native_overrides_(native_overrides), feedback_resync_required_(feedback_resync_required) {}
+
+    bool run() noexcept
+    {
+        if (!dsp_.pause(2000))
+            return fail();
+        if (!reconcile_parameter_refresh_feedback_checked(
+                region_, engine_, dsp_to_control_, feedback_resync_required_, native_overrides_) ||
+            !catch_up_pending_host_parameters_after_pause(region_, engine_))
+            return fail();
+
+        std::string error;
+        if (!engine_.refresh_io_after_restart(error)) {
+            if (!error.empty()) std::cerr << error << '\n';
+            return fail();
+        }
+        InterlockedExchange(reinterpret_cast<volatile LONG*>(&region_->latency_samples),
+                            static_cast<LONG>(engine_.latency_samples()));
+        if (!dsp_.resume(2000))
+            return fail();
+        return true;
+    }
+
+private:
+    bool fail() noexcept
+    {
+        if (region_ && InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0)
+            request_consistency_recovery(region_, kIoRestartFailedError);
+        return false;
+    }
+    DspWorker& dsp_;
+    safevst3::Vst3Engine& engine_;
+    safevst3::SharedAudioRegion* region_ = nullptr;
+    ParameterQueue& dsp_to_control_;
+    NativeOverrideBuffer& native_overrides_;
+    std::atomic<bool>& feedback_resync_required_;
+};
+
 class HelperLatencyRestartTarget final : public safevst3::LatencyRestartCoordinatorTarget {
 public:
     HelperLatencyRestartTarget(DspWorker& dsp,
@@ -1334,16 +1382,22 @@ int wmain(int argc, wchar_t** argv)
             if (!coordinate_parameter_refresh(parameter_target, refresh_request).completed)
                 break;
         }
-        if (restart_plan.refresh_latency) {
+        bool io_satisfied_latency = false;
+        if (restart_plan.reconfigure_io) {
+            HelperIoRestartTarget io_target(
+                dsp, engine, region, dsp_to_control, native_overrides, feedback_resync_required);
+            if (!io_target.run())
+                break;
+            io_satisfied_latency = true;
+        }
+        if (restart_plan.refresh_latency && !io_satisfied_latency) {
             HelperLatencyRestartTarget latency_target(dsp, engine, region);
             if (!coordinate_latency_restart(latency_target).completed)
                 break;
         }
-        // S1.1 makes every requested transaction explicit. The following
-        // actions remain deliberately unsupported until their individual S1
-        // tracer bullets implement them at a quiesced lifecycle frontier.
-        if (restart_plan.reload_component || restart_plan.reconfigure_io ||
-            restart_plan.unknown_flags != 0)
+        // Reload and unknown actions remain deliberately unsupported until their
+        // individual S1 tracer bullets implement them at a quiesced frontier.
+        if (restart_plan.reload_component || restart_plan.unknown_flags != 0)
             InterlockedExchange(&region->last_error, 3);
 
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);

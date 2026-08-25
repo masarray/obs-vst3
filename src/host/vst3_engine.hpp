@@ -4,6 +4,7 @@
 
 #include "common/protocol.hpp"
 #include "common/latency_restart_transaction.hpp"
+#include "common/io_restart_transaction.hpp"
 #include "common/state_snapshot.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -39,7 +40,7 @@ struct EngineParameterUpdate {
     double normalized = 0.0;
 };
 
-class Vst3Engine final : public LatencyRestartTarget {
+class Vst3Engine final : public LatencyRestartTarget, private IoRestartTarget {
 public:
     Vst3Engine() = default;
     ~Vst3Engine();
@@ -58,6 +59,7 @@ public:
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
     bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
     bool refresh_latency_after_restart(std::string& error);
+    bool refresh_io_after_restart(std::string& error);
 
     // Transitional combined seam retained for callers outside the S2 helper.
     // S2 helper code uses the explicit controller/processor ownership methods
@@ -85,7 +87,16 @@ private:
     bool set_active(bool enabled) noexcept override;
     std::uint32_t get_latency_samples() noexcept override;
 
+    bool inspect_requested_io(IoLayout& layout) noexcept override;
+    bool confirm_requested_io(const IoLayout& requested) noexcept override;
+    bool inspect_confirmed_io(IoLayout& layout) noexcept override;
+    bool rebuild_process_data(const IoLayout& layout) noexcept override;
+    std::uint32_t query_latency() noexcept override;
+    bool commit_io(const IoLayout& layout, std::uint32_t latency_samples) noexcept override;
+    void request_recovery() noexcept override;
+
     bool configure_buses(std::uint32_t channels, std::string& error);
+    bool inspect_io_topology(IoLayout& layout, bool capture_arrangements) noexcept;
     bool enumerate_parameters(std::string& error);
     bool queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept;
     bool apply_pending_parameter_changes(Steinberg::Vst::ProcessData& data) noexcept;
@@ -107,12 +118,21 @@ private:
     Steinberg::Vst::ProcessContext process_context_{};
     Steinberg::int32 main_input_bus_ = -1;
     Steinberg::int32 main_output_bus_ = -1;
+    Steinberg::int32 candidate_main_input_bus_ = -1;
+    Steinberg::int32 candidate_main_output_bus_ = -1;
+    std::vector<Steinberg::Vst::SpeakerArrangement> candidate_input_arrangements_;
+    std::vector<Steinberg::Vst::SpeakerArrangement> candidate_output_arrangements_;
     std::vector<EngineParameter> parameters_;
     std::array<EngineParameterUpdate, kMaxParameters> parameter_updates_{};
     std::size_t parameter_update_count_ = 0;
     std::string plugin_name_;
     std::uint32_t sample_rate_ = 0;
     std::uint32_t channels_ = 0;
+    std::uint32_t plugin_input_channels_ = 0;
+    std::uint32_t plugin_output_channels_ = 0;
+    std::array<std::array<float, kMaxFrames>, kMaxChannels> input_adapter_{};
+    std::array<std::array<float, kMaxFrames>, kMaxChannels> output_adapter_{};
+    bool io_recovery_requested_ = false;
     std::uint32_t latency_samples_ = 0;
     Steinberg::int64 sample_position_ = 0;
     bool parameter_changes_pending_ = false;
