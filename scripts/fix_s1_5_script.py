@@ -1,4 +1,5 @@
 from pathlib import Path
+# Align the deterministic replacement text with the exact S1.4 main source.
 p=Path('scripts/apply_s1_5_engine.py')
 s=p.read_text(encoding='utf-8')
 old='''        // actions remain deliberately unsupported until their individual S1\n        // tracer bullets implement them at a quiesced lifecycle frontier.\n        if (restart_plan.reload_component || restart_plan.reconfigure_io ||\n'''
