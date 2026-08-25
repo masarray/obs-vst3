@@ -20,6 +20,11 @@ endif()
 add_library(safevst3_protocol INTERFACE)
 target_include_directories(safevst3_protocol INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_library(safevst3_source_selection STATIC
+    src/obs-plugin/vst3_source_selection.cpp
+)
+target_include_directories(safevst3_source_selection PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 if(WIN32)
     include(FetchContent)
     set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -95,7 +100,8 @@ if(WIN32)
                 src/obs-plugin/state_store.cpp
             )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-            target_link_libraries(obs-safe-vst3 PRIVATE OBS::libobs safevst3_win_ipc)
+            target_link_libraries(obs-safe-vst3 PRIVATE
+                OBS::libobs safevst3_win_ipc safevst3_source_selection)
             target_compile_definitions(obs-safe-vst3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
             if(MSVC)
                 # Force the OBS compatibility floor header before obs-module.h
@@ -122,6 +128,17 @@ endif()
 
 if(SAFEVST3_BUILD_TESTS)
     enable_testing()
+
+    add_executable(vst3-source-selection-test tests/vst3_source_selection.cpp)
+    target_link_libraries(vst3-source-selection-test PRIVATE safevst3_source_selection)
+    add_test(NAME vst3-source-selection COMMAND vst3-source-selection-test)
+
+    add_test(
+        NAME obs-properties-ownership
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/src/obs-plugin/plugin.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/obs_properties_ownership.cmake
+    )
 
     add_executable(parameter-control-test tests/parameter_control.cpp)
     target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
@@ -181,7 +198,9 @@ if(SAFEVST3_BUILD_TESTS)
 
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
-    add_dependencies(protocol-layout-test parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
+    add_dependencies(protocol-layout-test
+        vst3-source-selection-test
+        parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test
             obs-safe-vst3-scanner

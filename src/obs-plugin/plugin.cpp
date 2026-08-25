@@ -3,6 +3,7 @@
 #include "common/recovery_policy.hpp"
 #include "obs-plugin/parameter_controls.hpp"
 #include "obs-plugin/state_store.hpp"
+#include "obs-plugin/vst3_source_selection.hpp"
 #include "platform/windows/win_ipc.hpp"
 
 #include <obs-module.h>
@@ -32,7 +33,12 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-safe-vst3", "en-US")
 
 namespace {
 using safevst3::WinObsBridge;
+using safevst3::obssource::SourceMode;
+using safevst3::obssource::SourceSelection;
 
+constexpr const char* kSourceMode = "vst3_source_mode";
+constexpr const char* kSourceInstalled = "installed";
+constexpr const char* kSourceBrowse = "browse";
 constexpr const char* kPluginPath = "vst3_path";
 constexpr const char* kCustomPath = "custom_vst3_path";
 constexpr const char* kClassId = "class_id"; // Backward compatibility with early scenes.
@@ -127,8 +133,6 @@ std::atomic<bool> scanner_shutting_down{false};
 std::jthread startup_scanner_thread;
 std::jthread manual_scanner_thread;
 std::mutex manual_scanner_thread_mutex;
-std::mutex scan_refresh_mutex;
-std::vector<obs_weak_source_t*> scan_refresh_waiters;
 
 bool try_claim_scanner() noexcept
 {
@@ -398,60 +402,6 @@ ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
     return ScannerRunResult::Success;
 }
 
-void request_scan_completion_refresh(Filter* filter)
-{
-    if (!filter || !filter->context ||
-        filter->shutting_down.load(std::memory_order_acquire) ||
-        scanner_shutting_down.load(std::memory_order_acquire))
-        return;
-
-    obs_weak_source_t* weak = obs_source_get_weak_source(filter->context);
-    if (!weak)
-        return;
-
-    std::lock_guard lock(scan_refresh_mutex);
-    if (scanner_shutting_down.load(std::memory_order_acquire)) {
-        obs_weak_source_release(weak);
-        return;
-    }
-    scan_refresh_waiters.push_back(weak);
-}
-
-void refresh_scan_waiters()
-{
-    std::vector<obs_weak_source_t*> waiters;
-    {
-        std::lock_guard lock(scan_refresh_mutex);
-        waiters.swap(scan_refresh_waiters);
-    }
-
-    const bool unloading = scanner_shutting_down.load(std::memory_order_acquire);
-    for (obs_weak_source_t* weak : waiters) {
-        if (!unloading) {
-            if (obs_source_t* source = obs_weak_source_get_source(weak)) {
-                // No module callback is queued here. The scanner worker emits
-                // the core properties-update signal while it is still joined
-                // by stop_scanners(); the weak source avoids extending a
-                // filter lifetime across module unload.
-                obs_source_update_properties(source);
-                obs_source_release(source);
-            }
-        }
-        obs_weak_source_release(weak);
-    }
-}
-
-void cancel_scan_refresh_waiters()
-{
-    std::vector<obs_weak_source_t*> waiters;
-    {
-        std::lock_guard lock(scan_refresh_mutex);
-        waiters.swap(scan_refresh_waiters);
-    }
-    for (obs_weak_source_t* weak : waiters)
-        obs_weak_source_release(weak);
-}
-
 void start_startup_scanner()
 {
     if (startup_scanner_thread.joinable())
@@ -470,7 +420,6 @@ void start_startup_scanner()
             blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery completed");
         else if (result == ScannerRunResult::Failed)
             blog(LOG_WARNING, "[obs-safe-vst3] background installed VST3 discovery failed; existing cache kept");
-        refresh_scan_waiters();
     });
 }
 
@@ -490,7 +439,6 @@ void stop_scanners()
         std::lock_guard lock(manual_scanner_thread_mutex);
         manual_scanner_thread = std::jthread{};
     }
-    cancel_scan_refresh_waiters();
 }
 
 std::vector<ScanEntry> load_scan_cache()
@@ -542,7 +490,7 @@ void populate_plugin_list(obs_property_t* list)
         return;
     }
 
-    obs_property_list_add_string(list, obs_module_text("UseBrowseVST3"), "");
+    obs_property_list_add_string(list, obs_module_text("SelectInstalledVST3"), "");
     for (const auto& entry : entries) {
         std::string display = entry.name;
         const auto filename = filename_utf8(entry.path);
@@ -572,7 +520,6 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
     // Refresh immediately from the discovery seed/cache. Never wait for vendor
     // probing on the OBS UI thread.
     populate_plugin_list(obs_properties_get(props, kPluginPath));
-    request_scan_completion_refresh(filter);
     if (!try_claim_scanner()) {
         blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already active; reusing active scan");
         return true;
@@ -590,29 +537,38 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
             else if (result == ScannerRunResult::Failed)
                 blog(LOG_WARNING, "[obs-safe-vst3] manual installed VST3 discovery failed; existing cache kept");
 
-            if (!stop.stop_requested())
-                refresh_scan_waiters();
         });
     } catch (const std::exception& e) {
         scanner_in_progress.store(false, std::memory_order_release);
-        refresh_scan_waiters();
         blog(LOG_ERROR, "[obs-safe-vst3] could not start background Rescan worker: %s", e.what());
     }
     return true;
 }
 
-bool split_selection(const std::string& selection, std::string& path, std::string& class_id)
+SourceSelection source_selection_from_settings(obs_data_t* settings)
 {
-    path.clear();
-    class_id.clear();
-    const auto tab = selection.find('\t');
-    if (tab == std::string::npos) {
-        path = selection;
-        return false;
+    if (!settings) {
+        return safevst3::obssource::resolve_source_selection(
+            {SourceMode::Installed, "", "", ""});
     }
-    path = selection.substr(0, tab);
-    class_id = selection.substr(tab + 1);
-    return true;
+
+    std::optional<SourceMode> explicit_mode;
+    if (obs_data_has_user_value(settings, kSourceMode)) {
+        const std::string mode = obs_data_get_string(settings, kSourceMode);
+        explicit_mode = mode == kSourceBrowse ? SourceMode::Browse : SourceMode::Installed;
+    }
+
+    SourceSelection selection = safevst3::obssource::resolve_source_selection({
+        explicit_mode,
+        obs_data_get_string(settings, kPluginPath),
+        obs_data_get_string(settings, kCustomPath),
+        obs_data_get_string(settings, kClassId),
+    });
+    if (selection.inferred_from_legacy) {
+        obs_data_set_string(settings, kSourceMode,
+                            selection.mode == SourceMode::Browse ? kSourceBrowse : kSourceInstalled);
+    }
+    return selection;
 }
 
 std::pair<std::string, std::string> current_identity(Filter* filter)
@@ -623,13 +579,11 @@ std::pair<std::string, std::string> current_identity(Filter* filter)
     return {filter->path, filter->class_id};
 }
 
-bool custom_path_modified(void* data, obs_properties_t*, obs_property_t*, obs_data_t* settings)
+void arm_first_browse_gesture(Filter* filter, obs_data_t* settings)
 {
-    auto* filter = static_cast<Filter*>(data);
     if (!filter || !settings || filter->shutting_down.load(std::memory_order_acquire))
-        return false;
+        return;
 
-    const std::string selected = obs_data_get_string(settings, kPluginPath);
     const std::string custom = obs_data_get_string(settings, kCustomPath);
     bool armed = false;
     bool clear_legacy_class = false;
@@ -641,7 +595,7 @@ bool custom_path_modified(void* data, obs_properties_t*, obs_property_t*, obs_da
         const bool actual_custom_change = custom != filter->observed_custom_path;
         filter->observed_custom_path = custom;
         clear_legacy_class = actual_custom_change && !custom.empty();
-        if (actual_custom_change && filter->path.empty() && selected.empty() && !custom.empty() &&
+        if (actual_custom_change && filter->path.empty() && !custom.empty() &&
             !filter->browse_auto_open_consumed) {
             filter->browse_auto_open_consumed = true;
             filter->browse_auto_open_pending = true;
@@ -659,7 +613,6 @@ bool custom_path_modified(void* data, obs_properties_t*, obs_property_t*, obs_da
         obs_data_set_bool(settings, kBrowseAutoOpenDone, true);
         blog(LOG_INFO, "[obs-safe-vst3] first custom Browse gesture armed one native-editor open");
     }
-    return false;
 }
 
 bool capture_bridge_state(Filter* filter,
@@ -909,6 +862,7 @@ void filter_defaults(obs_data_t* settings)
 {
     obs_data_set_default_bool(settings, kEnabled, true);
     obs_data_set_default_bool(settings, kBrowseAutoOpenDone, false);
+    obs_data_set_default_string(settings, kSourceMode, kSourceInstalled);
     obs_data_set_default_string(settings, kCustomPath, "");
 }
 
@@ -918,23 +872,10 @@ void filter_update(void* data, obs_data_t* settings)
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return;
 
-    const std::string selected = obs_data_get_string(settings, kPluginPath);
-    const std::string custom = obs_data_get_string(settings, kCustomPath);
-    const std::string legacy_class = obs_data_get_string(settings, kClassId);
-
-    std::string path;
-    std::string class_id;
-    const bool selection_has_class_field = split_selection(selected, path, class_id);
-    const bool custom_browse_active = path.empty() && !custom.empty();
-    if (custom_browse_active) {
-        path = custom;
-        class_id = legacy_class;
-    } else if (!selection_has_class_field && class_id.empty()) {
-        // Early scenes stored a path without a tab-delimited class field.
-        // A modern scanner fallback deliberately stores "path\t" and must keep
-        // that class id empty so Vst3Engine selects its first audio-effect.
-        class_id = legacy_class;
-    }
+    const SourceSelection selection = source_selection_from_settings(settings);
+    const std::string& path = selection.path;
+    const std::string& class_id = selection.class_id;
+    const bool custom_browse_active = selection.mode == SourceMode::Browse && !path.empty();
 
     const auto [old_path, old_class_id] = current_identity(filter);
     const bool identity_changed = old_path != path || old_class_id != class_id;
@@ -986,8 +927,69 @@ void filter_update(void* data, obs_data_t* settings)
     if (auto_open_after_first_browse)
         (void)request_editor_open(filter, "first custom Browse gesture");
 
-    if (needs_restart && filter->context)
-        obs_source_update_properties(filter->context);
+}
+
+void update_editor_button(obs_properties_t* props, Filter* filter)
+{
+    if (!props)
+        return;
+    if (auto* open_editor = obs_properties_get(props, kOpenEditor)) {
+        const bool ready = filter && bridge_running(filter);
+        obs_property_set_visible(open_editor, ready);
+        obs_property_set_enabled(open_editor, ready);
+    }
+}
+
+void update_source_mode_visibility(obs_properties_t* props, const SourceSelection& selection)
+{
+    if (!props)
+        return;
+    if (auto* list = obs_properties_get(props, kPluginPath))
+        obs_property_set_visible(list, selection.show_installed_controls);
+    if (auto* rescan = obs_properties_get(props, kRescan))
+        obs_property_set_visible(rescan, selection.show_installed_controls);
+    if (auto* browse = obs_properties_get(props, kCustomPath))
+        obs_property_set_visible(browse, selection.show_browse_controls);
+}
+
+bool identity_property_modified(void* data,
+                                obs_properties_t* props,
+                                obs_property_t* property,
+                                obs_data_t* settings)
+{
+    auto* filter = static_cast<Filter*>(data);
+    if (!filter || !settings || filter->shutting_down.load(std::memory_order_acquire))
+        return false;
+
+    const SourceSelection selection = source_selection_from_settings(settings);
+    const std::string changed_property = property ? obs_property_name(property) : "";
+    if ((changed_property == kPluginPath && selection.mode != SourceMode::Installed) ||
+        (changed_property == kCustomPath && selection.mode != SourceMode::Browse)) {
+        return false;
+    }
+
+    if (changed_property == kCustomPath)
+        arm_first_browse_gesture(filter, settings);
+
+    filter_update(filter, settings);
+    update_editor_button(props, filter);
+    return true;
+}
+
+bool source_mode_modified(void* data,
+                          obs_properties_t* props,
+                          obs_property_t*,
+                          obs_data_t* settings)
+{
+    auto* filter = static_cast<Filter*>(data);
+    if (!filter || !settings || filter->shutting_down.load(std::memory_order_acquire))
+        return false;
+
+    const SourceSelection selection = source_selection_from_settings(settings);
+    update_source_mode_visibility(props, selection);
+    filter_update(filter, settings);
+    update_editor_button(props, filter);
+    return true;
 }
 
 void filter_save(void* data, obs_data_t* settings)
@@ -1072,8 +1074,6 @@ void* filter_create(obs_data_t* settings, obs_source_t* context)
                 previous_deadline_misses = 0;
                 stable_dirty_ticks = 0;
                 deadline_pressure_ticks = 0;
-                if (filter->context)
-                    obs_source_update_properties(filter->context);
                 continue;
             }
 
@@ -1143,13 +1143,41 @@ obs_properties_t* filter_properties(void* data)
     auto* filter = static_cast<Filter*>(data);
     obs_properties_t* props = obs_properties_create();
 
+    auto* source_mode = obs_properties_add_list(
+        props, kSourceMode, obs_module_text("VST3Source"),
+        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(
+        source_mode, obs_module_text("VST3SourceInstalled"), kSourceInstalled);
+    obs_property_list_add_string(
+        source_mode, obs_module_text("VST3SourceBrowse"), kSourceBrowse);
+    if (filter)
+        obs_property_set_modified_callback2(source_mode, source_mode_modified, filter);
+
     auto* list = obs_properties_add_list(props, kPluginPath, obs_module_text("InstalledVST3"),
                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     populate_plugin_list(list);
+    if (filter)
+        obs_property_set_modified_callback2(list, identity_property_modified, filter);
     obs_properties_add_button2(props, kRescan, obs_module_text("RescanVST3"), rescan_button, filter);
     auto* custom_path = obs_properties_add_path(
-        props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
-    obs_property_set_modified_callback2(custom_path, custom_path_modified, filter);
+        props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_FILE,
+        obs_module_text("VST3FileFilter"), nullptr);
+    if (filter)
+        obs_property_set_modified_callback2(custom_path, identity_property_modified, filter);
+
+    obs_properties_add_button2(
+        props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
+
+    SourceSelection selection = safevst3::obssource::resolve_source_selection(
+        {SourceMode::Installed, "", "", ""});
+    if (filter && filter->context) {
+        if (obs_data_t* settings = obs_source_get_settings(filter->context)) {
+            selection = source_selection_from_settings(settings);
+            obs_data_release(settings);
+        }
+    }
+    update_source_mode_visibility(props, selection);
+    update_editor_button(props, filter);
 
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return props;
@@ -1158,9 +1186,6 @@ obs_properties_t* filter_properties(void* data)
     if (path.empty())
         return props;
 
-    std::vector<safevst3::ParameterSnapshot> parameters;
-    std::uint32_t total_parameter_count = 0;
-    safevst3::EditorStatus editor_status = safevst3::EditorStatus::Unknown;
     bool running = false;
     std::string plugin_name;
     std::uint32_t latency_samples = 0;
@@ -1171,9 +1196,6 @@ obs_properties_t* filter_properties(void* data)
         if (running) {
             plugin_name = filter->bridge_owner->plugin_name();
             latency_samples = filter->bridge_owner->latency_samples();
-            parameters = filter->bridge_owner->parameters();
-            total_parameter_count = filter->bridge_owner->parameter_total_count();
-            editor_status = filter->bridge_owner->editor_status();
         }
     }
 
@@ -1186,28 +1208,6 @@ obs_properties_t* filter_properties(void* data)
         status = "Plug-in unavailable — dry audio remains active";
     }
     obs_properties_add_text(props, kPluginStatus, status.c_str(), OBS_TEXT_INFO);
-
-    auto* open_editor = obs_properties_add_button2(
-        props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
-    const bool can_try_native_editor = running &&
-        editor_status != safevst3::EditorStatus::Unsupported &&
-        editor_status != safevst3::EditorStatus::Error;
-    const bool native_editor_confirmed = running &&
-        (editor_status == safevst3::EditorStatus::Open ||
-         editor_status == safevst3::EditorStatus::Closed);
-
-    if (!can_try_native_editor)
-        obs_property_set_enabled(open_editor, false);
-
-    if (native_editor_confirmed || parameters.empty())
-        return props;
-
-    obs_data_t* settings = filter->context ? obs_source_get_settings(filter->context) : nullptr;
-    safevst3::obsparam::add_generic_parameter_properties(
-        props, parameters, total_parameter_count, settings,
-        safevst3::obsparam::parameter_scope(path, class_id));
-    if (settings)
-        obs_data_release(settings);
     return props;
 }
 
