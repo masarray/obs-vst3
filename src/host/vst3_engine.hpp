@@ -81,6 +81,7 @@ public:
     Steinberg::Vst::IEditController* edit_controller() const noexcept { return controller_.get(); }
 
     const std::string& plugin_name() const noexcept { return plugin_name_; }
+    const std::string& loaded_class_id() const noexcept { return loaded_class_id_; }
     std::uint32_t latency_samples() const noexcept { return latency_samples_; }
     const std::vector<EngineParameter>& parameters() const noexcept { return parameters_; }
 
@@ -140,6 +141,7 @@ private:
     std::array<EngineParameterUpdate, kMaxParameters> parameter_updates_{};
     std::size_t parameter_update_count_ = 0;
     std::string plugin_name_;
+    std::string loaded_class_id_;
     std::uint32_t sample_rate_ = 0;
     std::uint32_t channels_ = 0;
     std::uint32_t latency_samples_ = 0;
