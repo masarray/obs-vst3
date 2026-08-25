@@ -2,6 +2,7 @@
 
 #include "host/vst3_engine.hpp"
 
+#include "common/audio_channel_adapter.hpp"
 #include "common/parameter_utils.hpp"
 #include "common/state_restore_policy.hpp"
 #include "pluginterfaces/vst/vstspeaker.h"
@@ -61,6 +62,44 @@ PluginCallResult classify_plugin_call_result(tresult result) noexcept
     return PluginCallResult::UnexpectedFailure;
 }
 
+std::uint32_t supported_arrangement_channels(SpeakerArrangement arrangement) noexcept
+{
+    if (arrangement == SpeakerArr::kMono)
+        return 1;
+    if (arrangement == SpeakerArr::kStereo)
+        return 2;
+    return 0;
+}
+
+SpeakerArrangement fallback_arrangement_for_channels(int32 channels) noexcept
+{
+    if (channels == 0)
+        return SpeakerArr::kEmpty;
+    if (channels == 1)
+        return SpeakerArr::kMono;
+    if (channels == 2)
+        return SpeakerArr::kStereo;
+    return SpeakerArr::kEmpty;
+}
+
+const char* io_restart_step_name(IoRestartLifecycleStep step) noexcept
+{
+    switch (step) {
+    case IoRestartLifecycleStep::StopProcessing: return "setProcessing(false)";
+    case IoRestartLifecycleStep::Deactivate: return "setActive(false)";
+    case IoRestartLifecycleStep::InspectRequested: return "inspect requested bus arrangements";
+    case IoRestartLifecycleStep::ConfirmRequested: return "setBusArrangements";
+    case IoRestartLifecycleStep::InspectConfirmed: return "inspect confirmed bus arrangements";
+    case IoRestartLifecycleStep::RebuildProcessing: return "rebuild ProcessData";
+    case IoRestartLifecycleStep::Activate: return "setActive(true)";
+    case IoRestartLifecycleStep::QueryLatency: return "getLatencySamples()";
+    case IoRestartLifecycleStep::StartProcessing: return "setProcessing(true)";
+    case IoRestartLifecycleStep::Commit: return "commit I/O layout";
+    case IoRestartLifecycleStep::None:
+    default: return "unknown step";
+    }
+}
+
 const char* latency_restart_step_name(LatencyRestartStep step) noexcept
 {
     switch (step) {
@@ -86,6 +125,11 @@ Vst3Engine::~Vst3Engine() { close(); }
 
 bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
 {
+    main_input_bus_ = -1;
+    main_output_bus_ = -1;
+    plugin_input_channels_ = 0;
+    plugin_output_channels_ = 0;
+
     const int32 input_count = component_->getBusCount(kAudio, kInput);
     const int32 output_count = component_->getBusCount(kAudio, kOutput);
     if (input_count <= 0 || output_count <= 0) {
@@ -98,20 +142,38 @@ bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
 
     for (int32 i = 0; i < input_count; ++i) {
         BusInfo info{};
-        component_->getBusInfo(kAudio, kInput, i, info);
-        component_->activateBus(kAudio, kInput, i, false);
-        if (processor_->getBusArrangement(kInput, i, input_arrangements[static_cast<std::size_t>(i)]) != kResultTrue)
-            input_arrangements[static_cast<std::size_t>(i)] = info.channelCount == 1 ? SpeakerArr::kMono : SpeakerArr::kStereo;
+        if (component_->getBusInfo(kAudio, kInput, i, info) != kResultTrue) {
+            error = "VST3 input bus metadata unavailable";
+            return false;
+        }
+        (void)component_->activateBus(kAudio, kInput, i, false);
+        if (processor_->getBusArrangement(kInput, i, input_arrangements[static_cast<std::size_t>(i)]) != kResultTrue) {
+            const auto fallback = fallback_arrangement_for_channels(info.channelCount);
+            if (info.channelCount > 2) {
+                error = "VST3 input bus arrangement unavailable for multichannel bus";
+                return false;
+            }
+            input_arrangements[static_cast<std::size_t>(i)] = fallback;
+        }
         if (main_input_bus_ < 0 && info.busType == BusTypes::kMain)
             main_input_bus_ = i;
     }
 
     for (int32 i = 0; i < output_count; ++i) {
         BusInfo info{};
-        component_->getBusInfo(kAudio, kOutput, i, info);
-        component_->activateBus(kAudio, kOutput, i, false);
-        if (processor_->getBusArrangement(kOutput, i, output_arrangements[static_cast<std::size_t>(i)]) != kResultTrue)
-            output_arrangements[static_cast<std::size_t>(i)] = info.channelCount == 1 ? SpeakerArr::kMono : SpeakerArr::kStereo;
+        if (component_->getBusInfo(kAudio, kOutput, i, info) != kResultTrue) {
+            error = "VST3 output bus metadata unavailable";
+            return false;
+        }
+        (void)component_->activateBus(kAudio, kOutput, i, false);
+        if (processor_->getBusArrangement(kOutput, i, output_arrangements[static_cast<std::size_t>(i)]) != kResultTrue) {
+            const auto fallback = fallback_arrangement_for_channels(info.channelCount);
+            if (info.channelCount > 2) {
+                error = "VST3 output bus arrangement unavailable for multichannel bus";
+                return false;
+            }
+            output_arrangements[static_cast<std::size_t>(i)] = fallback;
+        }
         if (main_output_bus_ < 0 && info.busType == BusTypes::kMain)
             main_output_bus_ = i;
     }
@@ -125,20 +187,32 @@ bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
     input_arrangements[static_cast<std::size_t>(main_input_bus_)] = requested;
     output_arrangements[static_cast<std::size_t>(main_output_bus_)] = requested;
 
-    const tresult set_result = processor_->setBusArrangements(input_arrangements.data(), input_count,
-                                                               output_arrangements.data(), output_count);
-    if (set_result != kResultTrue) {
-        SpeakerArrangement actual_in{}, actual_out{};
-        if (processor_->getBusArrangement(kInput, main_input_bus_, actual_in) != kResultTrue ||
-            processor_->getBusArrangement(kOutput, main_output_bus_, actual_out) != kResultTrue ||
-            actual_in != requested || actual_out != requested) {
-            error = channels == 1 ? "VST3 does not accept mono I/O" : "VST3 does not accept stereo I/O";
-            return false;
-        }
+    const tresult set_result = processor_->setBusArrangements(
+        input_arrangements.data(), input_count, output_arrangements.data(), output_count);
+    if (set_result != kResultTrue && set_result != kResultFalse) {
+        error = "VST3 setBusArrangements failed during initial negotiation";
+        return false;
     }
 
-    component_->activateBus(kAudio, kInput, main_input_bus_, true);
-    component_->activateBus(kAudio, kOutput, main_output_bus_, true);
+    SpeakerArrangement actual_in = requested;
+    SpeakerArrangement actual_out = requested;
+    const bool queried =
+        processor_->getBusArrangement(kInput, main_input_bus_, actual_in) == kResultTrue &&
+        processor_->getBusArrangement(kOutput, main_output_bus_, actual_out) == kResultTrue;
+    if (set_result == kResultFalse && !queried) {
+        error = "VST3 rejected requested I/O and did not expose a fallback arrangement";
+        return false;
+    }
+
+    plugin_input_channels_ = supported_arrangement_channels(actual_in);
+    plugin_output_channels_ = supported_arrangement_channels(actual_out);
+    if (plugin_input_channels_ == 0 || plugin_output_channels_ == 0) {
+        error = "VST3 main I/O is outside the supported mono/stereo scope";
+        return false;
+    }
+
+    (void)component_->activateBus(kAudio, kInput, main_input_bus_, true);
+    (void)component_->activateBus(kAudio, kOutput, main_output_bus_, true);
     return true;
 }
 
@@ -404,6 +478,189 @@ bool Vst3Engine::refresh_latency_after_restart(std::string& error)
     return true;
 }
 
+bool Vst3Engine::reconfigure_io_after_restart(IoLayout& layout,
+                                                  std::uint32_t& latency_samples,
+                                                  std::string& error)
+{
+    error.clear();
+    layout = {};
+    latency_samples = 0;
+    if (!component_ || !processor_) {
+        error = "VST3 component unavailable while reconfiguring I/O";
+        return false;
+    }
+
+    const auto result = run_io_restart_lifecycle(*this);
+    if (!result.committed) {
+        error = std::string("VST3 I/O restart failed at ") + io_restart_step_name(result.failed_step);
+        return false;
+    }
+
+    layout = result.layout;
+    latency_samples = result.latency_samples;
+    return true;
+}
+
+bool Vst3Engine::collect_io_layout_candidate(IoLayout& layout) noexcept
+{
+    layout = {};
+    if (!component_ || !processor_)
+        return false;
+
+    const int32 input_count = component_->getBusCount(kAudio, kInput);
+    const int32 output_count = component_->getBusCount(kAudio, kOutput);
+    if (input_count <= 0 || output_count <= 0 ||
+        input_count > static_cast<int32>(kMaxDynamicAudioBuses) ||
+        output_count > static_cast<int32>(kMaxDynamicAudioBuses))
+        return false;
+
+    io_candidate_inputs_.fill(SpeakerArr::kEmpty);
+    io_candidate_outputs_.fill(SpeakerArr::kEmpty);
+    io_candidate_input_count_ = input_count;
+    io_candidate_output_count_ = output_count;
+    io_candidate_main_input_bus_ = -1;
+    io_candidate_main_output_bus_ = -1;
+    std::uint32_t main_input_count = 0;
+    std::uint32_t main_output_count = 0;
+
+    for (int32 i = 0; i < input_count; ++i) {
+        BusInfo info{};
+        if (component_->getBusInfo(kAudio, kInput, i, info) != kResultTrue)
+            return false;
+        auto& arrangement = io_candidate_inputs_[static_cast<std::size_t>(i)];
+        if (processor_->getBusArrangement(kInput, i, arrangement) != kResultTrue) {
+            if (info.channelCount > 2)
+                return false;
+            arrangement = fallback_arrangement_for_channels(info.channelCount);
+        }
+        if (info.busType == BusTypes::kMain) {
+            ++main_input_count;
+            if (main_input_count == 1u)
+                io_candidate_main_input_bus_ = i;
+        }
+    }
+
+    for (int32 i = 0; i < output_count; ++i) {
+        BusInfo info{};
+        if (component_->getBusInfo(kAudio, kOutput, i, info) != kResultTrue)
+            return false;
+        auto& arrangement = io_candidate_outputs_[static_cast<std::size_t>(i)];
+        if (processor_->getBusArrangement(kOutput, i, arrangement) != kResultTrue) {
+            if (info.channelCount > 2)
+                return false;
+            arrangement = fallback_arrangement_for_channels(info.channelCount);
+        }
+        if (info.busType == BusTypes::kMain) {
+            ++main_output_count;
+            if (main_output_count == 1u)
+                io_candidate_main_output_bus_ = i;
+        }
+    }
+
+    if (!has_unambiguous_main_io(main_input_count, main_output_count) ||
+        io_candidate_main_input_bus_ < 0 || io_candidate_main_output_bus_ < 0)
+        return false;
+
+    layout.main_input_bus = io_candidate_main_input_bus_;
+    layout.main_output_bus = io_candidate_main_output_bus_;
+    layout.input_channels = supported_arrangement_channels(
+        io_candidate_inputs_[static_cast<std::size_t>(io_candidate_main_input_bus_)]);
+    layout.output_channels = supported_arrangement_channels(
+        io_candidate_outputs_[static_cast<std::size_t>(io_candidate_main_output_bus_)]);
+    return is_supported_io_layout(layout);
+}
+
+bool Vst3Engine::io_stop_processing() noexcept
+{
+    return processor_ && processor_->setProcessing(false) == kResultTrue;
+}
+
+bool Vst3Engine::io_deactivate() noexcept
+{
+    return component_ && component_->setActive(false) == kResultTrue;
+}
+
+bool Vst3Engine::io_inspect_requested_layout(IoLayout& layout) noexcept
+{
+    return collect_io_layout_candidate(layout);
+}
+
+IoArrangementResult Vst3Engine::io_confirm_requested_layout(const IoLayout&) noexcept
+{
+    if (!processor_ || io_candidate_input_count_ <= 0 || io_candidate_output_count_ <= 0)
+        return IoArrangementResult::FatalFailure;
+
+    const tresult result = processor_->setBusArrangements(
+        io_candidate_inputs_.data(), io_candidate_input_count_,
+        io_candidate_outputs_.data(), io_candidate_output_count_);
+    if (result == kResultTrue)
+        return IoArrangementResult::Accepted;
+    if (result == kResultFalse)
+        return IoArrangementResult::AdvisoryRejected;
+    return IoArrangementResult::FatalFailure;
+}
+
+bool Vst3Engine::io_inspect_confirmed_layout(IoLayout& layout) noexcept
+{
+    return collect_io_layout_candidate(layout);
+}
+
+bool Vst3Engine::io_rebuild_processing(const IoLayout& layout) noexcept
+{
+    if (!component_ || !is_supported_io_layout(layout))
+        return false;
+
+    const int32 input_count = component_->getBusCount(kAudio, kInput);
+    const int32 output_count = component_->getBusCount(kAudio, kOutput);
+    if (input_count <= layout.main_input_bus || output_count <= layout.main_output_bus)
+        return false;
+
+    for (int32 i = 0; i < input_count; ++i)
+        (void)component_->activateBus(kAudio, kInput, i, false);
+    for (int32 i = 0; i < output_count; ++i)
+        (void)component_->activateBus(kAudio, kOutput, i, false);
+    (void)component_->activateBus(kAudio, kInput, layout.main_input_bus, true);
+    (void)component_->activateBus(kAudio, kOutput, layout.main_output_bus, true);
+
+    process_data_.unprepare();
+    try {
+        if (!process_data_.prepare(*component_, 0, kSample32))
+            return false;
+    } catch (...) {
+        return false;
+    }
+    process_data_.processContext = &process_context_;
+    return true;
+}
+
+bool Vst3Engine::io_activate() noexcept
+{
+    return component_ && component_->setActive(true) == kResultTrue;
+}
+
+bool Vst3Engine::io_query_latency(std::uint32_t& latency_samples) noexcept
+{
+    if (!processor_)
+        return false;
+    latency_samples = processor_->getLatencySamples();
+    return true;
+}
+
+bool Vst3Engine::io_start_processing() noexcept
+{
+    return processor_ && processor_->setProcessing(true) == kResultTrue;
+}
+
+void Vst3Engine::io_commit_layout(const IoLayout& layout,
+                                  std::uint32_t latency_samples) noexcept
+{
+    main_input_bus_ = layout.main_input_bus;
+    main_output_bus_ = layout.main_output_bus;
+    plugin_input_channels_ = layout.input_channels;
+    plugin_output_channels_ = layout.output_channels;
+    latency_samples_ = latency_samples;
+}
+
 bool Vst3Engine::set_processing(bool enabled) noexcept
 {
     return processor_ && processor_->setProcessing(enabled) == kResultTrue;
@@ -448,6 +705,14 @@ void Vst3Engine::close() noexcept
     host_ = nullptr;
     main_input_bus_ = -1;
     main_output_bus_ = -1;
+    plugin_input_channels_ = 0;
+    plugin_output_channels_ = 0;
+    io_candidate_inputs_.fill(SpeakerArr::kEmpty);
+    io_candidate_outputs_.fill(SpeakerArr::kEmpty);
+    io_candidate_input_count_ = 0;
+    io_candidate_output_count_ = 0;
+    io_candidate_main_input_bus_ = -1;
+    io_candidate_main_output_bus_ = -1;
     plugin_name_.clear();
     latency_samples_ = 0;
     sample_position_ = 0;
@@ -641,18 +906,44 @@ bool Vst3Engine::flush_parameter_changes() noexcept
 
 bool Vst3Engine::process(AudioSlot& slot) noexcept
 {
-    if (!processor_ || slot.frames == 0 || slot.frames > kMaxFrames || slot.channels != channels_)
+    if (!processor_ || slot.frames == 0 || slot.frames > kMaxFrames ||
+        slot.channels != channels_ ||
+        (plugin_input_channels_ != 1 && plugin_input_channels_ != 2) ||
+        (plugin_output_channels_ != 1 && plugin_output_channels_ != 2))
         return false;
 
     Sample32* in[kMaxChannels]{};
     Sample32* out[kMaxChannels]{};
-    for (std::uint32_t ch = 0; ch < channels_; ++ch) {
-        in[ch] = slot.input[ch];
-        out[ch] = slot.output[ch];
+
+    if (plugin_input_channels_ == channels_) {
+        for (std::uint32_t ch = 0; ch < channels_; ++ch)
+            in[ch] = slot.input[ch];
+    } else if (channels_ == 2 && plugin_input_channels_ == 1) {
+        average_stereo_to_mono(
+            slot.input[0], slot.input[1], input_adapter_[0].data(), slot.frames);
+        in[0] = input_adapter_[0].data();
+    } else if (channels_ == 1 && plugin_input_channels_ == 2) {
+        duplicate_mono_to_stereo(
+            slot.input[0], input_adapter_[0].data(), input_adapter_[1].data(), slot.frames);
+        in[0] = input_adapter_[0].data();
+        in[1] = input_adapter_[1].data();
+    } else {
+        return false;
     }
 
-    if (!process_data_.setChannelBuffers(kInput, main_input_bus_, in, static_cast<int32>(channels_)) ||
-        !process_data_.setChannelBuffers(kOutput, main_output_bus_, out, static_cast<int32>(channels_)))
+    const bool output_direct = plugin_output_channels_ == channels_;
+    if (output_direct) {
+        for (std::uint32_t ch = 0; ch < channels_; ++ch)
+            out[ch] = slot.output[ch];
+    } else {
+        for (std::uint32_t ch = 0; ch < plugin_output_channels_; ++ch)
+            out[ch] = output_adapter_[ch].data();
+    }
+
+    if (!process_data_.setChannelBuffers(
+            kInput, main_input_bus_, in, static_cast<int32>(plugin_input_channels_)) ||
+        !process_data_.setChannelBuffers(
+            kOutput, main_output_bus_, out, static_cast<int32>(plugin_output_channels_)))
         return false;
 
     process_data_.numSamples = static_cast<int32>(slot.frames);
@@ -667,7 +958,23 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
     const tresult result = processor_->process(process_data_);
     finish_parameter_changes();
     capture_output_parameter_changes();
-    return result == kResultOk;
+    if (result != kResultOk)
+        return false;
+
+    if (!output_direct) {
+        if (channels_ == 2 && plugin_output_channels_ == 1) {
+            duplicate_mono_to_stereo(
+                output_adapter_[0].data(), slot.output[0], slot.output[1], slot.frames);
+        } else if (channels_ == 1 && plugin_output_channels_ == 2) {
+            average_stereo_to_mono(
+                output_adapter_[0].data(), output_adapter_[1].data(),
+                slot.output[0], slot.frames);
+        } else {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 } // namespace safevst3

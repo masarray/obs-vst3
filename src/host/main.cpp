@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include "common/io_restart_transaction.hpp"
 #include "common/lifecycle_restart_policy.hpp"
 #include "common/parameter_catalog_snapshot.hpp"
 #include "common/parameter_refresh_transaction.hpp"
@@ -30,6 +31,7 @@ namespace {
 
 constexpr long kLatencyRestartFailedError = 17;
 constexpr long kParameterRefreshFailedError = 18;
+constexpr long kIoRestartFailedError = 19;
 
 constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
 constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
@@ -991,6 +993,69 @@ private:
     bool metadata_refresh_ = false;
 };
 
+class HelperIoRestartTarget final : public safevst3::IoRestartCoordinatorTarget {
+public:
+    HelperIoRestartTarget(DspWorker& dsp,
+                          safevst3::Vst3Engine& engine,
+                          safevst3::SharedAudioRegion* region,
+                          ParameterQueue& dsp_to_control,
+                          NativeOverrideBuffer& native_overrides,
+                          std::atomic<bool>& feedback_resync_required)
+        : dsp_(dsp), engine_(engine), region_(region), dsp_to_control_(dsp_to_control),
+          native_overrides_(native_overrides), feedback_resync_required_(feedback_resync_required)
+    {
+    }
+
+    bool pause_dsp() noexcept override { return dsp_.pause(2000); }
+
+    bool reconcile_pending() noexcept override
+    {
+        if (!reconcile_parameter_refresh_feedback_checked(
+                region_, engine_, dsp_to_control_, feedback_resync_required_, native_overrides_))
+            return false;
+        if (!catch_up_pending_host_parameters_after_pause(region_, engine_))
+            return false;
+        return native_overrides_.empty();
+    }
+
+    bool reconfigure_io(safevst3::IoLayout& layout,
+                        std::uint32_t& latency_samples) noexcept override
+    {
+        std::string error;
+        if (engine_.reconfigure_io_after_restart(layout, latency_samples, error))
+            return true;
+        if (!error.empty())
+            std::cerr << error << '\n';
+        return false;
+    }
+
+    bool publish_io(const safevst3::IoLayout&, std::uint32_t latency_samples) noexcept override
+    {
+        if (!region_)
+            return false;
+        InterlockedExchange(
+            reinterpret_cast<volatile LONG*>(&region_->latency_samples),
+            static_cast<LONG>(latency_samples));
+        return true;
+    }
+
+    bool resume_dsp() noexcept override { return dsp_.resume(2000); }
+
+    void request_recovery() noexcept override
+    {
+        if (region_ && InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0)
+            request_consistency_recovery(region_, kIoRestartFailedError);
+    }
+
+private:
+    DspWorker& dsp_;
+    safevst3::Vst3Engine& engine_;
+    safevst3::SharedAudioRegion* region_ = nullptr;
+    ParameterQueue& dsp_to_control_;
+    NativeOverrideBuffer& native_overrides_;
+    std::atomic<bool>& feedback_resync_required_;
+};
+
 class HelperLatencyRestartTarget final : public safevst3::LatencyRestartCoordinatorTarget {
 public:
     HelperLatencyRestartTarget(DspWorker& dsp,
@@ -1324,6 +1389,13 @@ int wmain(int argc, wchar_t** argv)
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         const auto restart_plan = safevst3::plan_restart_component(
             static_cast<std::uint32_t>(restart_flags));
+        if (restart_plan.reconfigure_io) {
+            HelperIoRestartTarget io_target(
+                dsp, engine, region, dsp_to_control, native_overrides,
+                feedback_resync_required);
+            if (!coordinate_io_restart(io_target).completed)
+                break;
+        }
         if (restart_plan.refresh_parameter_values || restart_plan.refresh_parameter_metadata) {
             HelperParameterRefreshTarget parameter_target(
                 dsp, engine, region, dsp_to_control, native_overrides,
@@ -1334,16 +1406,14 @@ int wmain(int argc, wchar_t** argv)
             if (!coordinate_parameter_refresh(parameter_target, refresh_request).completed)
                 break;
         }
-        if (restart_plan.refresh_latency) {
+        if (requires_standalone_latency_restart(restart_plan)) {
             HelperLatencyRestartTarget latency_target(dsp, engine, region);
             if (!coordinate_latency_restart(latency_target).completed)
                 break;
         }
-        // S1.1 makes every requested transaction explicit. The following
-        // actions remain deliberately unsupported until their individual S1
-        // tracer bullets implement them at a quiesced lifecycle frontier.
-        if (restart_plan.reload_component || restart_plan.reconfigure_io ||
-            restart_plan.unknown_flags != 0)
+        // S1.1 makes every requested transaction explicit. Reload and unknown
+        // flags remain unsupported until their dedicated S1 tracer bullet.
+        if (restart_plan.reload_component || restart_plan.unknown_flags != 0)
             InterlockedExchange(&region->last_error, 3);
 
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);

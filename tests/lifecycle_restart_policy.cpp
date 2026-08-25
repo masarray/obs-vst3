@@ -25,6 +25,8 @@ int main()
 
     const auto latency = plan_restart_component(kRestartLatencyChanged);
     require(latency.refresh_latency, "kLatencyChanged must refresh latency");
+    require(requires_standalone_latency_restart(latency),
+            "latency-only request requires its own restart transaction");
     require(!latency.reload_component && !latency.reconfigure_io &&
                 !latency.refresh_parameter_values && !latency.refresh_parameter_metadata,
             "kLatencyChanged must not imply unrelated work");
@@ -56,6 +58,8 @@ int main()
             "combined flags must retain every requested action");
     require(combined.unknown_flags == unknown,
             "combined flags must preserve the exact unknown-bit mask");
+    require(!requires_standalone_latency_restart(combined),
+            "kIoChanged transaction must satisfy a combined latency refresh");
 
     const auto mixed = plan_restart_component(kRestartIoChanged | unknown);
     require(mixed.reconfigure_io, "known work must survive alongside unknown bits");
