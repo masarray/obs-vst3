@@ -1,0 +1,35 @@
+name: Apply Source Mode UX Patch
+
+on:
+  push:
+    branches:
+      - tmp/source-mode-ux-actual
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/source-mode-ux-actual
+          fetch-depth: 0
+      - name: Apply deterministic source-mode patch
+        run: python .github/source_mode_ux_patch.py
+      - name: Validate patch contract before commit
+        run: |
+          grep -q 'kSourceMode' src/obs-plugin/plugin.cpp
+          grep -q 'source_mode_modified' src/obs-plugin/plugin.cpp
+          grep -q 'update_source_mode_visibility' src/obs-plugin/plugin.cpp
+          ! grep -q 'add_generic_parameter_properties(' src/obs-plugin/plugin.cpp
+          ! grep -q 'obs_source_update_properties(' src/obs-plugin/plugin.cpp
+      - name: Commit patched source and remove temporary patch scaffolding
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/source_mode_ux_patch.py .github/workflows/apply-source-mode-ux.yml
+          git add src/obs-plugin/plugin.cpp data/locale/en-US.ini tests/obs_properties_ownership.cmake
+          git commit -m 'ui: make installed and manual VST3 sources mutually exclusive'
+          git push origin HEAD:tmp/source-mode-ux-actual
