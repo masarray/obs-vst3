@@ -26,6 +26,8 @@
 
 namespace {
 
+constexpr long kLatencyRestartFailedError = 17;
+
 constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
 constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
 constexpr std::size_t kMaxPausedHostCatchupPasses = 4;
@@ -764,6 +766,48 @@ private:
     std::jthread thread_;
 };
 
+class HelperLatencyRestartTarget final : public safevst3::LatencyRestartCoordinatorTarget {
+public:
+    HelperLatencyRestartTarget(DspWorker& dsp,
+                               safevst3::Vst3Engine& engine,
+                               safevst3::SharedAudioRegion* region)
+        : dsp_(dsp), engine_(engine), region_(region)
+    {
+    }
+
+    bool pause_dsp() noexcept override { return dsp_.pause(2000); }
+
+    bool refresh_latency(std::uint32_t& latency_samples) noexcept override
+    {
+        std::string error;
+        if (!engine_.refresh_latency_after_restart(error)) {
+            std::cerr << error << '\n';
+            return false;
+        }
+        latency_samples = engine_.latency_samples();
+        return true;
+    }
+
+    void publish_latency(std::uint32_t latency_samples) noexcept override
+    {
+        InterlockedExchange(
+            reinterpret_cast<volatile LONG*>(&region_->latency_samples),
+            static_cast<LONG>(latency_samples));
+    }
+
+    bool resume_dsp() noexcept override { return dsp_.resume(2000); }
+
+    void request_recovery() noexcept override
+    {
+        request_consistency_recovery(region_, kLatencyRestartFailedError);
+    }
+
+private:
+    DspWorker& dsp_;
+    safevst3::Vst3Engine& engine_;
+    safevst3::SharedAudioRegion* region_ = nullptr;
+};
+
 void handle_editor_command(safevst3::SharedAudioRegion* region,
                            safevst3::Vst3Engine& engine,
                            safevst3::NativeEditorWindow& editor)
@@ -1082,11 +1126,16 @@ int wmain(int argc, wchar_t** argv)
                 InterlockedExchange(&region->last_error, 9);
             }
         }
+        if (restart_plan.refresh_latency) {
+            HelperLatencyRestartTarget latency_target(dsp, engine, region);
+            if (!coordinate_latency_restart(latency_target).completed)
+                break;
+        }
         // S1.1 makes every requested transaction explicit. The following
         // actions remain deliberately unsupported until their individual S1
         // tracer bullets implement them at a quiesced lifecycle frontier.
         if (restart_plan.reload_component || restart_plan.reconfigure_io ||
-            restart_plan.refresh_latency || restart_plan.refresh_parameter_metadata ||
+            restart_plan.refresh_parameter_metadata ||
             restart_plan.unknown_flags != 0)
             InterlockedExchange(&region->last_error, 3);
 
