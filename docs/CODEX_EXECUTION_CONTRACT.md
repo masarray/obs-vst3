@@ -423,12 +423,22 @@ If these are missing, `Persistence contract: PASS` is false.
 
 Before Rack v2.0 can lock, the record must identify:
 
-1. automated preset round-trip tests proving topology + per-slot component/controller state + bypass/rack controls;
-2. exact-head CI run(s) where those tests passed;
-3. a named-preset reuse test that creates a preset from Rack A, creates an independent Rack B on another filter/source, loads that preset, and verifies equivalent observable chain/state;
-4. evidence that edits made after loading do not silently mutate the saved preset until explicit Update Preset;
-5. missing-plug-in placeholder/pass-through coverage;
-6. interrupted/corrupt preset-write coverage proving the previous valid preset remains available.
+1. automated tests covering **both** preset round-trip and independent reuse: topology + per-slot component/controller state + bypass/rack controls, plus `Rack A → Save named preset → independent Rack B on another filter/source → Load → equivalent observable chain/state`;
+2. exact-head CI run(s), tied to the `Final commit SHA`, where the round-trip test, the independent Rack A → Rack B reuse test, non-silent-mutation test, missing-plug-in placeholder test, and interrupted/corrupt-write test all actually executed and passed;
+3. real-machine evidence using the **public candidate build from that same final commit** that performs the complete user workflow:
+
+```text
+Rack A on source/filter A → build and tune complex chain → Save as Preset “Broadcast Vocal”
+→ create independent Rack B on a different source/filter (or another scene/scene collection where supported)
+→ load “Broadcast Vocal”
+→ verify equivalent order, available plug-in audible/observable states, bypass and rack controls
+```
+
+4. candidate-build evidence that edits made after loading do not silently mutate the saved preset until explicit **Update Preset**;
+5. exact-head CI coverage for missing-plug-in placeholder/pass-through behavior;
+6. exact-head CI coverage for interrupted/corrupt preset writes proving the previous valid preset remains available and the current Session Snapshot is untouched.
+
+A named test file that did not execute on the exact final head is not evidence. Generic Rack persistence testing is not a substitute for the independent preset-reuse workflow. Manual evidence from a different build is not evidence for the R5 lock.
 
 If these are missing, `Preset/reuse contract: PASS` is false.
 
