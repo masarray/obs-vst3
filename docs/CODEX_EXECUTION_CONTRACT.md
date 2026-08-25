@@ -63,13 +63,17 @@ validated crash-proof stabilization result from PR #23
 → establish clean main-target fixed point
 → port/integrate only the reviewed stabilization changes required for Gate 0
 → exact-head correctness/architecture review
-→ exact-head CI + compatibility qualification
-→ real-machine OBS qualification using artifact from that same source head
-→ resolve findings without changing the qualified head unnoticed
-→ merge exact qualified main-target head
+→ resolve all review findings
+→ if resolving a finding changes the source head, review the new head again
+→ final exact-head CI + compatibility qualification
+→ real-machine OBS qualification using the artifact from that same source head
+→ if any later finding or change modifies the source head, invalidate prior qualification and repeat review + CI + compatibility + same-build real-machine qualification
+→ merge only the unchanged, fully qualified main-target source head
 → record/tag known-good Gate 0 baseline
 → only then unlock North Star S1
 ```
+
+**A source-head change invalidates final Gate 0 qualification.** Review, CI, compatibility, package provenance and required real-machine evidence used to authorize merge must all refer to the same final source head. Older-head evidence remains historical only.
 
 A maintenance-only branch, historical #22 artifact, or manual test from a different build cannot close canonical Gate 0.
 
@@ -321,9 +325,12 @@ Crash-proof Single Host stabilization successor
 PR #22 = historical/reference only
 PR #23 = current stabilization evidence/candidate
 → clean main-target integration
-→ exact-head review + CI + compatibility qualification
+→ exact-head correctness/architecture review
+→ resolve findings; any head change returns to review
+→ final exact-head CI + compatibility qualification
 → same-source-head real-machine public/real-test qualification
-→ merge
+→ any later head change invalidates qualification and loops back
+→ merge only unchanged qualified source head
 → record/tag known-good baseline
 
 S1
@@ -416,9 +423,10 @@ For each work item:
 6. implement the minimum production change to make it green;
 7. refactor only with all old/new tests green;
 8. review correctness + architecture from the fixed point;
-9. run exact-head required CI;
-10. merge only the reviewed exact source head;
-11. update milestone progress and release evidence.
+9. resolve review findings; if the source head changes, repeat required review and qualification for the new head;
+10. run required CI on the exact final reviewed source head;
+11. merge only that unchanged, qualified source head;
+12. update milestone progress and release evidence.
 
 Bug loop:
 
@@ -476,14 +484,16 @@ A literal `PASS` without evidence is invalid.
 Before North Star S1 may start, Gate 0 must identify:
 
 1. clean main-target fixed-point and final source SHA;
-2. exact-head CI where required jobs actually executed and passed;
-3. required supported-OBS compatibility qualification;
-4. named stabilization regression tests that executed;
-5. public/real-test artifact whose provenance identifies that same source SHA;
-6. real-machine OBS evidence using that artifact, covering the stabilization paths affected by the integration, including Properties reopen, Installed/Browse behavior, vendor editor ownership, helper recovery and zero-action restoration where applicable;
-7. no unresolved correctness/architecture review findings;
+2. correctness/architecture review tied to that final source SHA with no unresolved findings;
+3. exact-head CI where all required jobs actually executed and passed on that same final source SHA;
+4. required supported-OBS compatibility qualification tied to that same final source SHA;
+5. named stabilization regression tests that actually executed and passed;
+6. public/real-test artifact whose provenance identifies that same source SHA;
+7. real-machine OBS evidence using that exact artifact, covering the stabilization paths affected by the integration, including Properties reopen, Installed/Browse behavior, vendor editor ownership, helper recovery and zero-action restoration where applicable;
 8. no known OBS crash regression;
-9. merge of that qualified source head to `main` and record/tag of the known-good baseline.
+9. merge of that unchanged qualified source head to `main` and record/tag of the known-good baseline.
+
+If the source head changes after review, CI, compatibility, packaging, or real-machine qualification, the prior final-head authorization is invalid. Repeat the applicable review and all required qualification on the new source head before merge.
 
 Historical #22 CI, maintenance-only #23 qualification, or a manual test from another build may support the engineering history but cannot substitute for this final canonical Gate 0 evidence.
 
@@ -492,7 +502,7 @@ Historical #22 CI, maintenance-only #23 qualification, or a manual test from ano
 Before Single Host v1.0 can lock:
 
 1. automated regression/integration test proving full save → destroy/recreate/reopen → restore through the stable host seam;
-2. exact-head CI where that test passed;
+2. exact-head CI where that test executed and passed;
 3. public-candidate real-machine evidence:
 
 ```text
@@ -509,8 +519,8 @@ select VST3 → change vendor state → close OBS normally
 Before Rack v2.0 can lock:
 
 1. automated tests proving ordered topology + per-slot complete state survive Session Snapshot save/reload;
-2. exact-head CI tied to final source SHA where those tests executed;
-3. real-machine evidence using public candidate artifact built from that same source commit:
+2. exact-head CI tied to the final source SHA where **all mandatory Rack persistence tests actually executed and passed**;
+3. real-machine evidence using the public candidate artifact built from that same source commit:
 
 ```text
 create/tune multi-slot Rack → close OBS normally
@@ -519,13 +529,13 @@ create/tune multi-slot Rack → close OBS normally
 
 4. corrupt/interrupted-primary recovery evidence showing last-known-good Rack remains recoverable.
 
-A local/debug/differently packaged build is insufficient.
+A failed mandatory persistence test can never support `Persistence contract: PASS`. A local/debug/differently packaged build is insufficient.
 
 ### 9.4 Required evidence for R5 preset/reuse PASS
 
 Before Rack v2.0 can lock, evidence must cover the **complete mandatory Preset Library workflow**.
 
-Automated exact-head coverage must include:
+Every mandatory preset test below must **execute and pass on the final source head** in exact-head CI. Automated coverage must include:
 
 - Save as Preset;
 - browse/list/select/load;
@@ -557,7 +567,7 @@ It must also prove:
 - missing plug-in behavior remains visible/pass-through;
 - corrupt write does not destroy the previous valid preset.
 
-A named test file that did not execute on the exact final source head is not evidence. Generic Rack persistence is not a substitute for independent preset reuse.
+A named test that did not execute **and pass** on the exact final source head is not evidence. A failed mandatory preset test can never support `Preset/reuse contract: PASS`. Generic Rack persistence is not a substitute for independent preset reuse.
 
 `Persistence contract: N/A` and `Preset/reuse contract: N/A` are forbidden at R5.
 
