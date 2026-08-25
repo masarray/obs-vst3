@@ -3,6 +3,7 @@
 #include "host/vst3_engine.hpp"
 
 #include "common/parameter_utils.hpp"
+#include "common/state_restore_policy.hpp"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "public.sdk/source/common/memorystream.h"
 #include "public.sdk/source/vst/utility/stringconvert.h"
@@ -47,6 +48,17 @@ MemoryStream read_stream(const std::vector<std::uint8_t>& bytes)
 {
     return MemoryStream(bytes.empty() ? nullptr : const_cast<std::uint8_t*>(bytes.data()),
                         static_cast<TSize>(bytes.size()));
+}
+
+PluginCallResult classify_plugin_call_result(tresult result) noexcept
+{
+    if (result == kResultTrue)
+        return PluginCallResult::Success;
+    if (result == kResultFalse)
+        return PluginCallResult::ResultFalse;
+    if (result == kNotImplemented)
+        return PluginCallResult::NotImplemented;
+    return PluginCallResult::UnexpectedFailure;
 }
 
 } // namespace
@@ -310,22 +322,29 @@ bool Vst3Engine::restore_state(const PluginStateSnapshot& snapshot, std::string&
 
     bool restored = true;
     auto component_stream = read_stream(snapshot.component);
-    if (component_->setState(&component_stream) != kResultTrue) {
+    if (!accepts_state_restore_result(
+            StateRestoreCall::ComponentState,
+            classify_plugin_call_result(component_->setState(&component_stream)))) {
         error = "VST3 component setState failed";
         restored = false;
     }
 
     if (restored && controller_) {
         auto controller_component_stream = read_stream(snapshot.component);
-        if (controller_->setComponentState(&controller_component_stream) != kResultTrue) {
-            error = "VST3 controller setComponentState failed";
+        if (!accepts_state_restore_result(
+                StateRestoreCall::ControllerComponentState,
+                classify_plugin_call_result(
+                    controller_->setComponentState(&controller_component_stream)))) {
+            error = "VST3 controller setComponentState returned an unexpected failure";
             restored = false;
         }
     }
 
     if (restored && controller_ && !snapshot.controller.empty()) {
         auto controller_stream = read_stream(snapshot.controller);
-        if (controller_->setState(&controller_stream) != kResultTrue) {
+        if (!accepts_state_restore_result(
+                StateRestoreCall::ControllerPrivateState,
+                classify_plugin_call_result(controller_->setState(&controller_stream)))) {
             error = "VST3 controller setState failed";
             restored = false;
         }
