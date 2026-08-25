@@ -5,6 +5,7 @@
 #include "common/parameter_catalog_snapshot.hpp"
 #include "common/parameter_refresh_transaction.hpp"
 #include "common/parameter_utils.hpp"
+#include "common/reload_component_transaction.hpp"
 #include "common/spsc_ring.hpp"
 #include "host/native_editor.hpp"
 #include "host/vst3_engine.hpp"
@@ -32,6 +33,7 @@ namespace {
 constexpr long kLatencyRestartFailedError = 17;
 constexpr long kParameterRefreshFailedError = 18;
 constexpr long kIoRestartFailedError = 19;
+constexpr long kReloadComponentFailedError = 20;
 
 constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
 constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
@@ -993,6 +995,202 @@ private:
     bool metadata_refresh_ = false;
 };
 
+class HelperReloadComponentTarget final : public safevst3::ReloadComponentTarget {
+public:
+    HelperReloadComponentTarget(DspWorker& dsp,
+                                safevst3::Vst3Engine& engine,
+                                safevst3::SharedAudioRegion* region,
+                                ParameterQueue& dsp_to_control,
+                                NativeOverrideBuffer& native_overrides,
+                                std::atomic<bool>& feedback_resync_required,
+                                safevst3::NativeEditorWindow& editor,
+                                ComponentHandler& component_handler,
+                                std::string path,
+                                std::string class_id,
+                                std::uint32_t sample_rate,
+                                std::uint32_t channels)
+        : dsp_(dsp), engine_(engine), region_(region), dsp_to_control_(dsp_to_control),
+          native_overrides_(native_overrides), feedback_resync_required_(feedback_resync_required),
+          editor_(editor), component_handler_(component_handler), path_(std::move(path)),
+          class_id_(std::move(class_id)), sample_rate_(sample_rate), channels_(channels)
+    {
+    }
+
+    bool reload_pause_dsp() noexcept override { return dsp_.pause(2000); }
+
+    bool reload_reconcile_pending() noexcept override
+    {
+        if (!reconcile_parameter_refresh_feedback_checked(
+                region_, engine_, dsp_to_control_, feedback_resync_required_, native_overrides_))
+            return false;
+        if (!catch_up_pending_host_parameters_after_pause(region_, engine_))
+            return false;
+        return native_overrides_.empty();
+    }
+
+    bool reload_capture_state() noexcept override
+    {
+        std::string error;
+        if (engine_.capture_state(snapshot_, error))
+            return true;
+        if (!error.empty())
+            std::cerr << "VST3 reload preflight state capture: " << error << '\n';
+        return false;
+    }
+
+    bool reload_close_editor() noexcept override
+    {
+        editor_.close();
+        if (region_)
+            InterlockedExchange(&region_->editor_status,
+                                static_cast<long>(safevst3::EditorStatus::Closed));
+        return true;
+    }
+
+    bool reload_recreate_plugin() noexcept override
+    {
+        engine_.set_component_handler(nullptr);
+        engine_.close();
+
+        std::string error;
+        if (!engine_.open(path_, class_id_, sample_rate_, channels_, error)) {
+            if (!error.empty())
+                std::cerr << "VST3 full reload recreate: " << error << '\n';
+            return false;
+        }
+        engine_.set_component_handler(&component_handler_);
+        return true;
+    }
+
+    bool reload_restore_state() noexcept override
+    {
+        std::string error;
+        if (engine_.restore_state(snapshot_, error))
+            return true;
+        if (!error.empty())
+            std::cerr << "VST3 full reload state restore: " << error << '\n';
+        return false;
+    }
+
+    bool reload_reconcile_restored_state() noexcept override
+    {
+        if (!reconcile_parameter_refresh_feedback_checked(
+                region_, engine_, dsp_to_control_, feedback_resync_required_, native_overrides_))
+            return false;
+        if (!catch_up_pending_host_parameters_after_pause(region_, engine_))
+            return false;
+        if (!native_overrides_.empty())
+            return false;
+
+        // restartComponent() can fire while the restored controller/component
+        // settle. One broad regeneration below already covers the known
+        // incremental requests (I/O, parameter values/titles and latency).
+        // A recursive reload or unknown bit cannot be absorbed safely: fail the
+        // transaction once and let the existing bounded recovery policy rebuild
+        // from the last-known-good checkpoint instead of entering a reload loop.
+        const auto post_restore_plan = safevst3::plan_restart_component(
+            static_cast<std::uint32_t>(component_handler_.take_restart_flags()));
+        if (!safevst3::can_absorb_restart_before_full_regeneration(post_restore_plan)) {
+            std::cerr << "VST3 full reload did not reach a safe pre-regeneration frontier\n";
+            return false;
+        }
+        return true;
+    }
+
+    bool reload_regenerate_runtime() noexcept override
+    {
+        safevst3::IoLayout layout{};
+        std::uint32_t latency_samples = 0;
+        std::string error;
+        if (!engine_.reconfigure_io_after_restart(layout, latency_samples, error)) {
+            if (!error.empty())
+                std::cerr << "VST3 full reload I/O regeneration: " << error << '\n';
+            return false;
+        }
+
+        // A plug-in may emit parameter callbacks while confirming its restored
+        // topology. Reconcile them before rebuilding the public catalog so the
+        // resumed processor/controller/shared-state trio has one fixed point.
+        if (!reconcile_parameter_refresh_feedback_checked(
+                region_, engine_, dsp_to_control_, feedback_resync_required_, native_overrides_))
+            return false;
+        if (!catch_up_pending_host_parameters_after_pause(region_, engine_))
+            return false;
+        if (!native_overrides_.empty())
+            return false;
+
+        // The pre-reload instance and the newly restored instance can expose
+        // different parameter structure. Drop pre-regeneration feedback and
+        // enumerate metadata/count/values again from the final controller.
+        std::array<safevst3::EngineParameterUpdate, safevst3::kMaxParameters> discarded{};
+        (void)engine_.take_parameter_updates(discarded.data(), discarded.size());
+        if (!engine_.refresh_parameter_metadata(error)) {
+            if (!error.empty())
+                std::cerr << "VST3 full reload parameter regeneration: " << error << '\n';
+            return false;
+        }
+
+        // This is the bounded fixed-point gate. Any restart request emitted by
+        // the final regeneration means the recreated instance is still asking
+        // the host to mutate lifecycle state. Do not recurse or loop here;
+        // recover once from the OBS-side last-known-good path instead.
+        const auto final_restart_plan = safevst3::plan_restart_component(
+            static_cast<std::uint32_t>(component_handler_.take_restart_flags()));
+        if (!safevst3::reload_regeneration_reached_fixed_point(final_restart_plan)) {
+            std::cerr << "VST3 full reload regeneration did not reach a fixed point\n";
+            return false;
+        }
+
+        regenerated_latency_samples_ = latency_samples;
+        return true;
+    }
+
+    bool reload_republish_runtime() noexcept override
+    {
+        if (!::publish_parameter_catalog(region_, engine_, true))
+            return false;
+        ::copy_text(region_->plugin_name, safevst3::kPluginNameBytes, engine_.plugin_name());
+        InterlockedExchange(
+            reinterpret_cast<volatile LONG*>(&region_->latency_samples),
+            static_cast<LONG>(regenerated_latency_samples_));
+        InterlockedExchange(
+            &region_->editor_status,
+            static_cast<long>(engine_.edit_controller() ? safevst3::EditorStatus::Unknown
+                                                        : safevst3::EditorStatus::Unsupported));
+        return true;
+    }
+
+    bool reload_resume_dsp() noexcept override { return dsp_.resume(2000); }
+
+    void reload_commit() noexcept override
+    {
+        if (region_)
+            InterlockedIncrement(&region_->state_dirty_generation);
+    }
+
+    void reload_request_recovery() noexcept override
+    {
+        if (region_ && InterlockedCompareExchange(&region_->shutdown_requested, 0, 0) == 0)
+            request_consistency_recovery(region_, kReloadComponentFailedError);
+    }
+
+private:
+    DspWorker& dsp_;
+    safevst3::Vst3Engine& engine_;
+    safevst3::SharedAudioRegion* region_ = nullptr;
+    ParameterQueue& dsp_to_control_;
+    NativeOverrideBuffer& native_overrides_;
+    std::atomic<bool>& feedback_resync_required_;
+    safevst3::NativeEditorWindow& editor_;
+    ComponentHandler& component_handler_;
+    std::string path_;
+    std::string class_id_;
+    std::uint32_t sample_rate_ = 0;
+    std::uint32_t channels_ = 0;
+    std::uint32_t regenerated_latency_samples_ = 0;
+    safevst3::PluginStateSnapshot snapshot_{};
+};
+
 class HelperIoRestartTarget final : public safevst3::IoRestartCoordinatorTarget {
 public:
     HelperIoRestartTarget(DspWorker& dsp,
@@ -1249,6 +1447,7 @@ int wmain(int argc, wchar_t** argv)
                       get(L"--dsp-event"), get(L"--response-event"), get(L"--ready-event"),
                       get(L"--state-event")};
     const std::wstring vst_path_w = get(L"--vst");
+    const std::string vst_path = narrow(vst_path_w);
     const std::string class_id = narrow(get(L"--class-id"));
 
     WinHostEndpoint endpoint;
@@ -1260,7 +1459,7 @@ int wmain(int argc, wchar_t** argv)
 
     auto* region = endpoint.region();
     Vst3Engine engine;
-    if (!engine.open(narrow(vst_path_w), class_id, region->sample_rate, region->channels, error)) {
+    if (!engine.open(vst_path, class_id, region->sample_rate, region->channels, error)) {
         region->last_error = 1;
         InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Error));
         SetEvent(endpoint.ready_event());
@@ -1389,31 +1588,38 @@ int wmain(int argc, wchar_t** argv)
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         const auto restart_plan = safevst3::plan_restart_component(
             static_cast<std::uint32_t>(restart_flags));
-        if (restart_plan.reconfigure_io) {
-            HelperIoRestartTarget io_target(
+        if (restart_plan.reload_component) {
+            HelperReloadComponentTarget reload_target(
                 dsp, engine, region, dsp_to_control, native_overrides,
-                feedback_resync_required);
-            if (!coordinate_io_restart(io_target).completed)
+                feedback_resync_required, editor, component_handler,
+                vst_path, engine.loaded_class_id(), region->sample_rate, region->channels);
+            if (!coordinate_reload_component(reload_target).completed)
                 break;
+        } else if (should_run_incremental_restart_actions(restart_plan)) {
+            if (restart_plan.reconfigure_io) {
+                HelperIoRestartTarget io_target(
+                    dsp, engine, region, dsp_to_control, native_overrides,
+                    feedback_resync_required);
+                if (!coordinate_io_restart(io_target).completed)
+                    break;
+            }
+            if (restart_plan.refresh_parameter_values || restart_plan.refresh_parameter_metadata) {
+                HelperParameterRefreshTarget parameter_target(
+                    dsp, engine, region, dsp_to_control, native_overrides,
+                    feedback_resync_required, restart_plan.refresh_parameter_metadata);
+                const ParameterRefreshRequest refresh_request{
+                    restart_plan.refresh_parameter_values,
+                    restart_plan.refresh_parameter_metadata};
+                if (!coordinate_parameter_refresh(parameter_target, refresh_request).completed)
+                    break;
+            }
+            if (requires_standalone_latency_restart(restart_plan)) {
+                HelperLatencyRestartTarget latency_target(dsp, engine, region);
+                if (!coordinate_latency_restart(latency_target).completed)
+                    break;
+            }
         }
-        if (restart_plan.refresh_parameter_values || restart_plan.refresh_parameter_metadata) {
-            HelperParameterRefreshTarget parameter_target(
-                dsp, engine, region, dsp_to_control, native_overrides,
-                feedback_resync_required, restart_plan.refresh_parameter_metadata);
-            const ParameterRefreshRequest refresh_request{
-                restart_plan.refresh_parameter_values,
-                restart_plan.refresh_parameter_metadata};
-            if (!coordinate_parameter_refresh(parameter_target, refresh_request).completed)
-                break;
-        }
-        if (requires_standalone_latency_restart(restart_plan)) {
-            HelperLatencyRestartTarget latency_target(dsp, engine, region);
-            if (!coordinate_latency_restart(latency_target).completed)
-                break;
-        }
-        // S1.1 makes every requested transaction explicit. Reload and unknown
-        // flags remain unsupported until their dedicated S1 tracer bullet.
-        if (restart_plan.reload_component || restart_plan.unknown_flags != 0)
+        if (restart_plan.unknown_flags != 0)
             InterlockedExchange(&region->last_error, 3);
 
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);

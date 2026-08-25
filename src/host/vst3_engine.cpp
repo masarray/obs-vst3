@@ -296,6 +296,7 @@ bool Vst3Engine::open(const std::string& path,
     }
 
     plugin_name_ = chosen->name();
+    loaded_class_id_ = chosen->ID().toString();
     provider_ = owned(new PlugProvider(factory, *chosen, true));
     if (!provider_->initialize()) {
         error = "Failed to initialize VST3 component/controller";
@@ -714,6 +715,7 @@ void Vst3Engine::close() noexcept
     io_candidate_main_input_bus_ = -1;
     io_candidate_main_output_bus_ = -1;
     plugin_name_.clear();
+    loaded_class_id_.clear();
     latency_samples_ = 0;
     sample_position_ = 0;
 }

@@ -30,7 +30,22 @@ RestartTransactionPlan plan_restart_component(std::uint32_t flags) noexcept
 
 bool requires_standalone_latency_restart(const RestartTransactionPlan& plan) noexcept
 {
-    return plan.refresh_latency && !plan.reconfigure_io;
+    return plan.refresh_latency && !plan.reconfigure_io && !plan.reload_component;
+}
+
+bool should_run_incremental_restart_actions(const RestartTransactionPlan& plan) noexcept
+{
+    return !plan.reload_component;
+}
+
+bool can_absorb_restart_before_full_regeneration(const RestartTransactionPlan& plan) noexcept
+{
+    return !plan.reload_component && plan.unknown_flags == 0;
+}
+
+bool reload_regeneration_reached_fixed_point(const RestartTransactionPlan& plan) noexcept
+{
+    return plan.empty();
 }
 
 } // namespace safevst3
