@@ -40,6 +40,22 @@ add_library(safevst3_latency_restart_transaction STATIC
 )
 target_include_directories(safevst3_latency_restart_transaction PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_library(safevst3_parameter_refresh_transaction STATIC
+    src/common/parameter_refresh_transaction.cpp
+)
+target_include_directories(safevst3_parameter_refresh_transaction PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+add_library(safevst3_parameter_catalog_snapshot STATIC
+    src/common/parameter_catalog_snapshot.cpp
+)
+target_include_directories(safevst3_parameter_catalog_snapshot PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+add_library(safevst3_hosted_parameter_catalog STATIC
+    src/common/hosted_parameter_catalog.cpp
+)
+target_include_directories(safevst3_hosted_parameter_catalog PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(safevst3_hosted_parameter_catalog PUBLIC safevst3_protocol)
+
 if(WIN32)
     include(FetchContent)
     set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -90,7 +106,8 @@ if(WIN32)
         src/platform/windows/state_ipc.cpp
     )
     target_include_directories(safevst3_win_ipc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
+    target_link_libraries(safevst3_win_ipc PUBLIC
+        safevst3_protocol safevst3_parameter_catalog_snapshot)
     target_compile_definitions(safevst3_win_ipc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-host
@@ -101,7 +118,8 @@ if(WIN32)
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(obs-safe-vst3-host PRIVATE
         safevst3_win_ipc safevst3_vst3_hosting_runtime safevst3_lifecycle_policy
-        safevst3_state_restore_policy safevst3_latency_restart_transaction Avrt)
+        safevst3_state_restore_policy safevst3_latency_restart_transaction
+        safevst3_parameter_refresh_transaction safevst3_hosted_parameter_catalog Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
@@ -161,6 +179,18 @@ if(SAFEVST3_BUILD_TESTS)
     add_executable(latency-restart-transaction-test tests/latency_restart_transaction.cpp)
     target_link_libraries(latency-restart-transaction-test PRIVATE safevst3_latency_restart_transaction)
     add_test(NAME latency-restart-transaction COMMAND latency-restart-transaction-test)
+
+    add_executable(parameter-refresh-transaction-test tests/parameter_refresh_transaction.cpp)
+    target_link_libraries(parameter-refresh-transaction-test PRIVATE safevst3_parameter_refresh_transaction)
+    add_test(NAME parameter-refresh-transaction COMMAND parameter-refresh-transaction-test)
+
+    add_executable(parameter-catalog-snapshot-test tests/parameter_catalog_snapshot.cpp)
+    target_link_libraries(parameter-catalog-snapshot-test PRIVATE safevst3_parameter_catalog_snapshot)
+    add_test(NAME parameter-catalog-snapshot COMMAND parameter-catalog-snapshot-test)
+
+    add_executable(hosted-parameter-catalog-test tests/hosted_parameter_catalog.cpp)
+    target_link_libraries(hosted-parameter-catalog-test PRIVATE safevst3_hosted_parameter_catalog)
+    add_test(NAME hosted-parameter-catalog COMMAND hosted-parameter-catalog-test)
 
     add_test(
         NAME obs-properties-ownership
@@ -237,6 +267,9 @@ if(SAFEVST3_BUILD_TESTS)
     add_dependencies(protocol-layout-test
         vst3-source-selection-test lifecycle-restart-policy-test state-restore-policy-test
         latency-restart-transaction-test
+        parameter-refresh-transaction-test
+        parameter-catalog-snapshot-test
+        hosted-parameter-catalog-test
         parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test

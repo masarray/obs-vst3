@@ -133,7 +133,7 @@ Current scope:
 
 The VST3 binary and native editor run in `obs-safe-vst3-host.exe`, not in `obs64.exe`. Audio uses fixed shared-memory slots and a dedicated DSP wake event. Control, editor, state, restart, and disk work stay outside the OBS realtime audio callback.
 
-A responsive control/UI thread is not required for the watchdog to consider DSP healthy: protocol v6 publishes separate control and DSP heartbeats. Conversely, a stalled DSP becomes watchdog-visible even if the helper process itself is still alive.
+A responsive control/UI thread is not required for the watchdog to consider DSP healthy: protocol v7 publishes separate control and DSP heartbeats. Conversely, a stalled DSP becomes watchdog-visible even if the helper process itself is still alive. Protocol v7 also publishes parameter metadata through a bounded coherent-catalog generation so OBS never consumes a mixed old/new parameter list.
 
 ### State consistency
 
@@ -155,7 +155,7 @@ Binaries are not Authenticode-signed yet, so Windows may show **Unknown publishe
 
 CI and the Windows release pipeline validate:
 
-- protocol v6 layout and portable parameter/state/recovery tests;
+- protocol v7 layout and portable parameter/catalog/state/recovery tests;
 - SPSC FIFO/wrap/full-empty/concurrent producer-consumer behavior;
 - Windows helper and isolated scanner build + scanner smoke test;
 - watchdog classification for a live helper with a stalled DSP;

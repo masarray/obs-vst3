@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "common/protocol.hpp"
+#include "common/hosted_parameter_catalog.hpp"
 #include "common/latency_restart_transaction.hpp"
 #include "common/state_snapshot.hpp"
 
@@ -24,22 +25,11 @@
 
 namespace safevst3 {
 
-struct EngineParameter {
-    std::uint32_t id = 0;
-    std::int32_t step_count = 0;
-    std::uint32_t flags = 0;
-    double default_normalized = 0.0;
-    double current_normalized = 0.0;
-    std::string title;
-    std::string units;
-};
+using EngineParameter = HostedParameter;
+using EngineParameterUpdate = HostedParameterValueChange;
 
-struct EngineParameterUpdate {
-    std::uint32_t id = 0;
-    double normalized = 0.0;
-};
-
-class Vst3Engine final : public LatencyRestartTarget {
+class Vst3Engine final : public LatencyRestartTarget,
+                         private HostedParameterControllerSource {
 public:
     Vst3Engine() = default;
     ~Vst3Engine();
@@ -58,6 +48,7 @@ public:
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
     bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
     bool refresh_latency_after_restart(std::string& error);
+    bool refresh_parameter_metadata(std::string& error);
 
     // Transitional combined seam retained for callers outside the S2 helper.
     // S2 helper code uses the explicit controller/processor ownership methods
@@ -78,11 +69,16 @@ public:
     const std::string& plugin_name() const noexcept { return plugin_name_; }
     std::uint32_t latency_samples() const noexcept { return latency_samples_; }
     const std::vector<EngineParameter>& parameters() const noexcept { return parameters_; }
+    std::uint32_t parameter_total_count() const noexcept { return parameter_total_count_; }
 
 private:
     bool set_processing(bool enabled) noexcept override;
     bool set_active(bool enabled) noexcept override;
     std::uint32_t get_latency_samples() noexcept override;
+    std::int32_t parameter_count() const noexcept override;
+    bool read_parameter(std::int32_t index,
+                        HostedParameter& destination) const override;
+    double normalized_value(std::uint32_t id) const noexcept override;
 
     bool configure_buses(std::uint32_t channels, std::string& error);
     bool enumerate_parameters(std::string& error);
@@ -107,6 +103,7 @@ private:
     Steinberg::int32 main_input_bus_ = -1;
     Steinberg::int32 main_output_bus_ = -1;
     std::vector<EngineParameter> parameters_;
+    std::uint32_t parameter_total_count_ = 0;
     std::array<EngineParameterUpdate, kMaxParameters> parameter_updates_{};
     std::size_t parameter_update_count_ = 0;
     std::string plugin_name_;

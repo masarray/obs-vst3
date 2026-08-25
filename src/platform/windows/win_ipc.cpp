@@ -2,6 +2,7 @@
 
 #include "platform/windows/win_ipc.hpp"
 
+#include "common/parameter_catalog_snapshot.hpp"
 #include "common/parameter_utils.hpp"
 
 #include <algorithm>
@@ -53,6 +54,81 @@ std::string bounded_string(const char* value, std::size_t capacity)
         ++length;
     return std::string(value, length);
 }
+
+class SharedParameterCatalogSource final : public ParameterCatalogSource {
+public:
+    explicit SharedParameterCatalogSource(SharedAudioRegion* region) : region_(region) {}
+
+    bool begin_read(std::uint32_t& observed_generation) const noexcept override
+    {
+        if (!region_)
+            return false;
+        const long before = InterlockedCompareExchange(
+            &region_->parameter_catalog_generation, 0, 0);
+        if ((before & 1L) != 0)
+            return false;
+
+        InterlockedIncrement(&region_->parameter_catalog_readers);
+        const long after = InterlockedCompareExchange(
+            &region_->parameter_catalog_generation, 0, 0);
+        if (before == after && (after & 1L) == 0) {
+            observed_generation = static_cast<std::uint32_t>(after);
+            return true;
+        }
+
+        InterlockedDecrement(&region_->parameter_catalog_readers);
+        return false;
+    }
+
+    void end_read() const noexcept override
+    {
+        if (region_)
+            InterlockedDecrement(&region_->parameter_catalog_readers);
+    }
+
+    std::uint32_t generation() const noexcept override
+    {
+        return region_ ? static_cast<std::uint32_t>(InterlockedCompareExchange(
+                             &region_->parameter_catalog_generation, 0, 0))
+                       : 1u;
+    }
+
+    std::uint32_t exposed_count() const noexcept override
+    {
+        return region_ ? static_cast<std::uint32_t>(InterlockedCompareExchange(
+                             reinterpret_cast<volatile LONG*>(&region_->parameter_count), 0, 0))
+                       : 0u;
+    }
+
+    std::uint32_t total_count() const noexcept override
+    {
+        return region_ ? static_cast<std::uint32_t>(InterlockedCompareExchange(
+                             reinterpret_cast<volatile LONG*>(&region_->parameter_total_count), 0, 0))
+                       : 0u;
+    }
+
+    bool read_entry(std::uint32_t index,
+                    ParameterCatalogEntry& destination) const noexcept override
+    {
+        if (!region_ || index >= kMaxParameters)
+            return false;
+        const auto& source = region_->parameters[index];
+        destination.id = source.id;
+        destination.step_count = source.step_count;
+        destination.flags = source.flags;
+        destination.default_normalized = source.default_normalized;
+        const LONG64 bits = InterlockedCompareExchange64(
+            const_cast<volatile LONG64*>(reinterpret_cast<const volatile LONG64*>(
+                &source.current_value_bits)), 0, 0);
+        destination.current_normalized = bits_to_double(static_cast<std::int64_t>(bits));
+        std::memcpy(destination.title.data(), source.title, destination.title.size());
+        std::memcpy(destination.units.data(), source.units, destination.units.size());
+        return true;
+    }
+
+private:
+    SharedAudioRegion* region_ = nullptr;
+};
 } // namespace
 
 WinObsBridge::~WinObsBridge() { stop(); }
@@ -296,21 +372,22 @@ std::vector<ParameterSnapshot> WinObsBridge::parameters() const
     if (!running() || !region_)
         return result;
 
-    const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
-    result.reserve(count);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        auto& descriptor = region_->parameters[i];
-        const auto bits = InterlockedCompareExchange64(
-            reinterpret_cast<volatile LONG64*>(&descriptor.current_value_bits), 0, 0);
+    SharedParameterCatalogSource source(region_);
+    ParameterCatalogSnapshot catalog{};
+    if (!read_parameter_catalog_snapshot(source, catalog))
+        return result;
 
+    result.reserve(catalog.count);
+    for (std::uint32_t i = 0; i < catalog.count; ++i) {
+        const auto& entry = catalog.entries[i];
         ParameterSnapshot snapshot{};
-        snapshot.id = descriptor.id;
-        snapshot.step_count = descriptor.step_count;
-        snapshot.flags = descriptor.flags;
-        snapshot.default_normalized = descriptor.default_normalized;
-        snapshot.current_normalized = bits_to_double(static_cast<std::int64_t>(bits));
-        snapshot.title = bounded_string(descriptor.title, kParameterTitleBytes);
-        snapshot.units = bounded_string(descriptor.units, kParameterUnitsBytes);
+        snapshot.id = entry.id;
+        snapshot.step_count = entry.step_count;
+        snapshot.flags = entry.flags;
+        snapshot.default_normalized = entry.default_normalized;
+        snapshot.current_normalized = entry.current_normalized;
+        snapshot.title = bounded_string(entry.title.data(), entry.title.size());
+        snapshot.units = bounded_string(entry.units.data(), entry.units.size());
         result.push_back(std::move(snapshot));
     }
     return result;
@@ -321,28 +398,55 @@ bool WinObsBridge::set_parameter(std::uint32_t id, double normalized) noexcept
     if (!running() || !region_ || !request_event_)
         return false;
 
-    const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        auto& descriptor = region_->parameters[i];
-        if (descriptor.id != id)
+    SharedParameterCatalogSource source(region_);
+    for (std::uint32_t attempt = 0; attempt < kParameterCatalogReadAttempts; ++attempt) {
+        std::uint32_t generation = 0;
+        if (!source.begin_read(generation))
             continue;
-        if ((descriptor.flags & (ParameterReadOnly | ParameterHidden)) != 0)
-            return false;
 
-        normalized = normalize_parameter_value(normalized, descriptor.step_count);
-        const auto bits = static_cast<LONG64>(double_to_bits(normalized));
-        InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), bits);
-        MemoryBarrier();
-        InterlockedIncrement(&descriptor.pending_generation);
-        SetEvent(request_event_);
-        return true;
+        bool updated = false;
+        const std::uint32_t count = std::min(source.exposed_count(), kMaxParameters);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto& descriptor = region_->parameters[i];
+            if (descriptor.id != id)
+                continue;
+            if ((descriptor.flags & (ParameterReadOnly | ParameterHidden)) == 0) {
+                normalized = normalize_parameter_value(normalized, descriptor.step_count);
+                const auto bits = static_cast<LONG64>(double_to_bits(normalized));
+                InterlockedExchange64(
+                    reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), bits);
+                MemoryBarrier();
+                InterlockedIncrement(&descriptor.pending_generation);
+                SetEvent(request_event_);
+                updated = true;
+            }
+            break;
+        }
+
+        const bool stable = source.generation() == generation;
+        source.end_read();
+        if (stable)
+            return updated;
     }
     return false;
 }
 
 std::uint32_t WinObsBridge::parameter_total_count() const noexcept
 {
-    return region_ ? region_->parameter_total_count : 0;
+    if (!region_)
+        return 0;
+    SharedParameterCatalogSource source(region_);
+    for (std::uint32_t attempt = 0; attempt < kParameterCatalogReadAttempts; ++attempt) {
+        std::uint32_t generation = 0;
+        if (!source.begin_read(generation))
+            continue;
+        const std::uint32_t count = source.total_count();
+        const bool stable = source.generation() == generation;
+        source.end_read();
+        if (stable)
+            return count;
+    }
+    return 0;
 }
 
 AudioSlot* WinObsBridge::acquire_slot() noexcept

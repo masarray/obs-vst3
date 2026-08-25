@@ -144,41 +144,14 @@ bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
 
 bool Vst3Engine::enumerate_parameters(std::string& error)
 {
-    parameters_.clear();
-    if (!controller_)
+    if (!controller_) {
+        parameters_.clear();
+        parameter_total_count_ = 0;
         return true;
-
-    const int32 count = controller_->getParameterCount();
-    if (count < 0) {
-        error = "VST3 controller returned an invalid parameter count";
+    }
+    if (!rebuild_hosted_parameter_catalog(
+            *this, parameters_, parameter_total_count_, error))
         return false;
-    }
-
-    parameters_.reserve(static_cast<std::size_t>(count));
-    for (int32 index = 0; index < count; ++index) {
-        ParameterInfo info{};
-        if (controller_->getParameterInfo(index, info) != kResultTrue)
-            continue;
-
-        std::uint32_t flags = 0;
-        if (info.flags & ParameterInfo::kCanAutomate) flags |= ParameterCanAutomate;
-        if (info.flags & ParameterInfo::kIsReadOnly) flags |= ParameterReadOnly;
-        if (info.flags & ParameterInfo::kIsHidden) flags |= ParameterHidden;
-        if (info.flags & ParameterInfo::kIsList) flags |= ParameterList;
-        if (info.flags & ParameterInfo::kIsProgramChange) flags |= ParameterProgramChange;
-        if (info.flags & ParameterInfo::kIsBypass) flags |= ParameterBypass;
-
-        EngineParameter parameter{};
-        parameter.id = static_cast<std::uint32_t>(info.id);
-        parameter.step_count = info.stepCount;
-        parameter.flags = flags;
-        parameter.default_normalized = normalize_parameter_value(info.defaultNormalizedValue, info.stepCount);
-        parameter.current_normalized = normalize_parameter_value(controller_->getParamNormalized(info.id), info.stepCount);
-        parameter.title = StringConvert::convert(info.title);
-        parameter.units = StringConvert::convert(info.units);
-        parameters_.push_back(std::move(parameter));
-    }
-
     const auto queue_capacity = static_cast<int32>(parameters_.size());
     input_parameter_changes_.setMaxParameters(queue_capacity);
     output_parameter_changes_.setMaxParameters(queue_capacity);
@@ -404,6 +377,55 @@ bool Vst3Engine::refresh_latency_after_restart(std::string& error)
     return true;
 }
 
+std::int32_t Vst3Engine::parameter_count() const noexcept
+{
+    return controller_ ? controller_->getParameterCount() : 0;
+}
+
+bool Vst3Engine::read_parameter(std::int32_t index,
+                                HostedParameter& destination) const
+{
+    if (!controller_)
+        return false;
+    ParameterInfo info{};
+    if (controller_->getParameterInfo(index, info) != kResultTrue)
+        return false;
+
+    std::uint32_t flags = 0;
+    if (info.flags & ParameterInfo::kCanAutomate) flags |= ParameterCanAutomate;
+    if (info.flags & ParameterInfo::kIsReadOnly) flags |= ParameterReadOnly;
+    if (info.flags & ParameterInfo::kIsHidden) flags |= ParameterHidden;
+    if (info.flags & ParameterInfo::kIsList) flags |= ParameterList;
+    if (info.flags & ParameterInfo::kIsProgramChange) flags |= ParameterProgramChange;
+    if (info.flags & ParameterInfo::kIsBypass) flags |= ParameterBypass;
+
+    destination.id = static_cast<std::uint32_t>(info.id);
+    destination.step_count = info.stepCount;
+    destination.flags = flags;
+    destination.default_normalized = info.defaultNormalizedValue;
+    destination.current_normalized = controller_->getParamNormalized(info.id);
+    destination.title = StringConvert::convert(info.title);
+    destination.units = StringConvert::convert(info.units);
+    return true;
+}
+
+double Vst3Engine::normalized_value(std::uint32_t id) const noexcept
+{
+    return controller_ ? controller_->getParamNormalized(static_cast<ParamID>(id)) : 0.0;
+}
+
+bool Vst3Engine::refresh_parameter_metadata(std::string& error)
+{
+    error.clear();
+    if (!enumerate_parameters(error))
+        return false;
+    input_parameter_changes_.clearQueue();
+    output_parameter_changes_.clearQueue();
+    parameter_changes_pending_ = false;
+    parameter_update_count_ = 0;
+    return true;
+}
+
 bool Vst3Engine::set_processing(bool enabled) noexcept
 {
     return processor_ && processor_->setProcessing(enabled) == kResultTrue;
@@ -439,6 +461,7 @@ void Vst3Engine::close() noexcept
     parameter_changes_pending_ = false;
     parameter_update_count_ = 0;
     parameters_.clear();
+    parameter_total_count_ = 0;
     processor_ = nullptr;
     controller_ = nullptr;
     component_ = nullptr;
@@ -528,14 +551,11 @@ void Vst3Engine::refresh_parameter_values() noexcept
 {
     if (!controller_)
         return;
-    for (auto& parameter : parameters_) {
-        const double value = normalize_parameter_value(
-            controller_->getParamNormalized(static_cast<ParamID>(parameter.id)), parameter.step_count);
-        if (value == parameter.current_normalized)
-            continue;
-        parameter.current_normalized = value;
-        record_parameter_update(parameter.id, value);
-    }
+    std::array<HostedParameterValueChange, kMaxParameters> changes{};
+    const std::size_t count = refresh_hosted_parameter_values(
+        *this, parameters_, changes.data(), changes.size());
+    for (std::size_t i = 0; i < count; ++i)
+        record_parameter_update(changes[i].id, changes[i].normalized);
 }
 
 bool Vst3Engine::apply_pending_parameter_changes(ProcessData& data) noexcept

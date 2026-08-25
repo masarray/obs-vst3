@@ -6,7 +6,7 @@
 namespace safevst3 {
 
 inline constexpr std::uint32_t kProtocolMagic = 0x3356534Fu; // "OSV3"
-inline constexpr std::uint32_t kProtocolVersion = 6;
+inline constexpr std::uint32_t kProtocolVersion = 7;
 inline constexpr std::uint32_t kStateTransferMagic = 0x3154534Fu; // "OST1"
 inline constexpr std::uint32_t kStateTransferVersion = 1;
 inline constexpr std::uint32_t kMaxChannels = 2;
@@ -111,6 +111,8 @@ struct alignas(64) SharedAudioRegion {
     std::uint32_t slot_count = kSlotCount;
     std::uint32_t parameter_count = 0;
     std::uint32_t parameter_total_count = 0;
+    volatile long parameter_catalog_generation = 0;
+    volatile long parameter_catalog_readers = 0;
     volatile long host_status = static_cast<long>(HostStatus::Booting);
     volatile long shutdown_requested = 0;
     volatile long last_error = 0;

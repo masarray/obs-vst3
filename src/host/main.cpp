@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "common/lifecycle_restart_policy.hpp"
+#include "common/parameter_refresh_transaction.hpp"
 #include "common/parameter_utils.hpp"
 #include "common/spsc_ring.hpp"
 #include "host/native_editor.hpp"
@@ -27,6 +28,7 @@
 namespace {
 
 constexpr long kLatencyRestartFailedError = 17;
+constexpr long kParameterRefreshFailedError = 18;
 
 constexpr std::size_t kParameterTransferCapacity = safevst3::kMaxParameters * safevst3::kSlotCount;
 constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
@@ -128,6 +130,81 @@ void copy_text(char* destination, std::size_t capacity, const std::string& value
     const std::size_t count = std::min(capacity - 1, value.size());
     std::memcpy(destination, value.data(), count);
     destination[count] = '\0';
+}
+
+bool begin_parameter_catalog_write(safevst3::SharedAudioRegion* region,
+                                   DWORD timeout_ms) noexcept
+{
+    if (!region)
+        return false;
+
+    const long generation = InterlockedCompareExchange(
+        &region->parameter_catalog_generation, 0, 0);
+    if ((generation & 1L) != 0 ||
+        InterlockedCompareExchange(
+            &region->parameter_catalog_generation, generation + 1, generation) != generation)
+        return false;
+
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    while (InterlockedCompareExchange(&region->parameter_catalog_readers, 0, 0) != 0) {
+        if (GetTickCount64() >= deadline)
+            return false;
+        Sleep(1);
+    }
+    return true;
+}
+
+void finish_parameter_catalog_write(safevst3::SharedAudioRegion* region) noexcept
+{
+    MemoryBarrier();
+    InterlockedIncrement(&region->parameter_catalog_generation);
+}
+
+void publish_parameter_catalog_locked(safevst3::SharedAudioRegion* region,
+                                      const safevst3::Vst3Engine& engine) noexcept
+{
+    InterlockedExchange(
+        reinterpret_cast<volatile LONG*>(&region->parameter_count), 0);
+
+    const auto& parameters = engine.parameters();
+    const std::uint32_t exposed = static_cast<std::uint32_t>(
+        std::min<std::size_t>(parameters.size(), safevst3::kMaxParameters));
+    for (std::uint32_t i = 0; i < exposed; ++i) {
+        const auto& source = parameters[i];
+        auto& destination = region->parameters[i];
+        std::memset(&destination, 0, sizeof(destination));
+        destination.id = source.id;
+        destination.step_count = source.step_count;
+        destination.flags = source.flags;
+        destination.default_normalized = source.default_normalized;
+        const LONG64 value_bits = static_cast<LONG64>(
+            double_to_bits(source.current_normalized));
+        InterlockedExchange64(
+            reinterpret_cast<volatile LONG64*>(&destination.current_value_bits), value_bits);
+        InterlockedExchange64(
+            reinterpret_cast<volatile LONG64*>(&destination.pending_value_bits), value_bits);
+        copy_text(destination.title, safevst3::kParameterTitleBytes, source.title);
+        copy_text(destination.units, safevst3::kParameterUnitsBytes, source.units);
+    }
+
+    InterlockedExchange(
+        reinterpret_cast<volatile LONG*>(&region->parameter_total_count),
+        static_cast<LONG>(engine.parameter_total_count()));
+    MemoryBarrier();
+    InterlockedExchange(
+        reinterpret_cast<volatile LONG*>(&region->parameter_count),
+        static_cast<LONG>(exposed));
+    finish_parameter_catalog_write(region);
+}
+
+bool publish_parameter_catalog(safevst3::SharedAudioRegion* region,
+                               const safevst3::Vst3Engine& engine,
+                               DWORD timeout_ms) noexcept
+{
+    if (!begin_parameter_catalog_write(region, timeout_ms))
+        return false;
+    publish_parameter_catalog_locked(region, engine);
+    return true;
 }
 
 void request_consistency_recovery(safevst3::SharedAudioRegion* region, long error_code) noexcept
@@ -808,6 +885,83 @@ private:
     safevst3::SharedAudioRegion* region_ = nullptr;
 };
 
+class HelperParameterRefreshTarget final : public safevst3::ParameterRefreshCoordinatorTarget {
+public:
+    HelperParameterRefreshTarget(DspWorker& dsp,
+                                 safevst3::Vst3Engine& engine,
+                                 safevst3::SharedAudioRegion* region,
+                                 ParameterQueue& dsp_to_control,
+                                 std::atomic<bool>& feedback_resync_required,
+                                 NativeOverrideBuffer& native_overrides)
+        : dsp_(dsp), engine_(engine), region_(region),
+          dsp_to_control_(dsp_to_control),
+          feedback_resync_required_(feedback_resync_required),
+          native_overrides_(native_overrides)
+    {
+    }
+
+    bool pause_dsp() noexcept override { return dsp_.pause(2000); }
+
+    bool reconcile_pending_edits() noexcept override
+    {
+        if (!begin_parameter_catalog_write(region_, 2000))
+            return false;
+        catalog_write_started_ = true;
+
+        if (!native_overrides_.empty()) {
+            if (!reconcile_native_edits_after_pause(
+                    region_, engine_, dsp_to_control_, native_overrides_))
+                return false;
+            feedback_resync_required_.store(false, std::memory_order_release);
+        } else {
+            reconcile_controller_feedback_after_pause(
+                region_, engine_, dsp_to_control_, feedback_resync_required_);
+        }
+
+        return catch_up_pending_host_parameters_after_pause(region_, engine_);
+    }
+
+    bool refresh_and_publish(safevst3::ParameterRefreshScope scope) noexcept override
+    {
+        if (!catalog_write_started_)
+            return false;
+
+        if (scope == safevst3::ParameterRefreshScope::MetadataAndValues) {
+            std::string error;
+            if (!engine_.refresh_parameter_metadata(error)) {
+                std::cerr << "VST3 parameter metadata refresh: " << error << '\n';
+                return false;
+            }
+            publish_parameter_catalog_locked(region_, engine_);
+        } else {
+            engine_.refresh_parameter_values();
+            publish_engine_updates_direct(region_, engine_);
+            finish_parameter_catalog_write(region_);
+        }
+        catalog_write_started_ = false;
+        return true;
+    }
+
+    bool resume_dsp() noexcept override
+    {
+        return !catalog_write_started_ && dsp_.resume(2000);
+    }
+
+    void request_recovery() noexcept override
+    {
+        request_consistency_recovery(region_, kParameterRefreshFailedError);
+    }
+
+private:
+    DspWorker& dsp_;
+    safevst3::Vst3Engine& engine_;
+    safevst3::SharedAudioRegion* region_ = nullptr;
+    ParameterQueue& dsp_to_control_;
+    std::atomic<bool>& feedback_resync_required_;
+    NativeOverrideBuffer& native_overrides_;
+    bool catalog_write_started_ = false;
+};
+
 void handle_editor_command(safevst3::SharedAudioRegion* region,
                            safevst3::Vst3Engine& engine,
                            safevst3::NativeEditorWindow& editor)
@@ -991,22 +1145,12 @@ int wmain(int argc, wchar_t** argv)
     engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
 
-    const auto& parameters = engine.parameters();
-    region->parameter_total_count = static_cast<std::uint32_t>(parameters.size());
-    region->parameter_count = static_cast<std::uint32_t>(std::min<std::size_t>(parameters.size(), kMaxParameters));
-    for (std::uint32_t i = 0; i < region->parameter_count; ++i) {
-        const auto& source = parameters[i];
-        auto& destination = region->parameters[i];
-        destination.id = source.id;
-        destination.step_count = source.step_count;
-        destination.flags = source.flags;
-        destination.default_normalized = source.default_normalized;
-        destination.current_value_bits = double_to_bits(source.current_normalized);
-        destination.pending_value_bits = destination.current_value_bits;
-        destination.pending_generation = 0;
-        destination.applied_generation = 0;
-        copy_text(destination.title, kParameterTitleBytes, source.title);
-        copy_text(destination.units, kParameterUnitsBytes, source.units);
+    if (!publish_parameter_catalog(region, engine, 2000)) {
+        region->last_error = kParameterRefreshFailedError;
+        InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Error));
+        SetEvent(endpoint.ready_event());
+        std::cerr << "Failed to publish initial VST3 parameter catalog\n";
+        return 4;
     }
 
     InterlockedExchange(
@@ -1109,22 +1253,16 @@ int wmain(int argc, wchar_t** argv)
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
         const auto restart_plan = safevst3::plan_restart_component(
             static_cast<std::uint32_t>(restart_flags));
-        if (restart_plan.refresh_parameter_values) {
-            if (dsp.pause(2000)) {
-                if (native_overrides.empty()) {
-                    reconcile_controller_feedback_after_pause(
-                        region, engine, dsp_to_control, feedback_resync_required);
-                    engine.refresh_parameter_values();
-                    publish_engine_updates_direct(region, engine);
-                } else if (reconcile_native_edits_after_pause(
-                               region, engine, dsp_to_control, native_overrides)) {
-                    feedback_resync_required.store(false, std::memory_order_release);
-                }
-                if (!dsp.resume(2000))
-                    InterlockedExchange(&region->last_error, 14);
-            } else {
-                InterlockedExchange(&region->last_error, 9);
-            }
+        if (restart_plan.refresh_parameter_values ||
+            restart_plan.refresh_parameter_metadata) {
+            HelperParameterRefreshTarget parameter_target(
+                dsp, engine, region, dsp_to_control,
+                feedback_resync_required, native_overrides);
+            if (!coordinate_parameter_refresh(
+                     parameter_target,
+                     restart_plan.refresh_parameter_values,
+                     restart_plan.refresh_parameter_metadata).completed)
+                break;
         }
         if (restart_plan.refresh_latency) {
             HelperLatencyRestartTarget latency_target(dsp, engine, region);
@@ -1135,7 +1273,6 @@ int wmain(int argc, wchar_t** argv)
         // actions remain deliberately unsupported until their individual S1
         // tracer bullets implement them at a quiesced lifecycle frontier.
         if (restart_plan.reload_component || restart_plan.reconfigure_io ||
-            restart_plan.refresh_parameter_metadata ||
             restart_plan.unknown_flags != 0)
             InterlockedExchange(&region->last_error, 3);
 

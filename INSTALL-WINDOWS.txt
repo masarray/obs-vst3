@@ -116,7 +116,7 @@ plug-ins you trust.
 CI / release validation
 -----------------------
 The Windows validation pipeline covers:
-- protocol v6 tests and state/recovery invariants;
+- protocol v7 tests and parameter-catalog/state/recovery invariants;
 - SPSC realtime queue tests;
 - isolated host build;
 - isolated scanner discovery/self-test and smoke execution;
