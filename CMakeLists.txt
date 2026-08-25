@@ -7,6 +7,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(SAFEVST3_BUILD_OBS_PLUGIN "Build the OBS module when libobs is available" ON)
 option(SAFEVST3_BUILD_TESTS "Build protocol/layout tests" ON)
+option(SAFEVST3_STATIC_MSVC_RUNTIME "Link Windows binaries with the static MSVC runtime" ON)
+
+if(MSVC AND SAFEVST3_STATIC_MSVC_RUNTIME)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 if(NOT WIN32)
     message(STATUS "Stable runtime is Windows x86-64 only. Building portable tests only.")
@@ -15,12 +20,18 @@ endif()
 add_library(safevst3_protocol INTERFACE)
 target_include_directories(safevst3_protocol INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_library(safevst3_source_selection STATIC
+    src/obs-plugin/vst3_source_selection.cpp
+)
+target_include_directories(safevst3_source_selection PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 if(WIN32)
     include(FetchContent)
     set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
     set(SMTG_ENABLE_AUV2_BUILDS OFF CACHE BOOL "" FORCE)
+    set(SMTG_USE_STATIC_CRT ${SAFEVST3_STATIC_MSVC_RUNTIME} CACHE BOOL "" FORCE)
 
     FetchContent_Declare(
         vst3sdk
@@ -31,6 +42,21 @@ if(WIN32)
         GIT_SUBMODULES_RECURSE TRUE
     )
     FetchContent_MakeAvailable(vst3sdk)
+
+    # Steinberg exposes SMTG_USE_STATIC_CRT, but also pin the generated static
+    # library targets to the same model so CMake and SDK runtime policies cannot
+    # diverge if either side changes its defaults in a future SDK update.
+    if(MSVC AND SAFEVST3_STATIC_MSVC_RUNTIME)
+        foreach(_safevst3_sdk_target IN ITEMS base sdk_common sdk sdk_hosting)
+            if(TARGET ${_safevst3_sdk_target})
+                get_target_property(_safevst3_sdk_target_type ${_safevst3_sdk_target} TYPE)
+                if(NOT _safevst3_sdk_target_type STREQUAL "INTERFACE_LIBRARY")
+                    set_property(TARGET ${_safevst3_sdk_target} PROPERTY
+                        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+                endif()
+            endif()
+        endforeach()
+    endif()
 
     add_library(safevst3_vst3_hosting_runtime STATIC
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/common/memorystream.cpp
@@ -74,8 +100,17 @@ if(WIN32)
                 src/obs-plugin/state_store.cpp
             )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-            target_link_libraries(obs-safe-vst3 PRIVATE OBS::libobs safevst3_win_ipc)
+            target_link_libraries(obs-safe-vst3 PRIVATE
+                OBS::libobs safevst3_win_ipc safevst3_source_selection)
             target_compile_definitions(obs-safe-vst3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            if(MSVC)
+                # Force the OBS compatibility floor header before obs-module.h
+                # in every translation unit. OBS_DECLARE_MODULE() therefore
+                # exports obs_module_ver() as 29.1 even when built with a newer
+                # SDK, while all imported APIs remain within that audited floor.
+                target_compile_options(obs-safe-vst3 PRIVATE
+                    "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/obs-plugin/obs_compat_floor.hpp")
+            endif()
             set_target_properties(obs-safe-vst3 PROPERTIES PREFIX "" OUTPUT_NAME "obs-safe-vst3")
             add_custom_command(TARGET obs-safe-vst3 POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -93,6 +128,17 @@ endif()
 
 if(SAFEVST3_BUILD_TESTS)
     enable_testing()
+
+    add_executable(vst3-source-selection-test tests/vst3_source_selection.cpp)
+    target_link_libraries(vst3-source-selection-test PRIVATE safevst3_source_selection)
+    add_test(NAME vst3-source-selection COMMAND vst3-source-selection-test)
+
+    add_test(
+        NAME obs-properties-ownership
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/src/obs-plugin/plugin.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/obs_properties_ownership.cmake
+    )
 
     add_executable(parameter-control-test tests/parameter_control.cpp)
     target_link_libraries(parameter-control-test PRIVATE safevst3_protocol)
@@ -112,6 +158,13 @@ if(SAFEVST3_BUILD_TESTS)
 
     if(WIN32)
         add_test(NAME scanner-discovery COMMAND $<TARGET_FILE:obs-safe-vst3-scanner> --self-test)
+        add_test(
+            NAME scanner-discovery-cli
+            COMMAND ${CMAKE_COMMAND}
+                -DSCANNER=$<TARGET_FILE:obs-safe-vst3-scanner>
+                -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/scanner-discovery-cli
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/scanner_discovery_cli.cmake
+        )
 
         add_executable(fake-hung-host tests/fake_hung_host.cpp)
         target_include_directories(fake-hung-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -152,7 +205,9 @@ if(SAFEVST3_BUILD_TESTS)
 
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
-    add_dependencies(protocol-layout-test parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
+    add_dependencies(protocol-layout-test
+        vst3-source-selection-test
+        parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test
             obs-safe-vst3-scanner

@@ -1,29 +1,36 @@
-OBS Safe VST3 Host — Windows x64 Stable
-========================================
+OBS Safe VST3 Host — Windows x64
+================================
 
-Recommended for most users: Smart Setup.exe
----------------------------------------------
+Recommended: Smart Setup.exe
+----------------------------
 1. Close OBS Studio.
 2. Run the newest:
      OBS-Safe-VST3-Host-v<VERSION>-Setup-x64.exe
-3. For a normal OBS installation, keep Standard OBS Studio (recommended).
-   Setup installs the plug-in into OBS's ProgramData plug-in layout.
-4. For OBS Portable or a custom self-contained OBS folder, choose
-   Custom / Portable OBS folder and select the OBS root containing:
+3. Select the actual OBS root folder containing:
      bin\64bit\obs64.exe
-5. Click Install.
-6. Start OBS Studio, open an audio source -> Filters -> + ->
-   VST 3.x Plug-in (Safe Host).
-7. Click Rescan Installed Plug-ins and choose an effect.
+   The same root-local layout is used for normal, Steam/custom and portable
+   OBS launches.
+4. Click Install.
+5. Start OBS Studio, open an audio source -> Filters -> + ->
+   VST 3.x Plug-in.
+6. Installed VST3 discovery starts automatically in the background. Open the
+   filter after startup to choose a discovered effect, or use Rescan Installed
+   Plug-ins to request another background pass.
 
-The runtime package contains:
-  obs-safe-vst3.dll
-  obs-safe-vst3-host.exe
-  obs-safe-vst3-scanner.exe
-  locale\en-US.ini
+Setup installs only these product files into the selected OBS root:
+  obs-plugins\64bit\obs-safe-vst3.dll
+  obs-plugins\64bit\obs-safe-vst3-host.exe
+  obs-plugins\64bit\obs-safe-vst3-scanner.exe
+  data\obs-plugins\obs-safe-vst3\locale\en-US.ini
 
-The Smart Installer does not install or modify OBS itself. If OBS is open,
-Setup asks you to close it before copying files.
+The Smart Installer does not install or modify OBS itself. It removes only
+historical copies of this product from old OBS plug-in locations so a stale DLL
+cannot shadow the selected-root installation. If OBS is open, Setup asks you to
+close it before copying files.
+
+The installer remembers the validated OBS root for future updates. Automation
+can explicitly select it with /ObsRoot="...". /PortableObsDir="..." remains a
+backwards-compatible alias for older scripts.
 
 Portable ZIP / advanced install
 -------------------------------
@@ -40,21 +47,37 @@ Uninstall
 ---------
 The Smart Installer registers OBS Safe VST3 Host in Windows Installed Apps.
 
-For a portable installation, close OBS and run UNINSTALL-MANUAL.cmd from the
+For a manual/ZIP installation, close OBS and run UNINSTALL-MANUAL.cmd from the
 OBS root, or remove only the project-owned files listed above.
 
 Scanner behavior
 ----------------
-The stable Windows runtime scans standard Windows VST3 locations. Each
-discovered .vst3 bundle is probed in its own short-lived scanner child process.
-A hung probe is terminated after its timeout and skipped. The resulting cache
-is stored under the current user's LocalAppData folder and read by the OBS
-properties UI.
+Installed VST3 discovery begins automatically shortly after the OBS module
+loads. Standard Windows VST3 locations and VST3_PATH are searched. Newly found
+.vst3 bundles are published to a cache as name-only fallback entries before
+vendor code is probed, so discovery does not depend on every plug-in loading
+successfully.
 
-Use Browse / Custom VST3... for a non-standard location.
+Each bundle is then probed in its own short-lived scanner child process. A hung
+probe is terminated after its timeout. Failed probes retain a valid previous
+cache entry when available, otherwise the name-only fallback is kept. The
+cache is stored under the current user's LocalAppData folder and read by the
+OBS properties UI.
 
-Phase S stable behavior
------------------------
+Rescan is asynchronous: it never waits behind a startup scan on the OBS UI
+thread. Use Browse / Custom VST3... for a non-standard location.
+
+Native editor behavior
+----------------------
+Opening Filters/Properties, restoring a scene, helper recovery, installed-list
+selection, startup scanning and Rescan never open a vendor VST3 GUI.
+
+A brand-new empty VST3 filter may auto-open the vendor GUI exactly once after
+the first real Browse / Custom VST3 selection. After that, the vendor GUI opens
+only from Open Plug-in Interface.
+
+Phase S behavior
+----------------
 - Third-party VST3 DSP runs in obs-safe-vst3-host.exe, not obs64.exe.
 - Scanning also occurs outside OBS, with a separate child probe per bundle.
 - Native vendor VST3 GUI is hosted by the isolated helper when available.
@@ -72,17 +95,18 @@ Phase S stable behavior
 Current scope / limitations
 ---------------------------
 - Windows x64 runtime.
+- Official compatibility target for this line: OBS Studio 29.1+.
 - Mono/stereo float32 audio effects.
 - Complete restartComponent() I/O reconfiguration is still partial.
 - Sidechain / multiple audio buses are not fully supported.
 - VST3 instruments/MIDI are not supported.
 - Arbitrary multichannel and float64 fallback are not yet supported.
 - Linux/macOS runtime packages are not currently shipped.
-- The Safe VST3 Rack is a later phase; v0.4.0 remains one effect per OBS filter.
+- The Safe VST3 Rack is a later phase; the current line remains one effect per
+  OBS filter.
 
-Phase S stable means the Single Host state/recovery/DSP-isolation architecture
-is now the stable release baseline. It is not a guarantee that every third-party
-VST3 plug-in is compatible.
+Phase S refers to the Single Host state/recovery/DSP-isolation architecture. It
+is not a guarantee that every third-party VST3 plug-in is compatible.
 
 Security note
 -------------
@@ -91,17 +115,20 @@ plug-ins you trust.
 
 CI / release validation
 -----------------------
-The Windows release pipeline validates:
+The Windows validation pipeline covers:
 - protocol v6 tests and state/recovery invariants;
 - SPSC realtime queue tests;
 - isolated host build;
-- isolated scanner build and smoke execution;
+- isolated scanner discovery/self-test and smoke execution;
 - hang-watchdog and control-stall/DSP-survival fault tests;
 - checkpoint restoration across helper death/recreation;
-- real OBS module compilation against pinned OBS/libobs 32.2.2;
+- OBS module compilation against current pinned libobs;
+- actual module load compatibility against official OBS 29.1.3 runtime;
+- static MSVC runtime dependency audit;
 - portable ZIP layout;
-- Smart Installer install/uninstall/reinstall using a remembered portable path;
-- SHA-256 checksums for published assets.
+- Smart Installer install/uninstall/reinstall using a remembered canonical OBS
+  root;
+- SHA-256 checksums for release assets.
 
 Real-world third-party VST3 compatibility still benefits from compatibility
 reports and plug-in-specific testing.

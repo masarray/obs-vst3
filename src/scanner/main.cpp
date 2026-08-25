@@ -106,13 +106,8 @@ void append_unique_root(std::vector<fs::path>& roots, const fs::path& root)
         roots.push_back(candidate);
 }
 
-std::vector<fs::path> override_scan_roots()
+void append_root_list(std::vector<fs::path>& roots, const std::wstring& raw)
 {
-    const std::wstring raw = env_w(L"OBS_SAFE_VST3_SCAN_ROOTS");
-    if (raw.empty())
-        return {};
-
-    std::vector<fs::path> roots;
     std::size_t start = 0;
     while (start <= raw.size()) {
         const auto end = raw.find(L';', start);
@@ -123,6 +118,16 @@ std::vector<fs::path> override_scan_roots()
             break;
         start = end + 1;
     }
+}
+
+std::vector<fs::path> override_scan_roots()
+{
+    const std::wstring raw = env_w(L"OBS_SAFE_VST3_SCAN_ROOTS");
+    if (raw.empty())
+        return {};
+
+    std::vector<fs::path> roots;
+    append_root_list(roots, raw);
     return roots;
 }
 
@@ -133,8 +138,7 @@ std::vector<fs::path> scan_roots()
 
     std::vector<fs::path> roots;
 
-    // Use the Windows Known Folder API first. These match Steinberg's official
-    // VST3 locations and do not depend on environment-variable redirection.
+    // Official Steinberg VST3 locations via Known Folder APIs.
     const auto user_common = known_folder(FOLDERID_UserProgramFilesCommon);
     const auto global_common = known_folder(FOLDERID_ProgramFilesCommon);
     if (!user_common.empty())
@@ -142,14 +146,30 @@ std::vector<fs::path> scan_roots()
     if (!global_common.empty())
         append_unique_root(roots, global_common / L"VST3");
 
-    // Environment fallbacks keep discovery working on unusual Windows images
-    // where Known Folder resolution is unavailable.
+    // Environment fallbacks plus a few common vendor deviations. OBS is x64,
+    // so prefer the native Program Files tree and never probe x86-only roots.
     const auto common = env_w(L"CommonProgramFiles");
+    const auto common_w6432 = env_w(L"CommonProgramW6432");
+    const auto program_files = env_w(L"ProgramFiles");
     const auto local = env_w(L"LOCALAPPDATA");
     if (!common.empty())
         append_unique_root(roots, fs::path(common) / L"VST3");
-    if (!local.empty())
+    if (!common_w6432.empty())
+        append_unique_root(roots, fs::path(common_w6432) / L"VST3");
+    if (!program_files.empty()) {
+        append_unique_root(roots, fs::path(program_files) / L"Common Files" / L"VST3");
+        append_unique_root(roots, fs::path(program_files) / L"VST3");
+    }
+    if (!local.empty()) {
         append_unique_root(roots, fs::path(local) / L"Programs" / L"Common" / L"VST3");
+        append_unique_root(roots, fs::path(local) / L"VST3");
+    }
+
+    // Respect an explicitly configured VST3_PATH without requiring users to
+    // know the OBS-specific diagnostic override variable.
+    const auto vst3_path = env_w(L"VST3_PATH");
+    if (!vst3_path.empty())
+        append_root_list(roots, vst3_path);
 
     return roots;
 }
@@ -222,6 +242,59 @@ CachedLinesByPath load_cached_lines_by_path(const fs::path& cache)
         entries[normalized_path_key(fs::u8path(path_utf8))].push_back(line);
     }
     return entries;
+}
+
+std::string fallback_cache_line(const fs::path& bundle)
+{
+    std::string name = sanitize(utf8(bundle.stem().wstring()));
+    if (name.empty())
+        name = sanitize(utf8(bundle.filename().wstring()));
+    const std::string path = sanitize(utf8(bundle.wstring()));
+    if (name.empty() || path.empty())
+        return {};
+    // Empty class id is intentional. The isolated host falls back to the first
+    // VST audio-effect class when an installed-list entry explicitly carries
+    // an empty class field.
+    return name + "\t" + path + "\t";
+}
+
+bool publish_discovery_seed(const fs::path& cache,
+                            const std::vector<fs::path>& bundles,
+                            const CachedLinesByPath& cached)
+{
+    const fs::path staging(cache.wstring() + L".discovering");
+    std::ofstream out(staging, std::ios::binary | std::ios::trunc);
+    if (!out)
+        return false;
+
+    unsigned written = 0;
+    for (const auto& bundle : bundles) {
+        const auto previous = cached.find(normalized_path_key(bundle));
+        if (previous != cached.end()) {
+            for (const auto& line : previous->second) {
+                out << line << '\n';
+                ++written;
+            }
+            continue;
+        }
+
+        const auto line = fallback_cache_line(bundle);
+        if (line.empty())
+            continue;
+        out << line << '\n';
+        ++written;
+    }
+    out.close();
+
+    if (written == 0 && !bundles.empty()) {
+        DeleteFileW(staging.c_str());
+        return false;
+    }
+    if (!MoveFileExW(staging.c_str(), cache.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(staging.c_str());
+        return false;
+    }
+    return true;
 }
 
 int probe(const fs::path& plugin, const fs::path& output)
@@ -325,13 +398,55 @@ ProbeOutcome run_probe_child(const fs::path& self, const fs::path& plugin, const
     return wait == WAIT_OBJECT_0 ? classify_probe_exit(exit_code) : ProbeOutcome::Failed;
 }
 
-int scan_all(const fs::path& self, const fs::path& cache)
+struct DiscoveryInventory {
+    std::vector<fs::path> roots;
+    std::vector<fs::path> bundles;
+    CachedLinesByPath cached;
+};
+
+DiscoveryInventory discover_inventory(const fs::path& cache,
+                                      const std::vector<fs::path>& roots = scan_roots())
 {
-    const auto roots = scan_roots();
-    const auto bundles = discover_bundles_from_roots(roots);
-    const auto cached = load_cached_lines_by_path(cache);
+    DiscoveryInventory inventory;
+    inventory.roots = roots;
+    inventory.bundles = discover_bundles_from_roots(inventory.roots);
+    inventory.cached = load_cached_lines_by_path(cache);
+    return inventory;
+}
+
+int discover_only(const fs::path& cache,
+                  const std::vector<fs::path>& roots = scan_roots())
+{
+    const DiscoveryInventory inventory = discover_inventory(cache, roots);
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
+
+    if (!publish_discovery_seed(cache, inventory.bundles, inventory.cached)) {
+        return 6;
+    }
+
+    std::cout << "roots=" << inventory.roots.size()
+              << " bundles=" << inventory.bundles.size()
+              << " discovery_only=1\n";
+    return 0;
+}
+
+int scan_all(const fs::path& self, const fs::path& cache)
+{
+    const DiscoveryInventory inventory = discover_inventory(cache);
+    const auto& roots = inventory.roots;
+    const auto& bundles = inventory.bundles;
+    const auto& cached = inventory.cached;
+    std::error_code ec;
+    fs::create_directories(cache.parent_path(), ec);
+
+    // Always publish a discovery seed before probing vendor code. Existing
+    // bundles keep their exact cached class identities; newly discovered ones
+    // get a name-only fallback immediately. Removed bundles disappear from the
+    // seed. This keeps startup/rescan lists responsive on every scan, not only
+    // on a pristine first run.
+    if (!bundles.empty())
+        (void)publish_discovery_seed(cache, bundles, cached);
 
     const auto staging = cache.wstring() + L".tmp";
     std::ofstream combined(fs::path(staging), std::ios::binary | std::ios::trunc);
@@ -340,6 +455,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
 
     unsigned found = 0;
     unsigned retained = 0;
+    unsigned fallbacks = 0;
     unsigned failed = 0;
     unsigned valid_without_effects = 0;
     unsigned serial = 0;
@@ -369,24 +485,18 @@ int scan_all(const fs::path& self, const fs::path& cache)
                     combined << line << '\n';
                     ++retained;
                 }
+            } else {
+                const auto fallback = fallback_cache_line(bundle);
+                if (!fallback.empty()) {
+                    combined << fallback << '\n';
+                    ++fallbacks;
+                }
             }
         }
         DeleteFileW(probe_out.c_str());
     }
 
     combined.close();
-
-    // If every discovered bundle failed, retain the previous cache byte-for-byte.
-    // For a partial failure, only the failed bundle's previous entries are carried
-    // forward; successful probes remain authoritative and removed bundles vanish.
-    if (!bundles.empty() && failed == bundles.size()) {
-        DeleteFileW(staging.c_str());
-        std::cerr << "roots=" << roots.size() << " bundles=" << bundles.size()
-                  << " plugins=0 retained=" << retained
-                  << " no_audio_effects=0 failed_bundles=" << failed
-                  << " previous_cache=kept\n";
-        return 9;
-    }
 
     if (!MoveFileExW(staging.c_str(), cache.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         DeleteFileW(staging.c_str());
@@ -396,6 +506,7 @@ int scan_all(const fs::path& self, const fs::path& cache)
     std::cout << "roots=" << roots.size() << " bundles=" << bundles.size()
               << " plugins=" << found
               << " retained=" << retained
+              << " fallback_names=" << fallbacks
               << " no_audio_effects=" << valid_without_effects
               << " failed_bundles=" << failed << '\n';
     return 0;
@@ -439,12 +550,25 @@ int self_test_discovery()
     const bool partial_cache_lookup_ok =
         cached_it != cached_entries.end() && cached_it->second.size() == 1;
 
+    const auto fallback = fallback_cache_line(root / L"VendorA.vst3");
+    const bool fallback_ok = fallback.rfind("VendorA\t", 0) == 0 &&
+                             !fallback.empty() && fallback.back() == '\t';
+
+    const auto seed_cache = root / L"seed.tsv";
+    const bool seed_published = publish_discovery_seed(seed_cache, bundles, cached_entries);
+    const auto seed_entries = load_cached_lines_by_path(seed_cache);
+    const auto seeded_a = seed_entries.find(normalized_path_key(root / L"VendorA.vst3"));
+    const bool seed_ok = seed_published && seed_entries.size() == 2 &&
+                         seeded_a != seed_entries.end() && !seeded_a->second.empty() &&
+                         seeded_a->second.front().rfind("Cached A\t", 0) == 0;
+
     std::jthread no_watchdog;
     const bool watchdog_fail_closed = !start_parent_watchdog(0, no_watchdog);
 
     fs::remove_all(root, ec);
     if (bundles.size() != 2 || !saw_a || !saw_b || saw_nested_inside_bundle ||
-        !probe_classification_ok || !partial_cache_lookup_ok || !watchdog_fail_closed) {
+        !probe_classification_ok || !partial_cache_lookup_ok || !fallback_ok ||
+        !seed_ok || !watchdog_fail_closed) {
         std::cerr << "scanner discovery self-test failed\n";
         return 10;
     }
@@ -459,8 +583,10 @@ int wmain(int argc, wchar_t** argv)
     fs::path probe_path;
     fs::path out_path;
     fs::path cache_path;
+    std::vector<fs::path> discovery_roots;
     DWORD parent_pid = 0;
     bool self_test = false;
+    bool discovery_only = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg = argv[i];
@@ -470,6 +596,12 @@ int wmain(int argc, wchar_t** argv)
             out_path = argv[++i];
         else if (arg == L"--scan-to" && i + 1 < argc)
             cache_path = argv[++i];
+        else if (arg == L"--discover-to" && i + 1 < argc) {
+            cache_path = argv[++i];
+            discovery_only = true;
+        }
+        else if (arg == L"--root" && i + 1 < argc)
+            discovery_roots.emplace_back(argv[++i]);
         else if (arg == L"--parent-pid" && i + 1 < argc)
             parent_pid = static_cast<DWORD>(std::wcstoul(argv[++i], nullptr, 10));
         else if (arg == L"--self-test")
@@ -489,6 +621,12 @@ int wmain(int argc, wchar_t** argv)
     }
 
     if (!cache_path.empty()) {
+        if (discovery_only) {
+            return discovery_roots.empty()
+                       ? discover_only(cache_path)
+                       : discover_only(cache_path, discovery_roots);
+        }
+
         wchar_t self_buffer[32768]{};
         const DWORD len = GetModuleFileNameW(nullptr, self_buffer, static_cast<DWORD>(std::size(self_buffer)));
         if (!len)
@@ -496,7 +634,7 @@ int wmain(int argc, wchar_t** argv)
         return scan_all(fs::path(std::wstring(self_buffer, len)), cache_path);
     }
 
-    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv> | --self-test\n";
+    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv> | --discover-to <cache.tsv> [--root <path>] | --self-test\n";
     return 1;
 }
 

@@ -1,0 +1,243 @@
+name: Compatibility Test Build
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/compat-test-build.yml'
+      - 'CMakeLists.txt'
+      - 'src/obs-plugin/obs_compat_floor.hpp'
+      - 'src/obs-plugin/plugin.cpp'
+      - 'src/scanner/main.cpp'
+      - 'installer/windows/obs-safe-vst3.iss'
+      - 'data/locale/en-US.ini'
+      - 'scripts/package-windows.ps1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-compat-package:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch OBS 32.2.2 SDK
+        shell: pwsh
+        run: git clone --branch 32.2.2 --depth 1 --recurse-submodules --shallow-submodules https://github.com/obsproject/obs-studio.git .obs-sdk
+
+      - name: Adapt OBS preset to hosted VS2022
+        shell: pwsh
+        working-directory: .obs-sdk
+        run: |
+          $Path = 'CMakePresets.json'
+          $Text = Get-Content $Path -Raw
+          $Text = $Text.Replace('Visual Studio 18 2026', 'Visual Studio 17 2022')
+          $Text = $Text.Replace('x64,version=10.0.26100.0', 'x64')
+          Set-Content -Path $Path -Value $Text -Encoding UTF8
+
+      - name: Build OBS/libobs SDK
+        shell: pwsh
+        working-directory: .obs-sdk
+        env:
+          CI: 'true'
+        run: .\.github\scripts\Build-Windows.ps1 -Target x64 -Configuration Release
+
+      - name: Stage libobs development package
+        id: libobs
+        shell: pwsh
+        run: |
+          $Generated = Get-ChildItem -Path '.obs-sdk' -Filter 'libobsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '[\\/]install[\\/]' } |
+            Select-Object -First 1
+          if (-not $Generated) { throw 'Generated libobsConfig.cmake was not found.' }
+          $BuildRoot = Split-Path $Generated.Directory.FullName -Parent
+          $SdkPrefix = Join-Path $env:RUNNER_TEMP 'obs-libobs-sdk'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SdkPrefix
+          cmake --install $BuildRoot --prefix $SdkPrefix --config Release --component Development
+          if ($LASTEXITCODE -ne 0) { throw "Installing OBS Development component failed: $LASTEXITCODE" }
+          $Config = Get-ChildItem -Path $SdkPrefix -Filter 'libobsConfig.cmake' -File -Recurse | Select-Object -First 1
+          if (-not $Config) { throw 'Staged libobsConfig.cmake missing.' }
+          $W32PthreadsConfig = Get-ChildItem -Path $SdkPrefix -Filter 'w32-pthreadsConfig.cmake' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $W32PthreadsConfig) { throw 'w32-pthreads package missing.' }
+          $ObsDepsRoot = Join-Path '.obs-sdk' '.deps'
+          $ObsDepsPrefix = Get-ChildItem -Path $ObsDepsRoot -Directory -Filter 'obs-deps-*-x64' -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'include\simde\simde-common.h') } |
+            Select-Object -First 1
+          if (-not $ObsDepsPrefix) { throw 'OBS dependency prefix missing.' }
+          "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
+          "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
+          "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Configure compatibility build
+        shell: pwsh
+        run: |
+          cmake -S . -B build/compat -A x64 `
+            "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }}" `
+            -DSAFEVST3_STATIC_MSVC_RUNTIME=ON `
+            -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
+            -DSAFEVST3_BUILD_TESTS=ON
+
+      - name: Build plugin, helper, scanner and tests
+        shell: pwsh
+        run: cmake --build build/compat --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
+
+      - name: Run Windows tests
+        shell: pwsh
+        run: ctest --test-dir build/compat -C Release --output-on-failure
+
+      - name: Scanner smoke test
+        shell: pwsh
+        run: |
+          $Scanner = Get-ChildItem build/compat -Filter 'obs-safe-vst3-scanner.exe' -File -Recurse | Select-Object -First 1
+          if (-not $Scanner) { throw 'scanner executable missing' }
+          $Cache = Join-Path $env:RUNNER_TEMP 'plugins.tsv'
+          $P = Start-Process -FilePath $Scanner.FullName -ArgumentList '--scan-to', "`"$Cache`"" -Wait -PassThru
+          if ($P.ExitCode -ne 0) { throw "scanner exited $($P.ExitCode)" }
+          if (-not (Test-Path $Cache)) { throw 'scanner did not create cache' }
+
+      - name: Install official OBS 29.1.3 runtime for loader probe
+        id: obs29
+        shell: pwsh
+        run: |
+          $Installer = Join-Path $env:RUNNER_TEMP 'OBS-Studio-29.1.3-Full-Installer-x64.exe'
+          $Url = 'https://github.com/obsproject/obs-studio/releases/download/29.1.3/OBS-Studio-29.1.3-Full-Installer-x64.exe'
+          Invoke-WebRequest -Uri $Url -OutFile $Installer
+          $Expected = 'F5D429B2F75E85A7FB3E8DC84613FA362AB10276E4679B19F57DCAE86569536B'
+          $Actual = (Get-FileHash -Algorithm SHA256 $Installer).Hash.ToUpperInvariant()
+          if ($Actual -ne $Expected) { throw "OBS 29.1.3 installer checksum mismatch: $Actual" }
+          $Root = Join-Path $env:RUNNER_TEMP 'obs-29.1.3'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Root
+          New-Item -ItemType Directory -Force -Path $Root | Out-Null
+          $P = Start-Process -FilePath $Installer -ArgumentList '/S', "/D=$Root" -Wait -PassThru
+          if ($P.ExitCode -ne 0) { throw "OBS 29.1.3 silent install exited $($P.ExitCode)" }
+          $ObsDll = Get-ChildItem $Root -Filter 'obs.dll' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $ObsDll) { throw 'Official OBS 29.1.3 runtime obs.dll not found after install' }
+          Write-Host "OBS 29.1.3 runtime: $($ObsDll.FullName)"
+          "bin=$($ObsDll.Directory.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Verify module loads on real OBS 29.1.3 runtime and advertises ABI floor
+        shell: pwsh
+        run: |
+          $Plugin = Get-ChildItem build/compat -Filter 'obs-safe-vst3.dll' -File -Recurse | Select-Object -First 1
+          if (-not $Plugin) { throw 'plugin DLL missing' }
+          $ObsBin = '${{ steps.obs29.outputs.bin }}'
+          if (-not (Test-Path (Join-Path $ObsBin 'obs.dll'))) { throw 'OBS 29.1.3 obs.dll missing for loader probe' }
+          $env:PATH = "$ObsBin;$env:PATH"
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class SafeVst3ModuleProbe {
+              [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
+              public static extern IntPtr LoadLibrary(string path);
+              [DllImport("kernel32", CharSet = CharSet.Ansi, SetLastError = true)]
+              public static extern IntPtr GetProcAddress(IntPtr module, string name);
+              [DllImport("kernel32", SetLastError = true)]
+              [return: MarshalAs(UnmanagedType.Bool)]
+              public static extern bool FreeLibrary(IntPtr module);
+              [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+              public delegate UInt32 ModuleVersion();
+          }
+          '@
+          $Handle = [SafeVst3ModuleProbe]::LoadLibrary($Plugin.FullName)
+          if ($Handle -eq [IntPtr]::Zero) {
+            $Err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw "LoadLibrary(obs-safe-vst3.dll) against OBS 29.1.3 failed with Win32 error $Err"
+          }
+          try {
+            $Proc = [SafeVst3ModuleProbe]::GetProcAddress($Handle, 'obs_module_ver')
+            if ($Proc -eq [IntPtr]::Zero) { throw 'obs_module_ver export missing' }
+            $Delegate = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($Proc, [type][SafeVst3ModuleProbe+ModuleVersion])
+            [uint32]$Version = $Delegate.Invoke()
+            [uint32]$Expected = (29 -shl 24) -bor (1 -shl 16)
+            Write-Host ("obs_module_ver=0x{0:X8}, expected=0x{1:X8}" -f $Version, $Expected)
+            if (($Version -band 0xFFFF0000) -ne $Expected) {
+              throw ("Unexpected OBS ABI floor 0x{0:X8}" -f $Version)
+            }
+          } finally {
+            [void][SafeVst3ModuleProbe]::FreeLibrary($Handle)
+          }
+
+      - name: Ensure Inno Setup 6
+        id: inno
+        shell: pwsh
+        run: |
+          $Candidates = @('C:\Program Files (x86)\Inno Setup 6\ISCC.exe','C:\Program Files\Inno Setup 6\ISCC.exe')
+          $Iscc = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $Iscc) { choco install innosetup -y --no-progress; $Iscc = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1 }
+          if (-not $Iscc) { throw 'Inno Setup 6 not found' }
+          "path=$Iscc" >> $env:GITHUB_OUTPUT
+
+      - name: Package stabilization test build
+        shell: pwsh
+        run: .\scripts\package-windows.ps1 -BuildDir build/compat -Version '0.4.1-stabilize-test5' -OutDir dist -Iscc '${{ steps.inno.outputs.path }}'
+
+      - name: Inspect PE dependencies
+        shell: pwsh
+        run: |
+          $Dumpbin = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC' -Filter dumpbin.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $Dumpbin) { throw 'dumpbin.exe not found' }
+          foreach ($Name in @('obs-safe-vst3.dll','obs-safe-vst3-host.exe','obs-safe-vst3-scanner.exe')) {
+            $Binary = Get-ChildItem build/compat -Filter $Name -File -Recurse | Select-Object -First 1
+            if (-not $Binary) { throw "$Name missing" }
+            $Imports = & $Dumpbin.FullName /DEPENDENTS $Binary.FullName | Out-String
+            Write-Host "=== $Name ==="
+            Write-Host $Imports
+            if ($Imports -match 'MSVCP140(?:_ATOMIC_WAIT)?\.dll|VCRUNTIME140(?:_1)?\.dll') {
+              throw "$Name still has a dynamic MSVC runtime dependency"
+            }
+          }
+
+      - name: Validate portable package
+        shell: pwsh
+        run: |
+          $Zip = Get-ChildItem dist -Filter '*Portable.zip' -File | Select-Object -First 1
+          $Setup = Get-ChildItem dist -Filter '*Setup-x64.exe' -File | Select-Object -First 1
+          $Sums = Join-Path (Resolve-Path dist) 'SHA256SUMS.txt'
+          if (-not $Zip -or -not $Setup -or -not (Test-Path $Sums)) { throw 'package assets missing' }
+          $Check = Join-Path $env:RUNNER_TEMP 'package-check'
+          Expand-Archive $Zip.FullName -DestinationPath $Check -Force
+          foreach ($Rel in @('obs-plugins\64bit\obs-safe-vst3.dll','obs-plugins\64bit\obs-safe-vst3-host.exe','obs-plugins\64bit\obs-safe-vst3-scanner.exe','data\obs-plugins\obs-safe-vst3\locale\en-US.ini')) {
+            if (-not (Test-Path (Join-Path $Check $Rel))) { throw "missing $Rel" }
+          }
+
+      - name: Smoke-test canonical OBS-root installer
+        shell: pwsh
+        run: |
+          $Setup = Get-ChildItem dist -Filter '*Setup-x64.exe' -File | Select-Object -First 1
+          if (-not $Setup) { throw 'installer missing' }
+          $Root = Join-Path $env:RUNNER_TEMP 'synthetic-obs-root'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Root
+          New-Item -ItemType Directory -Force -Path (Join-Path $Root 'bin\64bit') | Out-Null
+          Set-Content -Path (Join-Path $Root 'bin\64bit\obs64.exe') -Value 'synthetic OBS marker' -Encoding ASCII
+          $Reg = 'HKCU:\Software\masarray\OBS Safe VST3 Host'
+          Remove-Item -Path $Reg -Recurse -Force -ErrorAction SilentlyContinue
+          $Arg = "/ObsRoot=`"$Root`""
+          $P = Start-Process -FilePath $Setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',$Arg -Wait -PassThru
+          if ($P.ExitCode -ne 0) { throw "installer exited $($P.ExitCode)" }
+          foreach ($Rel in @('obs-plugins\64bit\obs-safe-vst3.dll','obs-plugins\64bit\obs-safe-vst3-host.exe','obs-plugins\64bit\obs-safe-vst3-scanner.exe','data\obs-plugins\obs-safe-vst3\locale\en-US.ini')) {
+            if (-not (Test-Path (Join-Path $Root $Rel))) { throw "installer missing $Rel" }
+          }
+          if (-not (Test-Path $Reg)) { throw 'installer did not persist OBS root' }
+          $Remembered = (Get-ItemProperty -Path $Reg).LastObsRoot
+          if ([IO.Path]::GetFullPath([string]$Remembered).TrimEnd('\') -ne [IO.Path]::GetFullPath($Root).TrimEnd('\')) {
+            throw "remembered OBS root mismatch: $Remembered"
+          }
+
+      - name: Upload stabilization test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBS-Safe-VST3-Host-v0.4.1-stabilize-test5-windows-x64
+          path: |
+            dist/*Setup-x64.exe
+            dist/*Portable.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
