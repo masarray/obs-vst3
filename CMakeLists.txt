@@ -55,6 +55,11 @@ add_library(safevst3_reload_component_transaction STATIC
 )
 target_include_directories(safevst3_reload_component_transaction PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_library(safevst3_process_context_policy STATIC
+    src/common/process_context_policy.cpp
+)
+target_include_directories(safevst3_process_context_policy PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 if(WIN32)
     include(FetchContent)
     set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -118,7 +123,7 @@ if(WIN32)
         safevst3_win_ipc safevst3_vst3_hosting_runtime safevst3_lifecycle_policy
         safevst3_state_restore_policy safevst3_latency_restart_transaction
         safevst3_parameter_refresh_transaction safevst3_io_restart_transaction
-        safevst3_reload_component_transaction Avrt)
+        safevst3_reload_component_transaction safevst3_process_context_policy Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
@@ -190,6 +195,17 @@ if(SAFEVST3_BUILD_TESTS)
     add_executable(reload-component-transaction-test tests/reload_component_transaction.cpp)
     target_link_libraries(reload-component-transaction-test PRIVATE safevst3_reload_component_transaction)
     add_test(NAME reload-component-transaction COMMAND reload-component-transaction-test)
+
+    add_executable(process-context-policy-test tests/process_context_policy.cpp)
+    target_link_libraries(process-context-policy-test PRIVATE safevst3_process_context_policy)
+    add_test(NAME process-context-policy COMMAND process-context-policy-test)
+
+    add_test(
+        NAME process-context-source-contract
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/vst3_engine.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/process_context_source_contract.cmake
+    )
 
     add_test(
         NAME obs-properties-ownership
@@ -267,7 +283,7 @@ if(SAFEVST3_BUILD_TESTS)
         vst3-source-selection-test lifecycle-restart-policy-test state-restore-policy-test
         latency-restart-transaction-test parameter-refresh-transaction-test
         io-restart-transaction-test reload-component-transaction-test
-        parameter-control-test state-snapshot-test
+        process-context-policy-test parameter-control-test state-snapshot-test
         recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test
