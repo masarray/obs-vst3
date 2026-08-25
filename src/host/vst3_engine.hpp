@@ -64,8 +64,12 @@ public:
               Steinberg::Vst::IComponentHandler* component_handler,
               std::string& error)
     {
-        return open(path, class_id, sample_rate, channels, component_handler,
-                    current_startup_phase_sink(), error);
+        StartupPhaseSink* sink = current_startup_phase_sink();
+        const bool opened = open(path, class_id, sample_rate, channels,
+                                 component_handler, sink, error);
+        if (sink)
+            set_current_startup_phase_sink(nullptr);
+        return opened;
     }
     void close() noexcept;
     bool process(AudioSlot& slot) noexcept;
