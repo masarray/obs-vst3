@@ -33,13 +33,18 @@ PR #23 subsequently qualified the Single Host source-selector/Browse regression 
 validated PR #23 stabilization result
 → create/identify clean main-target integration fixed point
 → port only the reviewed crash-proof stabilization changes needed for Gate 0
-→ run full exact-head CI and compatibility qualification
-→ perform required exact-build real-machine OBS regression
-→ resolve review findings on that same source head
-→ merge the qualified main-target head
+→ review correctness/architecture on the current source head
+→ resolve every review finding
+→ if a resolution changes the source head, review the new head again
+→ run final exact-head CI and compatibility qualification
+→ perform required real-machine OBS regression using the artifact from that same source head
+→ if any later finding or change modifies the source head, invalidate the prior qualification and loop back through review + CI + compatibility + same-build real-machine qualification
+→ merge only the unchanged, fully qualified main-target source head
 → record/tag the known-good Gate 0 baseline
 → only then unlock North Star S1
 ```
+
+No review, CI, compatibility, package, or real-machine evidence survives a source-head change for the purpose of final Gate 0 authorization. Evidence from an older head may remain useful historical evidence, but it cannot qualify the new head.
 
 5. **Artifact provenance must point to the actual source head.**
    - For pull-request workflows, do not label a public/real-test artifact only with GitHub's synthetic PR merge SHA when the contract is qualifying the PR source head.
@@ -53,13 +58,15 @@ validated PR #23 stabilization result
 The final main-target Gate 0 head must record, at minimum:
 
 - exact final source SHA;
-- exact-head CI run IDs/URLs with all required jobs green;
-- compatibility qualification required by the supported OBS floor/current target policy;
-- named regression tests that actually executed;
+- correctness/architecture review tied to that final source SHA with no unresolved findings;
+- exact-head CI run IDs/URLs with all required jobs executed and green on that same source SHA;
+- compatibility qualification required by the supported OBS floor/current target policy on that same source SHA;
+- named regression tests that actually executed and passed;
 - a public/real-test artifact whose provenance identifies the same source SHA;
-- real OBS machine evidence covering the stabilization workflows affected by the port, including Properties open/close/reopen, Installed/Browse selection, vendor editor ownership, helper recovery and zero-action restoration where applicable;
-- no unresolved correctness/architecture review findings;
+- real OBS machine evidence using that exact artifact and covering the stabilization workflows affected by the port, including Properties open/close/reopen, Installed/Browse selection, vendor editor ownership, helper recovery and zero-action restoration where applicable;
 - no known OBS crash regression.
+
+If the source head changes after any of these checks, all final-head qualification evidence affected by the change must be repeated before merge.
 
 A green historical #22 run, a green maintenance-only #23 run, or a manual test of a differently built package cannot by itself close the canonical Gate 0.
 
