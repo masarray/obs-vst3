@@ -377,12 +377,21 @@ Known blockers: none
 Regression tests added:
 Manual real-machine evidence:
 Architecture invariants: PASS
-Persistence contract: PASS / N/A
-Preset/reuse contract: PASS / N/A
+Persistence contract: PASS / N/A only when persistence is not yet a required gate for this milestone
+Preset/reuse contract: PASS / N/A only before Rack preset/reuse becomes an applicable gate
 Next unlocked milestone:
 ```
 
-This prevents a future Codex session from guessing what “finished” meant.
+Mandatory lock rules override the generic template:
+
+- **S6 / Single Host v1.0 lock:** `Persistence contract` MUST be `PASS`. `N/A` is forbidden.
+- **R5 / Rack v2.0 lock:** `Persistence contract` MUST be `PASS` and `Preset/reuse contract` MUST be `PASS`. `N/A` is forbidden for either.
+- A milestone that explicitly introduces or qualifies persistence/preset behavior must record `PASS` for the behavior it claims complete before it can close.
+- `N/A` may be used only by earlier milestones where that contract is genuinely outside the milestone's current release gate; it must never be used to bypass a required product-completion contract.
+
+If the mandatory value is not `PASS`, the product lock does not exist and the next locked phase must not start.
+
+This prevents a future Codex session from guessing what “finished” meant or closing v1.0/v2.0 without evidence for mandatory persistence and reuse.
 
 ---
 
