@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "common/protocol.hpp"
+#include "common/io_restart_transaction.hpp"
 #include "common/latency_restart_transaction.hpp"
 #include "common/state_snapshot.hpp"
 
@@ -39,7 +40,7 @@ struct EngineParameterUpdate {
     double normalized = 0.0;
 };
 
-class Vst3Engine final : public LatencyRestartTarget {
+class Vst3Engine final : public LatencyRestartTarget, public IoRestartLifecycleTarget {
 public:
     Vst3Engine() = default;
     ~Vst3Engine();
@@ -58,6 +59,9 @@ public:
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
     bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
     bool refresh_latency_after_restart(std::string& error);
+    bool reconfigure_io_after_restart(IoLayout& layout,
+                                      std::uint32_t& latency_samples,
+                                      std::string& error);
 
     // Transitional combined seam retained for callers outside the S2 helper.
     // S2 helper code uses the explicit controller/processor ownership methods
@@ -85,7 +89,19 @@ private:
     bool set_active(bool enabled) noexcept override;
     std::uint32_t get_latency_samples() noexcept override;
 
+    bool io_stop_processing() noexcept override;
+    bool io_deactivate() noexcept override;
+    bool io_inspect_requested_layout(IoLayout& layout) noexcept override;
+    IoArrangementResult io_confirm_requested_layout(const IoLayout& layout) noexcept override;
+    bool io_inspect_confirmed_layout(IoLayout& layout) noexcept override;
+    bool io_rebuild_processing(const IoLayout& layout) noexcept override;
+    bool io_activate() noexcept override;
+    bool io_query_latency(std::uint32_t& latency_samples) noexcept override;
+    bool io_start_processing() noexcept override;
+    void io_commit_layout(const IoLayout& layout, std::uint32_t latency_samples) noexcept override;
+
     bool configure_buses(std::uint32_t channels, std::string& error);
+    bool collect_io_layout_candidate(IoLayout& layout) noexcept;
     bool enumerate_parameters(std::string& error);
     bool queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept;
     bool apply_pending_parameter_changes(Steinberg::Vst::ProcessData& data) noexcept;
@@ -107,6 +123,19 @@ private:
     Steinberg::Vst::ProcessContext process_context_{};
     Steinberg::int32 main_input_bus_ = -1;
     Steinberg::int32 main_output_bus_ = -1;
+    static constexpr std::size_t kMaxDynamicAudioBuses = 16;
+    std::uint32_t plugin_input_channels_ = 0;
+    std::uint32_t plugin_output_channels_ = 0;
+    std::array<Steinberg::Vst::SpeakerArrangement, kMaxDynamicAudioBuses> io_candidate_inputs_{};
+    std::array<Steinberg::Vst::SpeakerArrangement, kMaxDynamicAudioBuses> io_candidate_outputs_{};
+    Steinberg::int32 io_candidate_input_count_ = 0;
+    Steinberg::int32 io_candidate_output_count_ = 0;
+    Steinberg::int32 io_candidate_main_input_bus_ = -1;
+    Steinberg::int32 io_candidate_main_output_bus_ = -1;
+    alignas(64) std::array<std::array<Steinberg::Vst::Sample32, kMaxFrames>, kMaxChannels>
+        input_adapter_{};
+    alignas(64) std::array<std::array<Steinberg::Vst::Sample32, kMaxFrames>, kMaxChannels>
+        output_adapter_{};
     std::vector<EngineParameter> parameters_;
     std::array<EngineParameterUpdate, kMaxParameters> parameter_updates_{};
     std::size_t parameter_update_count_ = 0;

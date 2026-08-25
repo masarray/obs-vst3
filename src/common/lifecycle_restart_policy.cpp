@@ -28,4 +28,9 @@ RestartTransactionPlan plan_restart_component(std::uint32_t flags) noexcept
     return plan;
 }
 
+bool requires_standalone_latency_restart(const RestartTransactionPlan& plan) noexcept
+{
+    return plan.refresh_latency && !plan.reconfigure_io;
+}
+
 } // namespace safevst3

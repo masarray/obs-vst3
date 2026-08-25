@@ -25,5 +25,7 @@ struct RestartTransactionPlan {
 };
 
 [[nodiscard]] RestartTransactionPlan plan_restart_component(std::uint32_t flags) noexcept;
+[[nodiscard]] bool requires_standalone_latency_restart(
+    const RestartTransactionPlan& plan) noexcept;
 
 } // namespace safevst3
