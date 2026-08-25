@@ -2,6 +2,7 @@
 
 #include "platform/windows/win_ipc.hpp"
 
+#include "common/coherent_generation.hpp"
 #include "common/parameter_utils.hpp"
 
 #include <algorithm>
@@ -296,23 +297,36 @@ std::vector<ParameterSnapshot> WinObsBridge::parameters() const
     if (!running() || !region_)
         return result;
 
-    const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
-    result.reserve(count);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        auto& descriptor = region_->parameters[i];
-        const auto bits = InterlockedCompareExchange64(
-            reinterpret_cast<volatile LONG64*>(&descriptor.current_value_bits), 0, 0);
+    const auto read_generation = [&]() noexcept {
+        return static_cast<std::uint32_t>(InterlockedCompareExchange(
+            &region_->parameter_catalog_generation, 0, 0));
+    };
+    const bool coherent = read_coherent_generation(
+        result, read_generation,
+        [&](std::vector<ParameterSnapshot>& candidate) {
+            const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
+            candidate.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                auto& descriptor = region_->parameters[i];
+                const auto bits = InterlockedCompareExchange64(
+                    reinterpret_cast<volatile LONG64*>(&descriptor.current_value_bits), 0, 0);
 
-        ParameterSnapshot snapshot{};
-        snapshot.id = descriptor.id;
-        snapshot.step_count = descriptor.step_count;
-        snapshot.flags = descriptor.flags;
-        snapshot.default_normalized = descriptor.default_normalized;
-        snapshot.current_normalized = bits_to_double(static_cast<std::int64_t>(bits));
-        snapshot.title = bounded_string(descriptor.title, kParameterTitleBytes);
-        snapshot.units = bounded_string(descriptor.units, kParameterUnitsBytes);
-        result.push_back(std::move(snapshot));
-    }
+                ParameterSnapshot snapshot{};
+                snapshot.id = descriptor.id;
+                snapshot.step_count = descriptor.step_count;
+                snapshot.flags = descriptor.flags;
+                snapshot.default_normalized = descriptor.default_normalized;
+                snapshot.current_normalized = bits_to_double(static_cast<std::int64_t>(bits));
+                snapshot.title = bounded_string(descriptor.title, kParameterTitleBytes);
+                snapshot.units = bounded_string(descriptor.units, kParameterUnitsBytes);
+                candidate.push_back(std::move(snapshot));
+            }
+            MemoryBarrier();
+            return true;
+        },
+        3);
+    if (!coherent)
+        result.clear();
     return result;
 }
 
@@ -321,28 +335,70 @@ bool WinObsBridge::set_parameter(std::uint32_t id, double normalized) noexcept
     if (!running() || !region_ || !request_event_)
         return false;
 
-    const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        auto& descriptor = region_->parameters[i];
-        if (descriptor.id != id)
+    for (std::size_t attempt = 0; attempt < 3; ++attempt) {
+        const long stable = InterlockedCompareExchange(
+            &region_->parameter_catalog_generation, 0, 0);
+        if ((stable & 1L) != 0) {
+            SwitchToThread();
             continue;
-        if ((descriptor.flags & (ParameterReadOnly | ParameterHidden)) != 0)
-            return false;
+        }
 
-        normalized = normalize_parameter_value(normalized, descriptor.step_count);
-        const auto bits = static_cast<LONG64>(double_to_bits(normalized));
-        InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), bits);
+        // Claim the same odd generation used by helper-side catalog publication.
+        // Once claimed, metadata cannot be replaced until this bounded edit has
+        // either been queued or rejected, so a stale edit cannot leak into a new
+        // descriptor topology.
+        if (InterlockedCompareExchange(
+                &region_->parameter_catalog_generation, stable + 1, stable) != stable) {
+            SwitchToThread();
+            continue;
+        }
+
+        bool accepted = false;
+        const std::uint32_t count = std::min(region_->parameter_count, kMaxParameters);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto& descriptor = region_->parameters[i];
+            if (descriptor.id != id)
+                continue;
+            if ((descriptor.flags & (ParameterReadOnly | ParameterHidden)) == 0) {
+                const double value = normalize_parameter_value(normalized, descriptor.step_count);
+                const auto bits = static_cast<LONG64>(double_to_bits(value));
+                InterlockedExchange64(
+                    reinterpret_cast<volatile LONG64*>(&descriptor.pending_value_bits), bits);
+                MemoryBarrier();
+                InterlockedIncrement(&descriptor.pending_generation);
+                accepted = true;
+            }
+            break;
+        }
+
         MemoryBarrier();
-        InterlockedIncrement(&descriptor.pending_generation);
-        SetEvent(request_event_);
-        return true;
+        InterlockedExchange(&region_->parameter_catalog_generation, stable + 2);
+        if (accepted)
+            SetEvent(request_event_);
+        return accepted;
     }
     return false;
 }
 
 std::uint32_t WinObsBridge::parameter_total_count() const noexcept
 {
-    return region_ ? region_->parameter_total_count : 0;
+    if (!region_)
+        return 0;
+    std::uint32_t result = 0;
+    const auto read_generation = [&]() noexcept {
+        return static_cast<std::uint32_t>(InterlockedCompareExchange(
+            &region_->parameter_catalog_generation, 0, 0));
+    };
+    if (!read_coherent_generation(
+            result, read_generation,
+            [&](std::uint32_t& candidate) {
+                candidate = region_->parameter_total_count;
+                MemoryBarrier();
+                return true;
+            },
+            3))
+        return 0;
+    return result;
 }
 
 AudioSlot* WinObsBridge::acquire_slot() noexcept

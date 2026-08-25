@@ -538,6 +538,12 @@ void Vst3Engine::refresh_parameter_values() noexcept
     }
 }
 
+bool Vst3Engine::refresh_parameter_metadata(std::string& error)
+{
+    error.clear();
+    return enumerate_parameters(error);
+}
+
 bool Vst3Engine::apply_pending_parameter_changes(ProcessData& data) noexcept
 {
     if (!parameter_changes_pending_) {

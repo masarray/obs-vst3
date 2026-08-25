@@ -70,6 +70,7 @@ public:
 
     bool flush_parameter_changes() noexcept;
     void refresh_parameter_values() noexcept;
+    bool refresh_parameter_metadata(std::string& error);
     std::size_t take_parameter_updates(EngineParameterUpdate* destination, std::size_t capacity) noexcept;
 
     void set_component_handler(Steinberg::Vst::IComponentHandler* handler) noexcept;
