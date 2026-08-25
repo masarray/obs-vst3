@@ -227,25 +227,31 @@ The current architecture already has the right foundational direction:
 - watchdog and exponential recovery backoff;
 - dry fail-open processing.
 
-### Gate 0 — finish stabilization train
+### Gate 0 — crash-proof stabilization successor
 
-**Current gate:** PR #22, Phase S stabilization.
+**Current stabilization routing:** PR #22 is superseded historical/reference material; PR #23 is the current crash-proof stabilization successor/evidence candidate.
 
-PR #22 is a stabilization freeze. Do not add Rack, sidechain, new audio formats, new routing, or architecture redesign to it.
+Real OBS Studio 32.2.2 testing invalidated PR #22 as a safe runtime merge baseline after a Properties-lifetime crash. Useful individual fixes from #22 may be ported only selectively and requalified. PR #23 provides the safer stabilization evidence, but because it is based on `maintenance/v0.4.0-stable`, PR #23 being green does **not** by itself lock the canonical Gate 0.
+
+Do not add Rack, sidechain, new audio formats, new routing, or architecture redesign while Gate 0 is being closed.
 
 **Gate 0 Definition of Done:**
 
-1. Exact PR head passes all CI and compatibility workflows.
-2. Review threads are resolved on the exact head.
-3. Real OBS machine test verifies the actual DLL/scanner/helper loaded from the expected OBS root.
-4. Scan/rescan/editor policy works without surprise vendor GUI opens.
-5. Installer path behavior works for the tested normal/custom/portable scenario.
-6. Existing state/recovery/watchdog tests remain green.
-7. Merge to `main`.
-8. Tag a known-good stabilization baseline.
-9. No new product feature enters before that baseline exists.
+1. Establish a clean `main`-target integration fixed point containing only the reviewed crash-proof stabilization changes required for Gate 0.
+2. Resolve correctness/architecture review findings on that source head.
+3. If resolving a finding changes the source head, repeat required review/qualification on the new head; stale evidence from an older head cannot authorize merge.
+4. The final exact source head passes all required CI and compatibility workflows.
+5. A public/real-test artifact unambiguously identifies that same source-head SHA; a synthetic PR merge SHA is not a substitute for source provenance.
+6. Real OBS machine testing uses that exact artifact and verifies the affected stabilization workflows, including actual DLL/scanner/helper load path, Properties open/close/reopen, Installed/Browse behavior, vendor editor ownership, helper recovery and zero-action restoration where applicable.
+7. Scan/rescan/editor policy works without surprise vendor GUI opens.
+8. Installer path behavior works for the tested normal/custom/portable scenario.
+9. Existing state/recovery/watchdog tests remain green.
+10. No unresolved correctness/architecture review findings and no known OBS crash regression remain on the final qualified head.
+11. Merge that exact qualified head to `main`.
+12. Record/tag the known-good Gate 0 baseline.
+13. No North Star S1 feature work starts before that baseline exists.
 
-**Public trial:** `v0.4.1-stabilize.*` prerelease(s), then one final stabilization build if needed.
+**Public trial:** crash-proof stabilization prerelease(s) from the exact qualified source head, then one final stabilization build if needed.
 
 ---
 
@@ -1479,8 +1485,12 @@ No manual ClassID or filesystem knowledge for normally installed VST3s.
 
 ```text
 GATE 0
-PR #22 stabilization
-    ↓ lock baseline
+Crash-proof Single Host stabilization successor
+PR #22 = historical/reference only
+PR #23 = current stabilization evidence/candidate
+    ↓ clean main-target integration
+    ↓ exact-source-head review + CI + compatibility + same-build real-machine qualification
+    ↓ merge and record/tag known-good baseline
 
 S1
 VST3 lifecycle / restartComponent compliance
@@ -1531,8 +1541,9 @@ Rack v2.0.0
     ↓ RACK CONTRACT LOCK
 
 NORTH STAR
-Signing → compatibility intelligence → broader layouts/formats
-→ macOS → Linux → evidence-driven advanced capabilities
+Compatibility intelligence → Authenticode signing/stable publisher identity
+→ OBS latest-version qualification → broader layouts/formats where evidence requires
+→ Float64 fallback if justified → macOS → Linux → evidence-driven advanced capabilities
 ```
 
 Do not skip a lock gate because the next feature is exciting.
@@ -1541,7 +1552,7 @@ Do not skip a lock gate because the next feature is exciting.
 
 ## 44. Immediate next tickets after Gate 0
 
-When PR #22 is merged and the baseline tag exists, create tickets in this order:
+Only after the crash-proof stabilization result has been integrated to a clean `main`-target head, fully requalified on that exact source head, merged to `main`, and recorded/tagged as the known-good Gate 0 baseline, create tickets in this order:
 
 1. **S1.1 — lifecycle behavior matrix and test seam**
 2. **S1.2 — tolerant state-restore semantics fixture**
