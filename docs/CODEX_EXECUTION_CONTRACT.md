@@ -413,32 +413,48 @@ If these are missing, `Persistence contract: PASS` is false.
 Before Rack v2.0 can lock, the record must identify:
 
 1. automated tests proving ordered topology + per-slot complete state survive Session Snapshot save/reload;
-2. exact-head CI run(s) where those tests passed;
-3. real-machine evidence that a tuned multi-slot Rack survives OBS close/reopen with order, available plug-in states and bypass controls restored;
+2. exact-head CI run(s), tied to the `Final commit SHA`, where those tests actually executed and passed;
+3. real-machine evidence using the **public candidate artifact built from that same final commit** that demonstrates:
+
+```text
+create/tune multi-slot Rack → close OBS normally
+→ reopen same scene collection → same slot order, available plug-in audible/observable states, bypass and rack controls return automatically
+```
+
 4. corrupt/interrupted-primary recovery evidence showing the last-known-good Rack remains recoverable.
 
-If these are missing, `Persistence contract: PASS` is false.
+A local/debug/differently packaged build is not sufficient evidence for the R5 persistence lock. If these are missing, `Persistence contract: PASS` is false.
 
 ### Required evidence for R5 preset/reuse PASS
 
 Before Rack v2.0 can lock, the record must identify:
 
-1. automated tests covering **both** preset round-trip and independent reuse: topology + per-slot component/controller state + bypass/rack controls, plus `Rack A → Save named preset → independent Rack B on another filter/source → Load → equivalent observable chain/state`;
-2. exact-head CI run(s), tied to the `Final commit SHA`, where the round-trip test, the independent Rack A → Rack B reuse test, non-silent-mutation test, missing-plug-in placeholder test, and interrupted/corrupt-write test all actually executed and passed;
-3. real-machine evidence using the **public candidate build from that same final commit** that performs the complete user workflow:
+1. automated tests covering **the complete mandatory Preset Library workflow**: Save as Preset, browse/list and load, independent reuse, Rename, Delete, explicit Update Preset, topology + per-slot component/controller state + bypass/rack controls, missing-plug-in behavior, and crash-safe/corrupt-write behavior;
+2. exact-head CI run(s), tied to the `Final commit SHA`, where all mandatory preset tests actually executed and passed, including:
+   - preset round-trip;
+   - `Rack A → Save named preset → independent Rack B on another filter/source → Load → equivalent observable chain/state`;
+   - post-load edits do not silently mutate the saved preset;
+   - explicit Update Preset changes the saved preset;
+   - Rename preserves preset identity/content and changes the user-visible name;
+   - Delete removes only the intentionally selected preset and leaves unrelated presets/Session Snapshots intact;
+   - missing-plug-in placeholder/pass-through;
+   - interrupted/corrupt preset write leaves the previous valid preset available and the current Session Snapshot untouched;
+3. real-machine evidence using the **public candidate build from that same final commit** that performs the complete normal reuse workflow:
 
 ```text
 Rack A on source/filter A → build and tune complex chain → Save as Preset “Broadcast Vocal”
 → create independent Rack B on a different source/filter (or another scene/scene collection where supported)
-→ load “Broadcast Vocal”
+→ browse/select and load “Broadcast Vocal”
 → verify equivalent order, available plug-in audible/observable states, bypass and rack controls
 ```
 
-4. candidate-build evidence that edits made after loading do not silently mutate the saved preset until explicit **Update Preset**;
-5. exact-head CI coverage for missing-plug-in placeholder/pass-through behavior;
-6. exact-head CI coverage for interrupted/corrupt preset writes proving the previous valid preset remains available and the current Session Snapshot is untouched.
+4. public-candidate evidence that the user can Rename the preset and load it by the new name without changing its stored chain/state;
+5. public-candidate evidence that edits made after loading do not silently mutate the saved preset until explicit **Update Preset**, and that explicit Update Preset intentionally changes the preset;
+6. public-candidate evidence that Delete requires/reflects the intentional preset choice, removes that preset, and does not remove unrelated presets or the current Rack Session Snapshot;
+7. exact-head CI coverage for missing-plug-in placeholder/pass-through behavior;
+8. exact-head CI coverage for interrupted/corrupt preset writes proving the previous valid preset remains available and the current Session Snapshot is untouched.
 
-A named test file that did not execute on the exact final head is not evidence. Generic Rack persistence testing is not a substitute for the independent preset-reuse workflow. Manual evidence from a different build is not evidence for the R5 lock.
+A named test file that did not execute on the exact final head is not evidence. Generic Rack persistence testing is not a substitute for the independent preset-reuse workflow. Manual evidence from a different build is not evidence for the R5 lock. A Rack v2.0 candidate with missing/broken Save, Load, Rename, Delete, or explicit Update Preset behavior cannot be locked as stable.
 
 If these are missing, `Preset/reuse contract: PASS` is false.
 
