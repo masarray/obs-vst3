@@ -71,6 +71,18 @@ public:
     virtual void publish(StartupErrorCode phase) noexcept = 0;
 };
 
+inline thread_local StartupPhaseSink* current_startup_phase_sink_value = nullptr;
+
+inline void set_current_startup_phase_sink(StartupPhaseSink* sink) noexcept
+{
+    current_startup_phase_sink_value = sink;
+}
+
+inline StartupPhaseSink* current_startup_phase_sink() noexcept
+{
+    return current_startup_phase_sink_value;
+}
+
 inline constexpr StartupErrorCode classify_startup_error(std::string_view message) noexcept
 {
     for (const auto& entry : kStartupErrorEntries) {
