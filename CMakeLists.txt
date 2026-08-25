@@ -158,6 +158,13 @@ if(SAFEVST3_BUILD_TESTS)
 
     if(WIN32)
         add_test(NAME scanner-discovery COMMAND $<TARGET_FILE:obs-safe-vst3-scanner> --self-test)
+        add_test(
+            NAME scanner-discovery-cli
+            COMMAND ${CMAKE_COMMAND}
+                -DSCANNER=$<TARGET_FILE:obs-safe-vst3-scanner>
+                -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/scanner-discovery-cli
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/scanner_discovery_cli.cmake
+        )
 
         add_executable(fake-hung-host tests/fake_hung_host.cpp)
         target_include_directories(fake-hung-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

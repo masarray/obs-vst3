@@ -262,9 +262,6 @@ bool publish_discovery_seed(const fs::path& cache,
                             const std::vector<fs::path>& bundles,
                             const CachedLinesByPath& cached)
 {
-    if (bundles.empty())
-        return true;
-
     const fs::path staging(cache.wstring() + L".discovering");
     std::ofstream out(staging, std::ios::binary | std::ios::trunc);
     if (!out)
@@ -289,7 +286,7 @@ bool publish_discovery_seed(const fs::path& cache,
     }
     out.close();
 
-    if (written == 0) {
+    if (written == 0 && !bundles.empty()) {
         DeleteFileW(staging.c_str());
         return false;
     }
@@ -407,23 +404,24 @@ struct DiscoveryInventory {
     CachedLinesByPath cached;
 };
 
-DiscoveryInventory discover_inventory(const fs::path& cache)
+DiscoveryInventory discover_inventory(const fs::path& cache,
+                                      const std::vector<fs::path>& roots = scan_roots())
 {
     DiscoveryInventory inventory;
-    inventory.roots = scan_roots();
+    inventory.roots = roots;
     inventory.bundles = discover_bundles_from_roots(inventory.roots);
     inventory.cached = load_cached_lines_by_path(cache);
     return inventory;
 }
 
-int discover_only(const fs::path& cache)
+int discover_only(const fs::path& cache,
+                  const std::vector<fs::path>& roots = scan_roots())
 {
-    const DiscoveryInventory inventory = discover_inventory(cache);
+    const DiscoveryInventory inventory = discover_inventory(cache, roots);
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
 
-    if (!inventory.bundles.empty() &&
-        !publish_discovery_seed(cache, inventory.bundles, inventory.cached)) {
+    if (!publish_discovery_seed(cache, inventory.bundles, inventory.cached)) {
         return 6;
     }
 
@@ -585,6 +583,7 @@ int wmain(int argc, wchar_t** argv)
     fs::path probe_path;
     fs::path out_path;
     fs::path cache_path;
+    std::vector<fs::path> discovery_roots;
     DWORD parent_pid = 0;
     bool self_test = false;
     bool discovery_only = false;
@@ -601,6 +600,8 @@ int wmain(int argc, wchar_t** argv)
             cache_path = argv[++i];
             discovery_only = true;
         }
+        else if (arg == L"--root" && i + 1 < argc)
+            discovery_roots.emplace_back(argv[++i]);
         else if (arg == L"--parent-pid" && i + 1 < argc)
             parent_pid = static_cast<DWORD>(std::wcstoul(argv[++i], nullptr, 10));
         else if (arg == L"--self-test")
@@ -620,8 +621,11 @@ int wmain(int argc, wchar_t** argv)
     }
 
     if (!cache_path.empty()) {
-        if (discovery_only)
-            return discover_only(cache_path);
+        if (discovery_only) {
+            return discovery_roots.empty()
+                       ? discover_only(cache_path)
+                       : discover_only(cache_path, discovery_roots);
+        }
 
         wchar_t self_buffer[32768]{};
         const DWORD len = GetModuleFileNameW(nullptr, self_buffer, static_cast<DWORD>(std::size(self_buffer)));
@@ -630,7 +634,7 @@ int wmain(int argc, wchar_t** argv)
         return scan_all(fs::path(std::wstring(self_buffer, len)), cache_path);
     }
 
-    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv> | --discover-to <cache.tsv> | --self-test\n";
+    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv> | --discover-to <cache.tsv> [--root <path>] | --self-test\n";
     return 1;
 }
 

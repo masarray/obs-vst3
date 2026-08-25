@@ -133,6 +133,26 @@ enum class ScannerOperation {
     DiscoveryOnly,
 };
 
+struct ScannerOperationPolicy {
+    const wchar_t* command_flag;
+    ULONGLONG timeout_ms;
+    const char* timeout_message;
+};
+
+ScannerOperationPolicy scanner_operation_policy(ScannerOperation operation) noexcept
+{
+    switch (operation) {
+    case ScannerOperation::DiscoveryOnly:
+        return {L" --discover-to ", 2000,
+                "installed VST3 discovery exceeded 2 seconds; current cache kept"};
+    case ScannerOperation::FullProbe:
+        return {L" --scan-to ", 180000,
+                "installed VST3 scan exceeded 180 seconds; current cache kept"};
+    }
+    return {L" --scan-to ", 180000,
+            "installed VST3 scan exceeded 180 seconds; current cache kept"};
+}
+
 std::atomic<bool> scanner_in_progress{false};
 std::atomic<bool> scanner_shutting_down{false};
 std::jthread startup_scanner_thread;
@@ -362,10 +382,8 @@ ScannerRunResult run_scanner_claimed(
     std::error_code ec;
     std::filesystem::create_directories(cache.parent_path(), ec);
 
-    const wchar_t* command_flag = operation == ScannerOperation::DiscoveryOnly
-                                      ? L" --discover-to "
-                                      : L" --scan-to ";
-    std::wstring command = quote(scanner.wstring()) + command_flag + quote(cache.wstring());
+    const ScannerOperationPolicy policy = scanner_operation_policy(operation);
+    std::wstring command = quote(scanner.wstring()) + policy.command_flag + quote(cache.wstring());
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
@@ -376,8 +394,7 @@ ScannerRunResult run_scanner_claimed(
         return ScannerRunResult::Failed;
     }
 
-    const ULONGLONG timeout_ms = operation == ScannerOperation::DiscoveryOnly ? 2000 : 180000;
-    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    const ULONGLONG deadline = GetTickCount64() + policy.timeout_ms;
     DWORD wait = WAIT_TIMEOUT;
     while (!stop.stop_requested()) {
         const ULONGLONG now = GetTickCount64();
@@ -398,15 +415,8 @@ ScannerRunResult run_scanner_claimed(
     } else {
         TerminateProcess(pi.hProcess, 0xDEAD);
         (void)WaitForSingleObject(pi.hProcess, 2000);
-        if (wait != WAIT_FAILED) {
-            if (operation == ScannerOperation::DiscoveryOnly) {
-                blog(LOG_WARNING,
-                     "[obs-safe-vst3] installed VST3 discovery exceeded 2 seconds; current cache kept");
-            } else {
-                blog(LOG_WARNING,
-                     "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; current cache kept");
-            }
-        }
+        if (wait != WAIT_FAILED)
+            blog(LOG_WARNING, "[obs-safe-vst3] %s", policy.timeout_message);
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
