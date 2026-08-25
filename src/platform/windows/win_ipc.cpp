@@ -65,9 +65,11 @@ std::wstring WinObsBridge::widen(const std::string& value)
 {
     if (value.empty())
         return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    const int size = MultiByteToWideChar(
+        CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
     std::wstring out(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size, nullptr, nullptr);
+    MultiByteToWideChar(
+        CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size);
     return out;
 }
 
