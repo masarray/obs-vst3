@@ -15,6 +15,8 @@
 namespace safevst3 {
 
 namespace {
+constexpr ULONGLONG kHelperStartupTimeoutMs = 5000;
+
 std::string win_error(const char* what)
 {
     const DWORD code = GetLastError();
@@ -63,9 +65,9 @@ std::wstring WinObsBridge::widen(const std::string& value)
 {
     if (value.empty())
         return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+    const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
     std::wstring out(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size);
+    MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size, nullptr, nullptr);
     return out;
 }
 
@@ -137,6 +139,7 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     region_->parameter_count = 0;
     region_->parameter_total_count = 0;
     region_->host_status = static_cast<long>(HostStatus::Booting);
+    region_->last_error = static_cast<long>(StartupErrorCode::None);
     region_->state_command = static_cast<long>(StateCommand::None);
     region_->state_status = static_cast<long>(StateStatus::Idle);
     for (auto& slot : region_->slots)
@@ -200,10 +203,12 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
         return false;
     }
     SetPriorityClass(process_.hProcess, HIGH_PRIORITY_CLASS);
+    const ULONGLONG startup_started = GetTickCount64();
     ResumeThread(process_.hThread);
 
-    const ULONGLONG deadline = GetTickCount64() + 5000;
+    const ULONGLONG deadline = startup_started + kHelperStartupTimeoutMs;
     HANDLE wait_handles[] = {ready_event_, process_.hProcess};
+    bool ready_signaled = false;
     while (true) {
         if (cancel.stop_requested()) {
             error = "VST3 helper startup cancelled";
@@ -216,10 +221,18 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
             break;
         const DWORD remaining = static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, 50));
         const DWORD wait = WaitForMultipleObjects(2, wait_handles, FALSE, remaining);
-        if (wait == WAIT_OBJECT_0)
+        if (wait == WAIT_OBJECT_0) {
+            ready_signaled = true;
             break;
+        }
         if (wait == WAIT_OBJECT_0 + 1) {
-            error = "VST3 helper exited before becoming ready";
+            const long phase = region_
+                ? InterlockedCompareExchange(&region_->last_error, 0, 0)
+                : static_cast<long>(StartupErrorCode::None);
+            DWORD exit_code = 0xFFFFFFFFu;
+            if (process_.hProcess)
+                (void)GetExitCodeProcess(process_.hProcess, &exit_code);
+            error = format_startup_process_exit(phase, exit_code);
             stop();
             return false;
         }
@@ -235,11 +248,22 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
         abort();
         return false;
     }
+    if (!ready_signaled) {
+        const long phase = region_
+            ? InterlockedCompareExchange(&region_->last_error, 0, 0)
+            : static_cast<long>(StartupErrorCode::None);
+        const ULONGLONG now = GetTickCount64();
+        const std::uint64_t elapsed = static_cast<std::uint64_t>(
+            now >= startup_started ? now - startup_started : kHelperStartupTimeoutMs);
+        error = format_startup_timeout(phase, elapsed);
+        stop();
+        return false;
+    }
     if (region_->host_status != static_cast<long>(HostStatus::Ready)) {
         std::ostringstream os;
         os << "VST3 helper did not become ready";
         if (region_) {
-            const long host_error = region_->last_error;
+            const long host_error = InterlockedCompareExchange(&region_->last_error, 0, 0);
             const char* phase = startup_error_phase(static_cast<StartupErrorCode>(host_error));
             if (phase)
                 os << " (phase=" << phase << ", host error " << host_error << ')';
@@ -251,6 +275,10 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
         return false;
     }
 
+    // During Booting, last_error doubles as a crash-safe startup breadcrumb.
+    // Clear it only after Ready so runtime watchdog/control errors retain the
+    // existing meaning and a successful helper never exposes a stale phase.
+    InterlockedExchange(&region_->last_error, static_cast<long>(StartupErrorCode::None));
     return true;
 }
 
