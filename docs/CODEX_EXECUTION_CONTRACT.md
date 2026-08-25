@@ -371,11 +371,11 @@ An AI agent may mark a milestone locked only when it records:
 Milestone:
 Fixed-point base:
 Final commit SHA:
-Required CI runs:
+Required CI runs: <exact run URLs/IDs tied to Final commit SHA>
 Public trial version:
 Known blockers: none
-Regression tests added:
-Manual real-machine evidence:
+Regression tests added: <test names/files proving the mandatory workflows>
+Manual real-machine evidence: <specific workflow + result + build SHA; never just “tested”>
 Architecture invariants: PASS
 Persistence contract: PASS / N/A only when persistence is not yet a required gate for this milestone
 Preset/reuse contract: PASS / N/A only before Rack preset/reuse becomes an applicable gate
@@ -389,9 +389,52 @@ Mandatory lock rules override the generic template:
 - A milestone that explicitly introduces or qualifies persistence/preset behavior must record `PASS` for the behavior it claims complete before it can close.
 - `N/A` may be used only by earlier milestones where that contract is genuinely outside the milestone's current release gate; it must never be used to bypass a required product-completion contract.
 
-If the mandatory value is not `PASS`, the product lock does not exist and the next locked phase must not start.
+A literal `PASS` is invalid without evidence. The closure record must cite evidence tied to the exact `Final commit SHA`.
 
-This prevents a future Codex session from guessing what “finished” meant or closing v1.0/v2.0 without evidence for mandatory persistence and reuse.
+### Required evidence for S6 persistence PASS
+
+Before Single Host v1.0 can lock, the record must identify:
+
+1. an automated regression/integration test proving at least the full save → destroy/recreate/reopen → restore path through the stable host seam;
+2. exact-head CI run(s) where that test passed;
+3. real-machine evidence using the public candidate build that demonstrates:
+
+```text
+select VST3 → change vendor state → close OBS normally
+→ reopen same scene collection → same plug-in and same observable/audio state return automatically
+```
+
+4. recovery evidence that a helper death/recreation restores the last-known-good complete state before wet processing resumes.
+
+If these are missing, `Persistence contract: PASS` is false.
+
+### Required evidence for R5 persistence PASS
+
+Before Rack v2.0 can lock, the record must identify:
+
+1. automated tests proving ordered topology + per-slot complete state survive Session Snapshot save/reload;
+2. exact-head CI run(s) where those tests passed;
+3. real-machine evidence that a tuned multi-slot Rack survives OBS close/reopen with order, available plug-in states and bypass controls restored;
+4. corrupt/interrupted-primary recovery evidence showing the last-known-good Rack remains recoverable.
+
+If these are missing, `Persistence contract: PASS` is false.
+
+### Required evidence for R5 preset/reuse PASS
+
+Before Rack v2.0 can lock, the record must identify:
+
+1. automated preset round-trip tests proving topology + per-slot component/controller state + bypass/rack controls;
+2. exact-head CI run(s) where those tests passed;
+3. a named-preset reuse test that creates a preset from Rack A, creates an independent Rack B on another filter/source, loads that preset, and verifies equivalent observable chain/state;
+4. evidence that edits made after loading do not silently mutate the saved preset until explicit Update Preset;
+5. missing-plug-in placeholder/pass-through coverage;
+6. interrupted/corrupt preset-write coverage proving the previous valid preset remains available.
+
+If these are missing, `Preset/reuse contract: PASS` is false.
+
+If any mandatory value is not evidence-backed `PASS`, the product lock does not exist and the next locked phase must not start.
+
+This prevents a future Codex session from guessing what “finished” meant, writing ceremonial `PASS` values, or closing v1.0/v2.0 without proof for mandatory persistence and reuse.
 
 ---
 
