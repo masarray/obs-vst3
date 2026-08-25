@@ -128,13 +128,16 @@ enum class ScannerRunResult {
     Cancelled,
 };
 
+enum class ScannerOperation {
+    FullProbe,
+    DiscoveryOnly,
+};
+
 std::atomic<bool> scanner_in_progress{false};
 std::atomic<bool> scanner_shutting_down{false};
 std::jthread startup_scanner_thread;
 std::jthread manual_scanner_thread;
 std::mutex manual_scanner_thread_mutex;
-std::mutex scan_refresh_mutex;
-std::vector<obs_weak_source_t*> scan_refresh_waiters;
 
 bool try_claim_scanner() noexcept
 {
@@ -341,7 +344,9 @@ std::wstring quote(const std::wstring& value)
     return out;
 }
 
-ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
+ScannerRunResult run_scanner_claimed(
+    std::stop_token stop = {},
+    ScannerOperation operation = ScannerOperation::FullProbe)
 {
     if (stop.stop_requested())
         return ScannerRunResult::Cancelled;
@@ -357,7 +362,10 @@ ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
     std::error_code ec;
     std::filesystem::create_directories(cache.parent_path(), ec);
 
-    std::wstring command = quote(scanner.wstring()) + L" --scan-to " + quote(cache.wstring());
+    const wchar_t* command_flag = operation == ScannerOperation::DiscoveryOnly
+                                      ? L" --discover-to "
+                                      : L" --scan-to ";
+    std::wstring command = quote(scanner.wstring()) + command_flag + quote(cache.wstring());
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
@@ -368,7 +376,8 @@ ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
         return ScannerRunResult::Failed;
     }
 
-    const ULONGLONG deadline = GetTickCount64() + 180000;
+    const ULONGLONG timeout_ms = operation == ScannerOperation::DiscoveryOnly ? 2000 : 180000;
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
     DWORD wait = WAIT_TIMEOUT;
     while (!stop.stop_requested()) {
         const ULONGLONG now = GetTickCount64();
@@ -389,8 +398,15 @@ ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
     } else {
         TerminateProcess(pi.hProcess, 0xDEAD);
         (void)WaitForSingleObject(pi.hProcess, 2000);
-        if (wait != WAIT_FAILED)
-            blog(LOG_WARNING, "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; current cache kept");
+        if (wait != WAIT_FAILED) {
+            if (operation == ScannerOperation::DiscoveryOnly) {
+                blog(LOG_WARNING,
+                     "[obs-safe-vst3] installed VST3 discovery exceeded 2 seconds; current cache kept");
+            } else {
+                blog(LOG_WARNING,
+                     "[obs-safe-vst3] installed VST3 scan exceeded 180 seconds; current cache kept");
+            }
+        }
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -402,70 +418,6 @@ ScannerRunResult run_scanner_claimed(std::stop_token stop = {})
         return ScannerRunResult::Failed;
     }
     return ScannerRunResult::Success;
-}
-
-void refresh_scan_waiter_on_ui(void* data)
-{
-    auto* weak = static_cast<obs_weak_source_t*>(data);
-    if (!weak)
-        return;
-
-    if (!scanner_shutting_down.load(std::memory_order_acquire)) {
-        if (obs_source_t* source = obs_weak_source_get_source(weak)) {
-            obs_source_update_properties(source);
-            obs_source_release(source);
-        }
-    }
-    obs_weak_source_release(weak);
-}
-
-void request_scan_completion_refresh(Filter* filter)
-{
-    if (!filter || !filter->context ||
-        filter->shutting_down.load(std::memory_order_acquire) ||
-        scanner_shutting_down.load(std::memory_order_acquire)) {
-        return;
-    }
-
-    obs_weak_source_t* weak = obs_source_get_weak_source(filter->context);
-    if (!weak)
-        return;
-
-    std::lock_guard lock(scan_refresh_mutex);
-    if (scanner_shutting_down.load(std::memory_order_acquire)) {
-        obs_weak_source_release(weak);
-        return;
-    }
-    scan_refresh_waiters.push_back(weak);
-}
-
-void refresh_scan_waiters()
-{
-    std::vector<obs_weak_source_t*> waiters;
-    {
-        std::lock_guard lock(scan_refresh_mutex);
-        waiters.swap(scan_refresh_waiters);
-    }
-
-    const bool unloading = scanner_shutting_down.load(std::memory_order_acquire);
-    for (obs_weak_source_t* weak : waiters) {
-        if (unloading) {
-            obs_weak_source_release(weak);
-        } else {
-            obs_queue_task(OBS_TASK_UI, refresh_scan_waiter_on_ui, weak, false);
-        }
-    }
-}
-
-void cancel_scan_refresh_waiters()
-{
-    std::vector<obs_weak_source_t*> waiters;
-    {
-        std::lock_guard lock(scan_refresh_mutex);
-        waiters.swap(scan_refresh_waiters);
-    }
-    for (obs_weak_source_t* weak : waiters)
-        obs_weak_source_release(weak);
 }
 
 void start_startup_scanner()
@@ -486,7 +438,6 @@ void start_startup_scanner()
             blog(LOG_INFO, "[obs-safe-vst3] background installed VST3 discovery completed");
         else if (result == ScannerRunResult::Failed)
             blog(LOG_WARNING, "[obs-safe-vst3] background installed VST3 discovery failed; existing cache kept");
-        refresh_scan_waiters();
     });
 }
 
@@ -506,7 +457,6 @@ void stop_scanners()
         std::lock_guard lock(manual_scanner_thread_mutex);
         manual_scanner_thread = std::jthread{};
     }
-    cancel_scan_refresh_waiters();
 }
 
 std::vector<ScanEntry> load_scan_cache()
@@ -585,16 +535,23 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
     auto* filter = static_cast<Filter*>(data);
     hide_editor_before_scan(filter);
 
-    // Refresh immediately from the discovery seed/cache. Never wait for vendor
-    // probing on the OBS UI thread.
-    populate_plugin_list(obs_properties_get(props, kPluginPath));
-    request_scan_completion_refresh(filter);
     if (!try_claim_scanner()) {
+        populate_plugin_list(obs_properties_get(props, kPluginPath));
         blog(LOG_INFO, "[obs-safe-vst3] Rescan requested while discovery is already active; reusing active scan");
         return true;
     }
 
     try {
+        // Publish the filesystem-only seed under a strict bound so the open
+        // selector sees newly discovered bundles before this callback returns.
+        // Vendor loading/probing remains entirely on the isolated worker.
+        const auto discovery = run_scanner_claimed({}, ScannerOperation::DiscoveryOnly);
+        populate_plugin_list(obs_properties_get(props, kPluginPath));
+        if (discovery == ScannerRunResult::Failed) {
+            blog(LOG_WARNING,
+                 "[obs-safe-vst3] bounded VST3 discovery did not complete; current cache kept");
+        }
+
         std::lock_guard lock(manual_scanner_thread_mutex);
         if (manual_scanner_thread.joinable())
             manual_scanner_thread = std::jthread{};
@@ -605,13 +562,9 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void* data)
                 blog(LOG_INFO, "[obs-safe-vst3] installed VST3 cache refreshed");
             else if (result == ScannerRunResult::Failed)
                 blog(LOG_WARNING, "[obs-safe-vst3] manual installed VST3 discovery failed; existing cache kept");
-
-            if (!stop.stop_requested())
-                refresh_scan_waiters();
         });
     } catch (const std::exception& e) {
         scanner_in_progress.store(false, std::memory_order_release);
-        refresh_scan_waiters();
         blog(LOG_ERROR, "[obs-safe-vst3] could not start background Rescan worker: %s", e.what());
     }
     return true;

@@ -401,11 +401,44 @@ ProbeOutcome run_probe_child(const fs::path& self, const fs::path& plugin, const
     return wait == WAIT_OBJECT_0 ? classify_probe_exit(exit_code) : ProbeOutcome::Failed;
 }
 
+struct DiscoveryInventory {
+    std::vector<fs::path> roots;
+    std::vector<fs::path> bundles;
+    CachedLinesByPath cached;
+};
+
+DiscoveryInventory discover_inventory(const fs::path& cache)
+{
+    DiscoveryInventory inventory;
+    inventory.roots = scan_roots();
+    inventory.bundles = discover_bundles_from_roots(inventory.roots);
+    inventory.cached = load_cached_lines_by_path(cache);
+    return inventory;
+}
+
+int discover_only(const fs::path& cache)
+{
+    const DiscoveryInventory inventory = discover_inventory(cache);
+    std::error_code ec;
+    fs::create_directories(cache.parent_path(), ec);
+
+    if (!inventory.bundles.empty() &&
+        !publish_discovery_seed(cache, inventory.bundles, inventory.cached)) {
+        return 6;
+    }
+
+    std::cout << "roots=" << inventory.roots.size()
+              << " bundles=" << inventory.bundles.size()
+              << " discovery_only=1\n";
+    return 0;
+}
+
 int scan_all(const fs::path& self, const fs::path& cache)
 {
-    const auto roots = scan_roots();
-    const auto bundles = discover_bundles_from_roots(roots);
-    const auto cached = load_cached_lines_by_path(cache);
+    const DiscoveryInventory inventory = discover_inventory(cache);
+    const auto& roots = inventory.roots;
+    const auto& bundles = inventory.bundles;
+    const auto& cached = inventory.cached;
     std::error_code ec;
     fs::create_directories(cache.parent_path(), ec);
 
@@ -554,6 +587,7 @@ int wmain(int argc, wchar_t** argv)
     fs::path cache_path;
     DWORD parent_pid = 0;
     bool self_test = false;
+    bool discovery_only = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg = argv[i];
@@ -563,6 +597,10 @@ int wmain(int argc, wchar_t** argv)
             out_path = argv[++i];
         else if (arg == L"--scan-to" && i + 1 < argc)
             cache_path = argv[++i];
+        else if (arg == L"--discover-to" && i + 1 < argc) {
+            cache_path = argv[++i];
+            discovery_only = true;
+        }
         else if (arg == L"--parent-pid" && i + 1 < argc)
             parent_pid = static_cast<DWORD>(std::wcstoul(argv[++i], nullptr, 10));
         else if (arg == L"--self-test")
@@ -582,6 +620,9 @@ int wmain(int argc, wchar_t** argv)
     }
 
     if (!cache_path.empty()) {
+        if (discovery_only)
+            return discover_only(cache_path);
+
         wchar_t self_buffer[32768]{};
         const DWORD len = GetModuleFileNameW(nullptr, self_buffer, static_cast<DWORD>(std::size(self_buffer)));
         if (!len)
@@ -589,7 +630,7 @@ int wmain(int argc, wchar_t** argv)
         return scan_all(fs::path(std::wstring(self_buffer, len)), cache_path);
     }
 
-    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv> | --self-test\n";
+    std::cerr << "usage: obs-safe-vst3-scanner --scan-to <cache.tsv> | --discover-to <cache.tsv> | --self-test\n";
     return 1;
 }
 
