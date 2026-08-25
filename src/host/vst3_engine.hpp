@@ -15,7 +15,7 @@
 #include "public.sdk/source/vst/hosting/hostclasses.h"
 #include "public.sdk/source/vst/hosting/module.h"
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
-#include "public.sdk/source/vst/hosting/plugprovider.h"
+#include "public.sdk/source/vst/hosting/connectionproxy.h"
 #include "public.sdk/source/vst/hosting/processdata.h"
 
 #include <array>
@@ -53,6 +53,7 @@ public:
               const std::string& class_id,
               std::uint32_t sample_rate,
               std::uint32_t channels,
+              Steinberg::Vst::IComponentHandler* component_handler,
               std::string& error);
     void close() noexcept;
     bool process(AudioSlot& slot) noexcept;
@@ -109,6 +110,7 @@ private:
     void io_commit_layout(const IoLayout& layout, std::uint32_t latency_samples) noexcept override;
 
     bool configure_buses(std::uint32_t channels, std::string& error);
+    bool activate_configured_buses(std::string& error);
     bool collect_io_layout_candidate(IoLayout& layout) noexcept;
     bool enumerate_parameters(std::string& error);
     bool queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept;
@@ -120,9 +122,10 @@ private:
 
     Steinberg::IPtr<Steinberg::Vst::HostApplication> host_;
     VST3::Hosting::Module::Ptr module_;
-    Steinberg::IPtr<Steinberg::Vst::PlugProvider> provider_;
     Steinberg::IPtr<Steinberg::Vst::IComponent> component_;
     Steinberg::IPtr<Steinberg::Vst::IEditController> controller_;
+    Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> component_connection_;
+    Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> controller_connection_;
     Steinberg::FUnknownPtr<Steinberg::Vst::IAudioProcessor> processor_;
     Steinberg::Vst::HostProcessData process_data_;
     Steinberg::Vst::ParameterChanges input_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
@@ -155,6 +158,9 @@ private:
     std::uint32_t latency_samples_ = 0;
     Steinberg::int64 sample_position_ = 0;
     bool parameter_changes_pending_ = false;
+    bool component_initialized_ = false;
+    bool controller_initialized_ = false;
+    bool controller_is_component_ = false;
 };
 
 } // namespace safevst3

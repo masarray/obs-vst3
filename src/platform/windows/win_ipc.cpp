@@ -4,6 +4,7 @@
 
 #include "common/coherent_generation.hpp"
 #include "common/parameter_utils.hpp"
+#include "common/startup_error.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -237,8 +238,14 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     if (region_->host_status != static_cast<long>(HostStatus::Ready)) {
         std::ostringstream os;
         os << "VST3 helper did not become ready";
-        if (region_)
-            os << " (host error " << region_->last_error << ')';
+        if (region_) {
+            const long host_error = region_->last_error;
+            const char* phase = startup_error_phase(static_cast<StartupErrorCode>(host_error));
+            if (phase)
+                os << " (phase=" << phase << ", host error " << host_error << ')';
+            else
+                os << " (host error " << host_error << ')';
+        }
         error = os.str();
         stop();
         return false;

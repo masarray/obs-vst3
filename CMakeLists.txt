@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(obs-safe-vst3 VERSION 0.4.1 LANGUAGES C CXX)
+project(obs-safe-vst3 VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -96,7 +96,6 @@ if(WIN32)
     add_library(safevst3_vst3_hosting_runtime STATIC
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/common/memorystream.cpp
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
-        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
     )
     target_link_libraries(safevst3_vst3_hosting_runtime PUBLIC sdk_hosting sdk)
     target_compile_definitions(safevst3_vst3_hosting_runtime PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -200,11 +199,24 @@ if(SAFEVST3_BUILD_TESTS)
     target_link_libraries(process-context-policy-test PRIVATE safevst3_process_context_policy)
     add_test(NAME process-context-policy COMMAND process-context-policy-test)
 
+    add_executable(startup-error-test tests/startup_error.cpp)
+    target_include_directories(startup-error-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_test(NAME startup-error COMMAND startup-error-test)
+
     add_test(
         NAME process-context-source-contract
         COMMAND ${CMAKE_COMMAND}
             -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/vst3_engine.cpp
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/process_context_source_contract.cmake
+    )
+
+    add_test(
+        NAME strict-lifecycle-source-contract
+        COMMAND ${CMAKE_COMMAND}
+            -DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/vst3_engine.cpp
+            -DMAIN_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/main.cpp
+            -DWIN_IPC_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/win_ipc.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/strict_lifecycle_source_contract.cmake
     )
 
     add_test(
@@ -283,7 +295,7 @@ if(SAFEVST3_BUILD_TESTS)
         vst3-source-selection-test lifecycle-restart-policy-test state-restore-policy-test
         latency-restart-transaction-test parameter-refresh-transaction-test
         io-restart-transaction-test reload-component-transaction-test
-        process-context-policy-test parameter-control-test state-snapshot-test
+        process-context-policy-test startup-error-test parameter-control-test state-snapshot-test
         recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test

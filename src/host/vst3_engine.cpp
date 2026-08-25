@@ -7,6 +7,7 @@
 #include "common/state_restore_policy.hpp"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "public.sdk/source/common/memorystream.h"
+#include "public.sdk/source/vst/hosting/plugprovider.h"
 #include "public.sdk/source/vst/utility/stringconvert.h"
 
 #include <algorithm>
@@ -159,7 +160,6 @@ bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
             error = "VST3 input bus metadata unavailable";
             return false;
         }
-        (void)component_->activateBus(kAudio, kInput, i, false);
         if (processor_->getBusArrangement(kInput, i, input_arrangements[static_cast<std::size_t>(i)]) != kResultTrue) {
             const auto fallback = fallback_arrangement_for_channels(info.channelCount);
             if (info.channelCount > 2) {
@@ -178,7 +178,6 @@ bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
             error = "VST3 output bus metadata unavailable";
             return false;
         }
-        (void)component_->activateBus(kAudio, kOutput, i, false);
         if (processor_->getBusArrangement(kOutput, i, output_arrangements[static_cast<std::size_t>(i)]) != kResultTrue) {
             const auto fallback = fallback_arrangement_for_channels(info.channelCount);
             if (info.channelCount > 2) {
@@ -224,6 +223,27 @@ bool Vst3Engine::configure_buses(std::uint32_t channels, std::string& error)
         return false;
     }
 
+    return true;
+}
+
+bool Vst3Engine::activate_configured_buses(std::string& error)
+{
+    if (!component_ || main_input_bus_ < 0 || main_output_bus_ < 0) {
+        error = "VST3 init[bus-activation]: configured main buses unavailable";
+        return false;
+    }
+
+    const int32 input_count = component_->getBusCount(kAudio, kInput);
+    const int32 output_count = component_->getBusCount(kAudio, kOutput);
+    for (int32 i = 0; i < input_count; ++i)
+        (void)component_->activateBus(kAudio, kInput, i, false);
+    for (int32 i = 0; i < output_count; ++i)
+        (void)component_->activateBus(kAudio, kOutput, i, false);
+
+    // Preserve the broad S1 compatibility contract: some shipping plug-ins
+    // return advisory/non-true results here even though the requested main bus
+    // becomes usable. The compatibility fix is the Setup-Done ordering, not a
+    // new fatal return-code requirement. Processing/setup failures remain hard.
     (void)component_->activateBus(kAudio, kInput, main_input_bus_, true);
     (void)component_->activateBus(kAudio, kOutput, main_output_bus_, true);
     return true;
@@ -276,6 +296,7 @@ bool Vst3Engine::open(const std::string& path,
                       const std::string& class_id,
                       std::uint32_t sample_rate,
                       std::uint32_t channels,
+                      IComponentHandler* component_handler,
                       std::string& error)
 {
     close();
@@ -285,11 +306,16 @@ bool Vst3Engine::open(const std::string& path,
     }
 
     host_ = owned(new HostApplication());
+    // Preserve the S1 baseline SDK host-context contract. Strict lifecycle
+    // ownership changes component/controller ordering only; it must not remove
+    // the plugin context visible to SDK-backed objects during initialization.
     PluginContextFactory::instance().setPluginContext(host_.get());
 
     module_ = VST3::Hosting::Module::create(path, error);
-    if (!module_)
+    if (!module_) {
+        error = "VST3 init[module-load]: " + error;
         return false;
+    }
 
     auto factory = module_->getFactory();
     factory.setHostContext(host_.get());
@@ -304,40 +330,102 @@ bool Vst3Engine::open(const std::string& path,
         break;
     }
     if (!chosen) {
-        error = class_id.empty() ? "No VST3 audio-effect class found in module" : "Requested VST3 class ID not found";
+        error = class_id.empty()
+            ? "VST3 init[class-select]: no VST3 audio-effect class found in module"
+            : "VST3 init[class-select]: requested VST3 class ID not found";
         return false;
     }
 
     plugin_name_ = chosen->name();
     loaded_class_id_ = chosen->ID().toString();
-    provider_ = owned(new PlugProvider(factory, *chosen, true));
-    if (!provider_->initialize()) {
-        error = "Failed to initialize VST3 component/controller";
+
+    component_ = factory.createInstance<IComponent>(chosen->ID());
+    if (!component_) {
+        error = "VST3 init[component-create]: component instance unavailable";
         return false;
     }
-
-    component_ = provider_->getComponentPtr();
-    controller_ = provider_->getControllerPtr();
-    if (!component_) {
-        error = "VST3 component unavailable";
+    if (component_->initialize(host_.get()) != kResultOk) {
+        error = "VST3 init[component-initialize]: initialize failed";
         return false;
+    }
+    component_initialized_ = true;
+
+    IEditController* single_controller = nullptr;
+    if (component_->queryInterface(IEditController::iid,
+                                   reinterpret_cast<void**>(&single_controller)) == kResultTrue &&
+        single_controller) {
+        controller_ = owned(single_controller);
+        controller_is_component_ = true;
+    } else {
+        TUID controller_cid{};
+        if (component_->getControllerClassId(controller_cid) == kResultTrue) {
+            controller_ = factory.createInstance<IEditController>(VST3::UID(controller_cid));
+            if (!controller_) {
+                error = "VST3 init[controller-create]: advertised controller could not be created";
+                return false;
+            }
+            if (controller_->initialize(host_.get()) != kResultOk) {
+                error = "VST3 init[controller-initialize]: initialize failed";
+                return false;
+            }
+            controller_initialized_ = true;
+        }
+    }
+
+    // Strict separated-component ordering: the host callback must exist before
+    // controller/component connection. Some vendors tolerate a late handler;
+    // iZotope-family processors are known to exercise this frontier strictly.
+    if (controller_) {
+        if (!component_handler) {
+            error = "VST3 init[component-handler]: host handler unavailable";
+            return false;
+        }
+        if (controller_->setComponentHandler(component_handler) != kResultTrue) {
+            error = "VST3 init[component-handler]: setComponentHandler failed";
+            return false;
+        }
+    }
+
+    if (controller_ && !controller_is_component_) {
+        FUnknownPtr<IConnectionPoint> component_cp(component_);
+        FUnknownPtr<IConnectionPoint> controller_cp(controller_);
+        if (component_cp && controller_cp) {
+            component_connection_ = owned(new ConnectionProxy(component_cp));
+            controller_connection_ = owned(new ConnectionProxy(controller_cp));
+            if (component_connection_->connect(controller_cp) != kResultTrue) {
+                error = "VST3 init[connect-component-controller]: component connection failed";
+                return false;
+            }
+            if (controller_connection_->connect(component_cp) != kResultTrue) {
+                (void)component_connection_->disconnect();
+                error = "VST3 init[connect-controller-component]: controller connection failed";
+                return false;
+            }
+        } else if (component_cp || controller_cp) {
+            error = "VST3 init[connection-points]: asymmetric separated connection support";
+            return false;
+        }
     }
 
     processor_ = FUnknownPtr<IAudioProcessor>(component_).getInterface();
     if (!processor_) {
-        error = "VST3 component does not implement IAudioProcessor";
+        error = "VST3 init[processor-interface]: component does not implement IAudioProcessor";
         return false;
     }
 
     if (processor_->canProcessSampleSize(kSample32) != kResultTrue) {
-        error = "Public preview requires float32-capable VST3 processing";
+        error = "VST3 init[sample-format]: public preview requires float32-capable VST3 processing";
         return false;
     }
 
-    if (!enumerate_parameters(error))
+    if (!enumerate_parameters(error)) {
+        error = "VST3 init[parameter-catalog]: " + error;
         return false;
-    if (!configure_buses(channels, error))
+    }
+    if (!configure_buses(channels, error)) {
+        error = "VST3 init[bus-negotiation]: " + error;
         return false;
+    }
 
     sample_rate_ = sample_rate;
     channels_ = channels;
@@ -347,9 +435,11 @@ bool Vst3Engine::open(const std::string& path,
     process_setup_.sampleRate = static_cast<SampleRate>(sample_rate);
 
     if (processor_->setupProcessing(process_setup_) != kResultOk) {
-        error = "VST3 setupProcessing failed";
+        error = "VST3 init[setup-processing]: setupProcessing failed";
         return false;
     }
+    if (!activate_configured_buses(error))
+        return false;
 
     // VST3 3.7+ asks the host to query this processor extension once during
     // setup, before activation. Older plug-ins may not expose it and remain
@@ -361,7 +451,7 @@ bool Vst3Engine::open(const std::string& path,
     process_context_policy_ = plan_process_context(requested_context);
 
     if (!process_data_.prepare(*component_, 0, kSample32)) {
-        error = "Failed to prepare VST3 ProcessData bus containers";
+        error = "VST3 init[process-data]: failed to prepare ProcessData bus containers";
         return false;
     }
 
@@ -374,12 +464,12 @@ bool Vst3Engine::open(const std::string& path,
     process_data_.processContext = &process_context_;
 
     if (component_->setActive(true) != kResultTrue) {
-        error = "VST3 setActive(true) failed";
+        error = "VST3 init[set-active]: setActive(true) failed";
         return false;
     }
     if (processor_->setProcessing(true) != kResultTrue) {
         component_->setActive(false);
-        error = "VST3 setProcessing(true) failed";
+        error = "VST3 init[set-processing]: setProcessing(true) failed";
         return false;
     }
 
@@ -711,22 +801,36 @@ void Vst3Engine::set_component_handler(IComponentHandler* handler) noexcept
 
 void Vst3Engine::close() noexcept
 {
+    if (processor_)
+        (void)processor_->setProcessing(false);
+    if (component_)
+        (void)component_->setActive(false);
+    process_data_.unprepare();
+
     if (controller_)
         (void)controller_->setComponentHandler(nullptr);
-    if (processor_)
-        processor_->setProcessing(false);
-    if (component_)
-        component_->setActive(false);
-    process_data_.unprepare();
+    if (component_connection_)
+        (void)component_connection_->disconnect();
+    if (controller_connection_)
+        (void)controller_connection_->disconnect();
+    component_connection_ = nullptr;
+    controller_connection_ = nullptr;
+
+    processor_ = nullptr;
+    // Match Steinberg PlugProvider teardown ordering after disconnect: the
+    // component terminates first, followed by a separately initialized controller.
+    if (component_ && component_initialized_)
+        (void)component_->terminate();
+    if (controller_ && controller_initialized_ && !controller_is_component_)
+        (void)controller_->terminate();
+
     input_parameter_changes_.clearQueue();
     output_parameter_changes_.clearQueue();
     parameter_changes_pending_ = false;
     parameter_update_count_ = 0;
     parameters_.clear();
-    processor_ = nullptr;
     controller_ = nullptr;
     component_ = nullptr;
-    provider_ = nullptr;
     module_.reset();
     PluginContextFactory::instance().setPluginContext(nullptr);
     host_ = nullptr;
@@ -746,6 +850,9 @@ void Vst3Engine::close() noexcept
     process_context_ = {};
     latency_samples_ = 0;
     sample_position_ = 0;
+    component_initialized_ = false;
+    controller_initialized_ = false;
+    controller_is_component_ = false;
 }
 
 EngineParameter* Vst3Engine::find_parameter(std::uint32_t id) noexcept
