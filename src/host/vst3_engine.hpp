@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "common/protocol.hpp"
+#include "common/latency_restart_transaction.hpp"
 #include "common/state_snapshot.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -38,7 +39,7 @@ struct EngineParameterUpdate {
     double normalized = 0.0;
 };
 
-class Vst3Engine {
+class Vst3Engine final : public LatencyRestartTarget {
 public:
     Vst3Engine() = default;
     ~Vst3Engine();
@@ -56,6 +57,7 @@ public:
 
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
     bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
+    bool refresh_latency_after_restart(std::string& error);
 
     // Transitional combined seam retained for callers outside the S2 helper.
     // S2 helper code uses the explicit controller/processor ownership methods
@@ -78,6 +80,10 @@ public:
     const std::vector<EngineParameter>& parameters() const noexcept { return parameters_; }
 
 private:
+    bool set_processing(bool enabled) noexcept override;
+    bool set_active(bool enabled) noexcept override;
+    std::uint32_t get_latency_samples() noexcept override;
+
     bool configure_buses(std::uint32_t channels, std::string& error);
     bool enumerate_parameters(std::string& error);
     bool queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept;

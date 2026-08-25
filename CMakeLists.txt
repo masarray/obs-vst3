@@ -35,6 +35,11 @@ add_library(safevst3_state_restore_policy STATIC
 )
 target_include_directories(safevst3_state_restore_policy PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_library(safevst3_latency_restart_transaction STATIC
+    src/common/latency_restart_transaction.cpp
+)
+target_include_directories(safevst3_latency_restart_transaction PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 if(WIN32)
     include(FetchContent)
     set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -96,7 +101,7 @@ if(WIN32)
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(obs-safe-vst3-host PRIVATE
         safevst3_win_ipc safevst3_vst3_hosting_runtime safevst3_lifecycle_policy
-        safevst3_state_restore_policy Avrt)
+        safevst3_state_restore_policy safevst3_latency_restart_transaction Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
@@ -152,6 +157,10 @@ if(SAFEVST3_BUILD_TESTS)
     add_executable(state-restore-policy-test tests/state_restore_policy.cpp)
     target_link_libraries(state-restore-policy-test PRIVATE safevst3_state_restore_policy)
     add_test(NAME state-restore-policy COMMAND state-restore-policy-test)
+
+    add_executable(latency-restart-transaction-test tests/latency_restart_transaction.cpp)
+    target_link_libraries(latency-restart-transaction-test PRIVATE safevst3_latency_restart_transaction)
+    add_test(NAME latency-restart-transaction COMMAND latency-restart-transaction-test)
 
     add_test(
         NAME obs-properties-ownership
@@ -227,6 +236,7 @@ if(SAFEVST3_BUILD_TESTS)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
     add_dependencies(protocol-layout-test
         vst3-source-selection-test lifecycle-restart-policy-test state-restore-policy-test
+        latency-restart-transaction-test
         parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test

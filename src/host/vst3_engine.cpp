@@ -61,6 +61,25 @@ PluginCallResult classify_plugin_call_result(tresult result) noexcept
     return PluginCallResult::UnexpectedFailure;
 }
 
+const char* latency_restart_step_name(LatencyRestartStep step) noexcept
+{
+    switch (step) {
+    case LatencyRestartStep::StopProcessing:
+        return "setProcessing(false)";
+    case LatencyRestartStep::Deactivate:
+        return "setActive(false)";
+    case LatencyRestartStep::Activate:
+        return "setActive(true)";
+    case LatencyRestartStep::QueryLatency:
+        return "getLatencySamples()";
+    case LatencyRestartStep::StartProcessing:
+        return "setProcessing(true)";
+    case LatencyRestartStep::None:
+    default:
+        return "unknown step";
+    }
+}
+
 } // namespace
 
 Vst3Engine::~Vst3Engine() { close(); }
@@ -364,6 +383,40 @@ bool Vst3Engine::restore_state(const PluginStateSnapshot& snapshot, std::string&
     latency_samples_ = processor_->getLatencySamples();
     refresh_parameter_values();
     return true;
+}
+
+bool Vst3Engine::refresh_latency_after_restart(std::string& error)
+{
+    error.clear();
+    if (!component_ || !processor_) {
+        error = "VST3 component unavailable while refreshing latency";
+        return false;
+    }
+
+    const auto result = run_latency_restart_transaction(*this);
+    if (!result.committed) {
+        error = std::string("VST3 latency restart failed at ") +
+                latency_restart_step_name(result.failed_step);
+        return false;
+    }
+
+    latency_samples_ = result.latency_samples;
+    return true;
+}
+
+bool Vst3Engine::set_processing(bool enabled) noexcept
+{
+    return processor_ && processor_->setProcessing(enabled) == kResultTrue;
+}
+
+bool Vst3Engine::set_active(bool enabled) noexcept
+{
+    return component_ && component_->setActive(enabled) == kResultTrue;
+}
+
+std::uint32_t Vst3Engine::get_latency_samples() noexcept
+{
+    return processor_ ? processor_->getLatencySamples() : 0;
 }
 
 void Vst3Engine::set_component_handler(IComponentHandler* handler) noexcept
