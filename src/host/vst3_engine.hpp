@@ -5,6 +5,7 @@
 #include "common/protocol.hpp"
 #include "common/io_restart_transaction.hpp"
 #include "common/latency_restart_transaction.hpp"
+#include "common/process_context_policy.hpp"
 #include "common/state_snapshot.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -83,6 +84,12 @@ public:
     const std::string& plugin_name() const noexcept { return plugin_name_; }
     const std::string& loaded_class_id() const noexcept { return loaded_class_id_; }
     std::uint32_t latency_samples() const noexcept { return latency_samples_; }
+    std::uint32_t process_context_requirements() const noexcept {
+        return process_context_policy_.requested_requirements;
+    }
+    std::uint32_t unsupported_process_context_requirements() const noexcept {
+        return process_context_policy_.unsupported_requirements;
+    }
     const std::vector<EngineParameter>& parameters() const noexcept { return parameters_; }
 
 private:
@@ -122,6 +129,7 @@ private:
     Steinberg::Vst::ParameterChanges output_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
     Steinberg::Vst::ProcessSetup process_setup_{};
     Steinberg::Vst::ProcessContext process_context_{};
+    ProcessContextPolicy process_context_policy_{};
     Steinberg::int32 main_input_bus_ = -1;
     Steinberg::int32 main_output_bus_ = -1;
     static constexpr std::size_t kMaxDynamicAudioBuses = 16;

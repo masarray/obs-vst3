@@ -17,6 +17,19 @@ namespace safevst3 {
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
+static_assert(kProcessNeedSystemTime == IProcessContextRequirements::kNeedSystemTime);
+static_assert(kProcessNeedContinuousTimeSamples == IProcessContextRequirements::kNeedContinousTimeSamples);
+static_assert(kProcessNeedProjectTimeMusic == IProcessContextRequirements::kNeedProjectTimeMusic);
+static_assert(kProcessNeedBarPositionMusic == IProcessContextRequirements::kNeedBarPositionMusic);
+static_assert(kProcessNeedCycleMusic == IProcessContextRequirements::kNeedCycleMusic);
+static_assert(kProcessNeedSamplesToNextClock == IProcessContextRequirements::kNeedSamplesToNextClock);
+static_assert(kProcessNeedTempo == IProcessContextRequirements::kNeedTempo);
+static_assert(kProcessNeedTimeSignature == IProcessContextRequirements::kNeedTimeSignature);
+static_assert(kProcessNeedChord == IProcessContextRequirements::kNeedChord);
+static_assert(kProcessNeedFrameRate == IProcessContextRequirements::kNeedFrameRate);
+static_assert(kProcessNeedTransportState == IProcessContextRequirements::kNeedTransportState);
+static_assert(kProcessContextContinuousTimeValid == ProcessContext::kContTimeValid);
+
 namespace {
 
 bool copy_stream(MemoryStream& stream, std::vector<std::uint8_t>& destination,
@@ -338,13 +351,26 @@ bool Vst3Engine::open(const std::string& path,
         return false;
     }
 
+    // VST3 3.7+ asks the host to query this processor extension once during
+    // setup, before activation. Older plug-ins may not expose it and remain
+    // compatible with the always-valid sampleRate/projectTimeSamples fields.
+    std::uint32_t requested_context = 0;
+    FUnknownPtr<IProcessContextRequirements> context_requirements(component_);
+    if (context_requirements)
+        requested_context = context_requirements->getProcessContextRequirements();
+    process_context_policy_ = plan_process_context(requested_context);
+
     if (!process_data_.prepare(*component_, 0, kSample32)) {
         error = "Failed to prepare VST3 ProcessData bus containers";
         return false;
     }
 
-    process_context_.sampleRate = static_cast<double>(sample_rate);
-    process_context_.state = 0;
+    const auto initial_context = make_process_context_frame(
+        static_cast<double>(sample_rate), sample_position_, process_context_policy_);
+    process_context_.sampleRate = initial_context.sample_rate;
+    process_context_.projectTimeSamples = initial_context.project_time_samples;
+    process_context_.continousTimeSamples = initial_context.continuous_time_samples;
+    process_context_.state = initial_context.state;
     process_data_.processContext = &process_context_;
 
     if (component_->setActive(true) != kResultTrue) {
@@ -716,6 +742,8 @@ void Vst3Engine::close() noexcept
     io_candidate_main_output_bus_ = -1;
     plugin_name_.clear();
     loaded_class_id_.clear();
+    process_context_policy_ = {};
+    process_context_ = {};
     latency_samples_ = 0;
     sample_position_ = 0;
 }
@@ -954,14 +982,19 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
     process_data_.outputParameterChanges = &output_parameter_changes_;
     apply_pending_parameter_changes(process_data_);
 
-    process_context_.projectTimeSamples = sample_position_;
-    sample_position_ += slot.frames;
+    const auto context_frame = make_process_context_frame(
+        process_setup_.sampleRate, sample_position_, process_context_policy_);
+    process_context_.sampleRate = context_frame.sample_rate;
+    process_context_.projectTimeSamples = context_frame.project_time_samples;
+    process_context_.continousTimeSamples = context_frame.continuous_time_samples;
+    process_context_.state = context_frame.state;
 
     const tresult result = processor_->process(process_data_);
     finish_parameter_changes();
     capture_output_parameter_changes();
     if (result != kResultOk)
         return false;
+    sample_position_ += slot.frames;
 
     if (!output_direct) {
         if (channels_ == 2 && plugin_output_channels_ == 1) {
