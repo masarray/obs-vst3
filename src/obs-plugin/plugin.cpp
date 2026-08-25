@@ -3,6 +3,7 @@
 #include "common/recovery_policy.hpp"
 #include "obs-plugin/parameter_controls.hpp"
 #include "obs-plugin/state_store.hpp"
+#include "obs-plugin/vst3_source_selection.hpp"
 #include "platform/windows/win_ipc.hpp"
 
 #include <obs-module.h>
@@ -32,6 +33,8 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-safe-vst3", "en-US")
 
 namespace {
 using safevst3::WinObsBridge;
+using safevst3::obssource::SourceMode;
+using safevst3::obssource::SourceSelection;
 
 constexpr const char* kSourceMode = "vst3_source_mode";
 constexpr const char* kSourceInstalled = "installed";
@@ -399,40 +402,28 @@ bool rescan_button(obs_properties_t* props, obs_property_t*, void*)
     return true;
 }
 
-void split_selection(const std::string& selection, std::string& path, std::string& class_id)
-{
-    const auto tab = selection.find('\t');
-    if (tab == std::string::npos) {
-        path = selection;
-        return;
-    }
-    path = selection.substr(0, tab);
-    class_id = selection.substr(tab + 1);
-}
-
-enum class Vst3SourceMode {
-    Installed,
-    Browse,
-};
-
-Vst3SourceMode source_mode_from_settings(obs_data_t* settings)
+SourceSelection source_selection_from_settings(obs_data_t* settings)
 {
     if (!settings)
-        return Vst3SourceMode::Installed;
+        return safevst3::obssource::resolve_source_selection({SourceMode::Installed, "", "", ""});
 
+    std::optional<SourceMode> explicit_mode;
     if (obs_data_has_user_value(settings, kSourceMode)) {
         const std::string mode = obs_data_get_string(settings, kSourceMode);
-        return mode == kSourceBrowse ? Vst3SourceMode::Browse : Vst3SourceMode::Installed;
+        explicit_mode = mode == kSourceBrowse ? SourceMode::Browse : SourceMode::Installed;
     }
 
-    // Backward-compatible migration for scenes saved before the explicit
-    // source selector existed. A custom-only scene keeps working as Browse;
-    // otherwise the installed list remains the default.
-    const std::string selected = obs_data_get_string(settings, kPluginPath);
-    const std::string custom = obs_data_get_string(settings, kCustomPath);
-    return !custom.empty() && selected.empty()
-               ? Vst3SourceMode::Browse
-               : Vst3SourceMode::Installed;
+    SourceSelection selection = safevst3::obssource::resolve_source_selection({
+        explicit_mode,
+        obs_data_get_string(settings, kPluginPath),
+        obs_data_get_string(settings, kCustomPath),
+        obs_data_get_string(settings, kClassId),
+    });
+    if (selection.inferred_from_legacy) {
+        obs_data_set_string(settings, kSourceMode,
+                            selection.mode == SourceMode::Browse ? kSourceBrowse : kSourceInstalled);
+    }
+    return selection;
 }
 
 std::pair<std::string, std::string> current_identity(Filter* filter)
@@ -706,24 +697,9 @@ void filter_update(void* data, obs_data_t* settings)
     if (!filter || filter->shutting_down.load(std::memory_order_acquire))
         return;
 
-    const Vst3SourceMode source_mode = source_mode_from_settings(settings);
-    const std::string selected = obs_data_get_string(settings, kPluginPath);
-    const std::string custom = obs_data_get_string(settings, kCustomPath);
-    const std::string legacy_class = obs_data_get_string(settings, kClassId);
-
-    std::string path;
-    std::string class_id;
-    if (source_mode == Vst3SourceMode::Installed) {
-        split_selection(selected, path, class_id);
-        if (class_id.empty())
-            class_id = legacy_class;
-    } else {
-        path = custom;
-        // Preserve legacy manually-browsed scenes that stored an explicit
-        // class id. New manual Browse selections normally keep this empty and
-        // let the isolated host choose the bundle's audio-effect class.
-        class_id = legacy_class;
-    }
+    const SourceSelection selection = source_selection_from_settings(settings);
+    const std::string& path = selection.path;
+    const std::string& class_id = selection.class_id;
 
     const auto [old_path, old_class_id] = current_identity(filter);
     const bool identity_changed = old_path != path || old_class_id != class_id;
@@ -776,17 +752,16 @@ void update_editor_button(obs_properties_t* props, Filter* filter)
     }
 }
 
-void update_source_mode_visibility(obs_properties_t* props, Vst3SourceMode mode)
+void update_source_mode_visibility(obs_properties_t* props, const SourceSelection& selection)
 {
     if (!props)
         return;
-    const bool installed = mode == Vst3SourceMode::Installed;
     if (auto* list = obs_properties_get(props, kPluginPath))
-        obs_property_set_visible(list, installed);
+        obs_property_set_visible(list, selection.show_installed_controls);
     if (auto* rescan = obs_properties_get(props, kRescan))
-        obs_property_set_visible(rescan, installed);
+        obs_property_set_visible(rescan, selection.show_installed_controls);
     if (auto* browse = obs_properties_get(props, kCustomPath))
-        obs_property_set_visible(browse, !installed);
+        obs_property_set_visible(browse, selection.show_browse_controls);
 }
 
 bool identity_property_modified(void* data, obs_properties_t* props, obs_property_t* property, obs_data_t* settings)
@@ -795,11 +770,16 @@ bool identity_property_modified(void* data, obs_properties_t* props, obs_propert
     if (!filter || !settings || filter->shutting_down.load(std::memory_order_acquire))
         return false;
 
-    const Vst3SourceMode mode = source_mode_from_settings(settings);
+    const SourceSelection selection = source_selection_from_settings(settings);
     const std::string changed_property = property ? obs_property_name(property) : "";
-    if ((changed_property == kPluginPath && mode != Vst3SourceMode::Installed) ||
-        (changed_property == kCustomPath && mode != Vst3SourceMode::Browse))
+    if ((changed_property == kPluginPath && selection.mode != SourceMode::Installed) ||
+        (changed_property == kCustomPath && selection.mode != SourceMode::Browse))
         return false;
+
+    if (changed_property == kCustomPath &&
+        safevst3::obssource::clears_legacy_class_id_on_browse_change(selection.mode)) {
+        obs_data_set_string(settings, kClassId, "");
+    }
 
     // The helper is started synchronously for the explicit user selection.
     // The editor button already belongs to this same properties object, so we
@@ -815,8 +795,8 @@ bool source_mode_modified(void* data, obs_properties_t* props, obs_property_t*, 
     if (!filter || !settings || filter->shutting_down.load(std::memory_order_acquire))
         return false;
 
-    const Vst3SourceMode mode = source_mode_from_settings(settings);
-    update_source_mode_visibility(props, mode);
+    const SourceSelection selection = source_selection_from_settings(settings);
+    update_source_mode_visibility(props, selection);
 
     // Switching source mode immediately activates the value retained for that
     // mode. The inactive source is ignored rather than erased, so toggling back
@@ -994,14 +974,14 @@ obs_properties_t* filter_properties(void* data)
     obs_properties_add_button2(
         props, kOpenEditor, obs_module_text("OpenPluginUI"), open_editor_button, filter);
 
-    Vst3SourceMode mode = Vst3SourceMode::Installed;
+    SourceSelection selection = safevst3::obssource::resolve_source_selection({SourceMode::Installed, "", "", ""});
     if (filter && filter->context) {
         if (obs_data_t* settings = obs_source_get_settings(filter->context)) {
-            mode = source_mode_from_settings(settings);
+            selection = source_selection_from_settings(settings);
             obs_data_release(settings);
         }
     }
-    update_source_mode_visibility(props, mode);
+    update_source_mode_visibility(props, selection);
     update_editor_button(props, filter);
     return props;
 }
