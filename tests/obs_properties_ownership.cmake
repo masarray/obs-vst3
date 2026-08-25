@@ -17,4 +17,25 @@ if(UNSAFE_REFRESH)
         "threads must never rebuild an open OBS Properties tree.")
 endif()
 
-message(STATUS "OBS Properties ownership guard passed")
+# User-facing Single Host UX is intentionally mutually exclusive: users choose
+# an installed plug-in OR manual Browse. Generic parameter walls are not part
+# of the normal OBS filter surface.
+foreach(REQUIRED_TOKEN
+        "kSourceMode"
+        "kSourceInstalled"
+        "kSourceBrowse"
+        "source_mode_modified"
+        "update_source_mode_visibility")
+    string(FIND "${SOURCE_TEXT}" "${REQUIRED_TOKEN}" TOKEN_POS)
+    if(TOKEN_POS EQUAL -1)
+        message(FATAL_ERROR "Simple VST3 source-mode UX contract missing: ${REQUIRED_TOKEN}")
+    endif()
+endforeach()
+
+string(FIND "${SOURCE_TEXT}" "add_generic_parameter_properties(" FALLBACK_UI_POS)
+if(NOT FALLBACK_UI_POS EQUAL -1)
+    message(FATAL_ERROR
+        "Generic VST3 fallback parameter wall must not be rendered in the normal OBS Properties UI.")
+endif()
+
+message(STATUS "OBS Properties ownership and simple UX guards passed")
