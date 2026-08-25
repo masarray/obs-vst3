@@ -1,11 +1,16 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
+#include <iomanip>
+#include <sstream>
+#include <string>
 #include <string_view>
 
 namespace safevst3 {
 
 enum class StartupErrorCode : long {
+    None = 0,
     Generic = 1,
     ModuleLoad = 101,
     ClassSelect = 102,
@@ -26,6 +31,8 @@ enum class StartupErrorCode : long {
     ProcessData = 117,
     SetActive = 118,
     SetProcessing = 119,
+    ProcessContext = 120,
+    LatencyQuery = 121,
 };
 
 struct StartupErrorEntry {
@@ -34,7 +41,7 @@ struct StartupErrorEntry {
     StartupErrorCode code;
 };
 
-inline constexpr std::array<StartupErrorEntry, 19> kStartupErrorEntries{{
+inline constexpr std::array<StartupErrorEntry, 21> kStartupErrorEntries{{
     {"VST3 init[module-load]", "module-load", StartupErrorCode::ModuleLoad},
     {"VST3 init[class-select]", "class-select", StartupErrorCode::ClassSelect},
     {"VST3 init[component-create]", "component-create", StartupErrorCode::ComponentCreate},
@@ -54,7 +61,15 @@ inline constexpr std::array<StartupErrorEntry, 19> kStartupErrorEntries{{
     {"VST3 init[process-data]", "process-data", StartupErrorCode::ProcessData},
     {"VST3 init[set-active]", "set-active", StartupErrorCode::SetActive},
     {"VST3 init[set-processing]", "set-processing", StartupErrorCode::SetProcessing},
+    {"VST3 init[process-context]", "process-context", StartupErrorCode::ProcessContext},
+    {"VST3 init[latency-query]", "latency-query", StartupErrorCode::LatencyQuery},
 }};
+
+class StartupPhaseSink {
+public:
+    virtual ~StartupPhaseSink() = default;
+    virtual void publish(StartupErrorCode phase) noexcept = 0;
+};
 
 inline constexpr StartupErrorCode classify_startup_error(std::string_view message) noexcept
 {
@@ -71,9 +86,34 @@ inline constexpr const char* startup_error_phase(StartupErrorCode code) noexcept
         if (entry.code == code)
             return entry.phase.data();
     }
+    if (code == StartupErrorCode::None)
+        return "none";
     if (code == StartupErrorCode::Generic)
         return "generic";
     return nullptr;
+}
+
+inline std::string startup_phase_name(long raw_code)
+{
+    const char* phase = startup_error_phase(static_cast<StartupErrorCode>(raw_code));
+    return phase ? phase : "unknown";
+}
+
+inline std::string format_startup_process_exit(long raw_phase, std::uint32_t exit_code)
+{
+    std::ostringstream os;
+    os << "VST3 helper exited before becoming ready (phase=" << startup_phase_name(raw_phase)
+       << ", exit=0x" << std::uppercase << std::hex << std::setw(8) << std::setfill('0')
+       << exit_code << ')';
+    return os.str();
+}
+
+inline std::string format_startup_timeout(long raw_phase, std::uint64_t elapsed_ms)
+{
+    std::ostringstream os;
+    os << "VST3 helper startup timed out after " << elapsed_ms
+       << " ms (phase=" << startup_phase_name(raw_phase) << ')';
+    return os.str();
 }
 
 } // namespace safevst3
