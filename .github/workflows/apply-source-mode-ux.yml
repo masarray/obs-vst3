@@ -24,7 +24,7 @@ jobs:
           grep -q 'source_mode_modified' src/obs-plugin/plugin.cpp
           grep -q 'update_source_mode_visibility' src/obs-plugin/plugin.cpp
           ! grep -q 'add_generic_parameter_properties(' src/obs-plugin/plugin.cpp
-          ! grep -q 'obs_source_update_properties(' src/obs-plugin/plugin.cpp
+          ! grep -Eq '^[[:space:]]*obs_source_update_properties[[:space:]]*\(' src/obs-plugin/plugin.cpp
       - name: Commit patched source and remove temporary patch scaffolding
         run: |
           git config user.name 'github-actions[bot]'
