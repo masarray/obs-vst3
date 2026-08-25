@@ -278,9 +278,12 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     }
 
     // During Booting, last_error doubles as a crash-safe startup breadcrumb.
-    // Clear it only after Ready so runtime watchdog/control errors retain the
-    // existing meaning and a successful helper never exposes a stale phase.
-    InterlockedExchange(&region_->last_error, static_cast<long>(StartupErrorCode::None));
+    // Clear only the known final breadcrumb. A runtime error published at the
+    // Ready boundary wins this CAS and must never be erased by the parent.
+    (void)InterlockedCompareExchange(
+        &region_->last_error,
+        static_cast<long>(StartupErrorCode::None),
+        static_cast<long>(StartupErrorCode::LatencyQuery));
     return true;
 }
 
