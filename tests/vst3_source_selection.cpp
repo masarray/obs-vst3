@@ -58,6 +58,37 @@ int main()
                 migrated.class_id == "00112233445566778899AABBCCDDEEFF",
             "legacy Browse migration must preserve its existing identity");
 
+    const SourceSelection migrated_installed = resolve_source_selection({
+        std::nullopt,
+        "C:\\VST3\\LegacyInstalled.vst3\tAABBCCDDEEFF00112233445566778899",
+        R"(D:\Retained\ManualEffect.vst3)",
+        "FFEEDDCCBBAA99887766554433221100",
+    });
+    require(migrated_installed.mode == SourceMode::Installed &&
+                migrated_installed.inferred_from_legacy,
+            "a legacy scene with an installed selection must migrate to Installed mode");
+    require(migrated_installed.path == R"(C:\VST3\LegacyInstalled.vst3)" &&
+                migrated_installed.class_id == "AABBCCDDEEFF00112233445566778899",
+            "legacy Installed migration must ignore a retained manual path");
+
+    const SourceSelection legacy_path_only = resolve_source_selection({
+        SourceMode::Installed,
+        R"(C:\VST3\PathOnly.vst3)",
+        "",
+        "00112233445566778899AABBCCDDEEFF",
+    });
+    require(legacy_path_only.class_id == "00112233445566778899AABBCCDDEEFF",
+            "a legacy installed path without a class field must inherit its saved ClassID");
+
+    const SourceSelection explicit_empty_class = resolve_source_selection({
+        SourceMode::Installed,
+        "C:\\VST3\\FirstAudioEffect.vst3\t",
+        "",
+        "00112233445566778899AABBCCDDEEFF",
+    });
+    require(explicit_empty_class.class_id.empty(),
+            "an explicit empty scanner ClassID must not inherit a stale legacy ClassID");
+
     require(clears_legacy_class_id_on_browse_change(SourceMode::Browse),
             "an explicit new Browse path must not reuse a legacy bundle ClassID");
     require(!clears_legacy_class_id_on_browse_change(SourceMode::Installed),

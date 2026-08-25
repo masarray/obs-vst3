@@ -9,13 +9,27 @@ file(READ "${SOURCE_FILE}" SOURCE_TEXT)
 # complete property tree from plug-in runtime/recovery/scanner code can
 # invalidate those pointers mid-callback. Property callbacks must instead
 # return true and let OBS queue RefreshProperties after the callback returns.
-string(REGEX MATCH "(^|\n)[ \t]*obs_source_update_properties[ \t]*\\(" UNSAFE_REFRESH "${SOURCE_TEXT}")
-if(UNSAFE_REFRESH)
+string(REGEX MATCHALL "obs_source_update_properties[ \t]*\\(" PROPERTY_REFRESH_CALLS "${SOURCE_TEXT}")
+list(LENGTH PROPERTY_REFRESH_CALLS PROPERTY_REFRESH_COUNT)
+if(PROPERTY_REFRESH_COUNT GREATER 1)
     message(FATAL_ERROR
-        "Unsafe obs_source_update_properties() call found in OBS plug-in. "
-        "Use a property modified callback that returns true; worker/runtime "
-        "threads must never rebuild an open OBS Properties tree.")
+        "Only the audited OBS UI-task callback may call obs_source_update_properties().")
 endif()
+
+# Background scanning may finish after the button callback returns. Its one
+# allowed full-tree refresh must be queued onto OBS_TASK_UI and hold only an OBS
+# weak source across the worker/UI handoff.
+foreach(REQUIRED_REFRESH_TOKEN
+        "refresh_scan_waiter_on_ui"
+        "obs_queue_task(OBS_TASK_UI"
+        "obs_source_get_weak_source"
+        "obs_weak_source_get_source"
+        "obs_source_update_properties")
+    string(FIND "${SOURCE_TEXT}" "${REQUIRED_REFRESH_TOKEN}" TOKEN_POS)
+    if(TOKEN_POS EQUAL -1)
+        message(FATAL_ERROR "Safe asynchronous Rescan refresh contract missing: ${REQUIRED_REFRESH_TOKEN}")
+    endif()
+endforeach()
 
 # User-facing Single Host UX is intentionally mutually exclusive: users choose
 # an installed plug-in OR manual Browse. Generic parameter walls are not part
