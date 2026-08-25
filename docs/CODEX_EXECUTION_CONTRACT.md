@@ -7,22 +7,93 @@
 
 ---
 
-## 1. Precedence
+## 1. Precedence and sources of truth
 
 This file is the compact normative execution contract for the North Star PRD.
 
 - `docs/NORTH_STAR_PRD.md` remains the full product/engineering PRD and research rationale.
 - This file defines the **unambiguous product finish line, execution order, persistence contract, preset/reuse contract, and stop/go gates** for AI coding agents.
-- If wording in the larger PRD can be interpreted in more than one way, **this contract wins until an explicit ADR updates both documents**.
-- Chat history is never a source of truth for architecture or milestone order.
+- Accepted ADRs may clarify historical implementation decisions. For Gate 0, read `docs/ADR-0001-GATE0-STABILIZATION-SUCCESSOR.md`.
+- If wording in the larger PRD, a historical PR, or an old issue can be interpreted in more than one way, **this contract wins** until an explicit documentation change updates the source of truth.
+- Chat history is never a source of truth for architecture or milestone completion.
+- A historical issue title such as old `S1`/`S2` naming does not redefine North Star phase meaning.
 
-Codex must read this file first, then the relevant milestone section of `NORTH_STAR_PRD.md`, then the current parent issue/ticket and repository code.
+Codex must read this file first, then any applicable ADR, then the relevant milestone section of `NORTH_STAR_PRD.md`, then the current parent issue/ticket and repository code at the declared fixed-point SHA.
 
 ---
 
-## 2. Exact product finish line
+## 2. Current Gate 0 routing — authoritative correction
 
-The finished Windows product exposes **two deliberately separate OBS audio filters**:
+The durable milestone is **Gate 0 crash-proof Single Host stabilization**. A pull-request number is only an implementation vehicle.
+
+### 2.1 PR #22 is superseded
+
+PR #22 (`fix/obs-load-compatibility`) is historical/reference material only for runtime stabilization.
+
+Why:
+
+- it combined scanner/UI/lifecycle stabilization changes;
+- CI/compatibility evidence was useful;
+- subsequent real OBS Studio 32.2.2 testing exposed a Properties-lifetime crash;
+- therefore its mixed runtime approach is not a safe merge baseline.
+
+Rules:
+
+- do not merge #22 as Gate 0;
+- do not continue new stabilization work on #22;
+- do not recreate its mixed approach merely because an old CI run was green;
+- useful individual changes may be ported only selectively, with independent review, regression coverage and requalification.
+
+### 2.2 PR #23 is the stabilization successor/candidate
+
+PR #23 (`stabilize/v040-crashproof-baseline`) is the current crash-proof stabilization successor.
+
+Its current evidence is valuable because it was rebuilt from the known-good `v0.4.0` maintenance baseline and introduced a more conservative OBS Properties ownership boundary plus independently testable source-selection/scanner behavior.
+
+However:
+
+**PR #23 being green does not by itself lock Gate 0.**
+
+PR #23 is based on `maintenance/v0.4.0-stable`, while the North Star source of truth is `main`. Gate 0 closes only when the validated stabilization result is represented on a clean `main`-target integration head and that exact source head is requalified.
+
+### 2.3 Gate 0 closure sequence
+
+```text
+validated crash-proof stabilization result from PR #23
+→ establish clean main-target fixed point
+→ port/integrate only the reviewed stabilization changes required for Gate 0
+→ exact-head correctness/architecture review
+→ exact-head CI + compatibility qualification
+→ real-machine OBS qualification using artifact from that same source head
+→ resolve findings without changing the qualified head unnoticed
+→ merge exact qualified main-target head
+→ record/tag known-good Gate 0 baseline
+→ only then unlock North Star S1
+```
+
+A maintenance-only branch, historical #22 artifact, or manual test from a different build cannot close canonical Gate 0.
+
+### 2.4 OBS Properties ownership is now a Gate 0 architecture rule
+
+OBS owns the lifetime of `obs_properties_t` / `obs_property_t` used by its Properties UI.
+
+Do not rebuild an open OBS Properties tree from scanner, recovery, helper-runtime, or other asynchronous code in a way that can invalidate OBS-owned pointers during property callbacks.
+
+For user-driven property changes, prefer the supported OBS callback/refresh ownership model and prove any more complex lifecycle behavior with deterministic regression coverage plus real-machine evidence.
+
+### 2.5 Artifact provenance rule
+
+Exact-head qualification means the **actual source head commit** is unambiguous.
+
+On pull-request workflows, GitHub may create a synthetic PR merge SHA. That synthetic SHA may be useful internally, but a public/real-test artifact must not present it as though it were the source commit being qualified.
+
+Artifact name, metadata, release notes or provenance must identify the actual source-head SHA used for the product candidate.
+
+---
+
+## 3. Exact product finish line
+
+The finished Windows product exposes **two deliberately separate OBS audio filters**.
 
 ### Filter A — `VST3`
 
@@ -77,11 +148,11 @@ The project has not reached the intended North Star product shape until **both f
 
 ---
 
-## 3. “Remember my last settings” is a mandatory zero-action persistence contract
+## 4. “Remember my last settings” is a mandatory zero-action persistence contract
 
 Persistence is not optional polish. It is a release gate.
 
-### 3.1 `VST3` Single Host must automatically remember
+### 4.1 `VST3` Single Host must automatically remember
 
 At minimum, per OBS filter instance:
 
@@ -105,7 +176,7 @@ Tune plug-in → helper crashes → helper is recreated safely
 → last-known-good complete state is restored before wet processing is republished.
 ```
 
-### 3.2 `VST3 Rack` must automatically remember
+### 4.2 `VST3 Rack` must automatically remember
 
 At minimum, per Rack filter instance:
 
@@ -126,7 +197,7 @@ Build/tune rack → close OBS → reopen same scene collection
 → missing/quarantined slots remain visible and pass through.
 ```
 
-### 3.3 Rack Preset Library — mandatory reuse/productivity contract
+### 4.3 Rack Preset Library — mandatory reuse/productivity contract
 
 Automatic Session Snapshot and Rack Preset are **different features with different jobs**:
 
@@ -157,24 +228,24 @@ Required user operations:
 
 Behavioral rules:
 
-1. **Loading a preset creates/restores the Rack working state; it does not make later knob/GUI edits silently overwrite the saved preset.**
+1. Loading a preset creates/restores the Rack working state; later edits must not silently overwrite the saved preset.
 2. Autosave/Session Snapshot continues independently after a preset is loaded.
 3. The user can experiment after loading a preset and still return to the original saved preset later.
-4. A preset must be reusable across sources/scenes/scene collections on the same supported installation without depending on the original filter instance ID.
-5. Missing plug-ins do not destroy the preset. Their slots remain visible as Missing/pass-through placeholders so the user can install, relink, replace, or bypass them.
-6. Loading a malformed/corrupt preset must fail safely without destroying the current Rack or its last-known-good Session Snapshot.
-7. Preset storage is versioned and migration-aware. A future format change must not silently reinterpret old opaque state.
-8. Saving/updating a preset uses crash-safe atomic persistence (`temp → validate → replace`) so an interrupted write does not destroy the previously valid preset.
-9. Vendor GUI windows are never auto-opened merely because a preset was loaded.
-10. Preset names and management UI must be understandable to normal users; ClassID/path details stay in diagnostics/repair surfaces.
+4. A preset is reusable across independent filters/sources/scenes/scene collections without depending on the original filter instance ID.
+5. Missing plug-ins do not destroy the preset; slots remain visible as Missing/pass-through placeholders.
+6. Loading a malformed/corrupt preset fails safely without destroying the current Rack or its last-known-good Session Snapshot.
+7. Preset storage is versioned and migration-aware.
+8. Saving/updating a preset uses crash-safe atomic persistence (`temp → validate → replace`).
+9. Vendor GUI windows never auto-open merely because a preset was loaded.
+10. Preset names and normal management UI use normal-user terminology; ClassID/path details remain in diagnostics/repair surfaces.
 
 Recommended storage model:
 
-- a user-level **Rack Preset Library** owned by OBS Safe VST3, separate from scene JSON and separate from per-filter Session Snapshots;
+- user-level **Rack Preset Library** separate from scene JSON and per-filter Session Snapshots;
 - readable/versioned manifest plus bounded opaque state blobs;
-- stable preset ID independent of display name so rename does not change identity.
+- stable preset ID independent of display name.
 
-Required preset acceptance tests:
+Required preset acceptance scenarios:
 
 ```text
 complex rack → Save as Preset “Broadcast Vocal”
@@ -202,13 +273,13 @@ interrupt preset write / corrupt new candidate
 → current Rack Session Snapshot is untouched.
 ```
 
-### 3.4 Do not persist transient UI surprises
+### 4.4 Do not persist transient UI surprises
 
-Do **not** automatically reopen vendor plug-in windows merely because they were open at shutdown. Audio/configuration state persists; transient window-open state does not override the PRD's no-surprise GUI policy.
+Do **not** automatically reopen vendor plug-in windows merely because they were open at shutdown. Audio/configuration state persists; transient window-open state does not override the no-surprise GUI policy.
 
-Window position/size may be remembered later only if it is safe, useful, and does not trigger vendor GUI creation during scene restore/startup.
+Window position/size may be remembered later only if safe/useful and without triggering vendor GUI creation during scene restore/startup.
 
-### 3.5 Persistence correctness rule
+### 4.5 Persistence correctness rule
 
 A snapshot becomes last-known-good only after the entire logical state transaction is coherent and validated. Never mix component state from generation N with controller/topology state from generation N+1.
 
@@ -216,40 +287,44 @@ Interrupted/corrupt primary persistence must not destroy the only known-good sta
 
 ---
 
-## 4. Competitive target versus atkAudio
+## 5. Competitive target versus atkAudio
 
 Do **not** interpret “beat atkAudio” as “copy every atkAudio feature.”
 
 atkAudio is the breadth reference. OBS Safe VST3 wins when it is the better **production-safety and workflow-productivity choice inside OBS**.
 
-The target is considered surpassed for the intended market when public evidence supports all of the following:
+The target is surpassed for the intended market when public evidence supports:
 
-1. **Crash containment:** injected/vendor helper, editor or scanner failures do not take down OBS in supported scenarios.
-2. **Hang containment:** bounded deadline/watchdog/recovery behavior; no unlimited OBS audio callback wait.
-3. **Scanner safety:** no unsafe in-process retry path; one bad candidate does not block the full library.
-4. **State reliability:** Single and Rack restore complete audible state automatically across OBS restart and helper recovery.
-5. **Rack safety:** one bad Rack slot can be identified, bypassed/quarantined and the remaining chain recovered.
-6. **Preset productivity:** a complex Rack can be saved once and reused safely in another source/scene/project workflow with complete slot states restored.
-7. **Simplicity:** a normal user deals with `VST3` or `VST3 Rack`, plug-in names, presets, status and vendor UI — not ClassIDs, helper processes, IPC or cache files.
-8. **Diagnostics:** exact build/module/helper/scanner/plugin identity and last failure state can be copied without expert debugging.
-9. **Install reliability:** normal/custom/portable supported OBS roots install, upgrade, uninstall and target migration are qualification-tested.
-10. **Regression discipline:** every confirmed project regression gets a permanent automated regression test where technically feasible.
-11. **Release evidence:** each stable build comes from an exact CI-qualified commit and public trial progression.
+1. crash containment;
+2. hang containment and bounded recovery;
+3. scanner safety without unsafe in-process retry;
+4. reliable complete state restoration for Single and Rack;
+5. Rack slot-level safety/quarantine/recovery;
+6. reusable Rack Preset productivity;
+7. simple normal-user UX;
+8. actionable diagnostics with exact build/plugin identity;
+9. reliable supported installation/upgrade/uninstall/migration;
+10. regression discipline with permanent tests where technically feasible;
+11. exact-qualified release evidence.
 
 Breadth features such as arbitrary graphs, MIDI instruments and direct audio-device routing are not required to win this product target.
 
 ---
 
-## 5. Locked implementation order
+## 6. Locked implementation order
 
 Codex must execute this order. Do not skip lock gates.
 
 ```text
 GATE 0
-Finish PR #22 stabilization
-→ real-machine validation
+Crash-proof Single Host stabilization successor
+PR #22 = historical/reference only
+PR #23 = current stabilization evidence/candidate
+→ clean main-target integration
+→ exact-head review + CI + compatibility qualification
+→ same-source-head real-machine public/real-test qualification
 → merge
-→ tag known-good baseline
+→ record/tag known-good baseline
 
 S1
 VST3 lifecycle/restartComponent compliance
@@ -313,29 +388,39 @@ Compatibility intelligence
 → evidence-driven advanced capabilities
 ```
 
-**This post-v2 sequence is authoritative** and resolves any earlier wording that placed signing before compatibility intelligence.
+**This sequence is authoritative.**
+
+### Legacy issue naming rule
+
+Issues created before this contract may use labels such as `S1`, `S2`, etc. for historical implementation work. They are not allowed to redefine the sequence above.
+
+When an old issue name conflicts with this section:
+
+- preserve useful implementation evidence;
+- mark/interpret the issue as pre-North-Star historical work;
+- use the milestone meaning in this contract for all new planning and completion decisions.
 
 ---
 
-## 6. Codex task-size rule
+## 7. Codex task-size rule
 
 Codex must never implement an entire milestone from one broad instruction.
 
 For each work item:
 
-1. Establish fixed-point base SHA and green tests.
-2. Read this contract + relevant PRD milestone + parent issue.
-3. Research authoritative OBS/VST3/Windows behavior when uncertain.
-4. Create/take **one vertical tracer-bullet ticket**.
-5. Write the failing behavior/regression test first at the highest stable seam.
-6. Implement the minimum production change to make it green.
-7. Refactor only with all old/new tests green.
-8. Review correctness + architecture from the fixed point.
-9. Run exact-head required CI.
-10. Merge only the reviewed exact head.
-11. Update milestone progress and release notes.
+1. establish fixed-point base SHA and green tests;
+2. read this contract + applicable ADR + relevant PRD milestone + parent issue;
+3. research authoritative OBS/VST3/Windows behavior when uncertain;
+4. create/take **one vertical tracer-bullet ticket**;
+5. write the failing behavior/regression test first at the highest stable seam;
+6. implement the minimum production change to make it green;
+7. refactor only with all old/new tests green;
+8. review correctness + architecture from the fixed point;
+9. run exact-head required CI;
+10. merge only the reviewed exact source head;
+11. update milestone progress and release evidence.
 
-A bug follows:
+Bug loop:
 
 ```text
 reproduce → minimise → hypothesise → instrument → fix → permanent regression test
@@ -345,126 +430,142 @@ Do not rewrite a subsystem as the first response to a bug.
 
 ---
 
-## 7. Required invariant checks on every runtime PR
+## 8. Required invariant checks on every runtime PR
 
-Every implementation PR must answer **YES** to these before merge:
+Every implementation PR must answer **YES** before merge:
 
 - Does third-party VST3 code remain outside `obs64.exe`?
-- Is OBS `filter_audio` still free of vendor lifecycle/UI/state/scanning/filesystem/process work and unbounded waits?
+- Is OBS `filter_audio` still free of vendor lifecycle/UI/state/scanning/filesystem/process work, project-owned heap allocation, blocking mutexes and unbounded waits?
 - Does failure still return bounded dry/pass-through instead of freezing/crashing OBS?
 - Does state remain coherent and last-known-good safe?
+- Are OBS Properties ownership/lifetime boundaries respected?
 - Are Single Host v1.0 contract tests still green after v1.0 exists?
 - If Rack code changed, did the separate Rack protocol/helper boundary remain intact?
 - If Rack persistence/presets changed, are Session Snapshot and named Rack Preset semantics still separate and crash-safe?
-- Is there a deterministic test for the behavior/bug being changed where technically feasible?
-- Is the public artifact tied to an exact qualified commit?
+- Is there a deterministic test for the changed behavior/bug where technically feasible?
+- Is the public artifact tied unambiguously to the actual qualified source commit?
 
 If any answer is NO or UNKNOWN, stop the merge and resolve it.
 
 ---
 
-## 8. Milestone closure format
+## 9. Milestone closure format
 
 An AI agent may mark a milestone locked only when it records:
 
 ```text
 Milestone:
 Fixed-point base:
-Final commit SHA:
-Required CI runs: <exact run URLs/IDs tied to Final commit SHA>
-Public trial version:
+Final source commit SHA:
+Required CI runs: <exact run URLs/IDs tied to Final source commit SHA>
+Public trial version/artifact:
+Artifact source SHA:
 Known blockers: none
-Regression tests added: <test names/files proving the mandatory workflows>
-Manual real-machine evidence: <specific workflow + result + build SHA; never just “tested”>
+Regression tests added: <test names/files proving mandatory workflows>
+Manual real-machine evidence: <specific workflow + result + exact build/source SHA; never just “tested”>
 Architecture invariants: PASS
-Persistence contract: PASS / N/A only when persistence is not yet a required gate for this milestone
-Preset/reuse contract: PASS / N/A only before Rack preset/reuse becomes an applicable gate
+Persistence contract: PASS / N/A only when genuinely not yet a required gate
+Preset/reuse contract: PASS / N/A only before Rack preset/reuse becomes applicable
 Next unlocked milestone:
 ```
 
-Mandatory lock rules override the generic template:
+A literal `PASS` without evidence is invalid.
 
-- **S6 / Single Host v1.0 lock:** `Persistence contract` MUST be `PASS`. `N/A` is forbidden.
-- **R5 / Rack v2.0 lock:** `Persistence contract` MUST be `PASS` and `Preset/reuse contract` MUST be `PASS`. `N/A` is forbidden for either.
-- A milestone that explicitly introduces or qualifies persistence/preset behavior must record `PASS` for the behavior it claims complete before it can close.
-- `N/A` may be used only by earlier milestones where that contract is genuinely outside the milestone's current release gate; it must never be used to bypass a required product-completion contract.
+### 9.1 Required evidence for Gate 0 LOCK
 
-A literal `PASS` is invalid without evidence. The closure record must cite evidence tied to the exact `Final commit SHA`.
+Before North Star S1 may start, Gate 0 must identify:
 
-### Required evidence for S6 persistence PASS
+1. clean main-target fixed-point and final source SHA;
+2. exact-head CI where required jobs actually executed and passed;
+3. required supported-OBS compatibility qualification;
+4. named stabilization regression tests that executed;
+5. public/real-test artifact whose provenance identifies that same source SHA;
+6. real-machine OBS evidence using that artifact, covering the stabilization paths affected by the integration, including Properties reopen, Installed/Browse behavior, vendor editor ownership, helper recovery and zero-action restoration where applicable;
+7. no unresolved correctness/architecture review findings;
+8. no known OBS crash regression;
+9. merge of that qualified source head to `main` and record/tag of the known-good baseline.
 
-Before Single Host v1.0 can lock, the record must identify:
+Historical #22 CI, maintenance-only #23 qualification, or a manual test from another build may support the engineering history but cannot substitute for this final canonical Gate 0 evidence.
 
-1. an automated regression/integration test proving at least the full save → destroy/recreate/reopen → restore path through the stable host seam;
-2. exact-head CI run(s) where that test passed;
-3. real-machine evidence using the public candidate build that demonstrates:
+### 9.2 Required evidence for S6 persistence PASS
+
+Before Single Host v1.0 can lock:
+
+1. automated regression/integration test proving full save → destroy/recreate/reopen → restore through the stable host seam;
+2. exact-head CI where that test passed;
+3. public-candidate real-machine evidence:
 
 ```text
 select VST3 → change vendor state → close OBS normally
 → reopen same scene collection → same plug-in and same observable/audio state return automatically
 ```
 
-4. recovery evidence that a helper death/recreation restores the last-known-good complete state before wet processing resumes.
+4. recovery evidence that helper death/recreation restores last-known-good complete state before wet processing resumes.
 
-If these are missing, `Persistence contract: PASS` is false.
+`Persistence contract: N/A` is forbidden at S6.
 
-### Required evidence for R5 persistence PASS
+### 9.3 Required evidence for R5 persistence PASS
 
-Before Rack v2.0 can lock, the record must identify:
+Before Rack v2.0 can lock:
 
 1. automated tests proving ordered topology + per-slot complete state survive Session Snapshot save/reload;
-2. exact-head CI run(s), tied to the `Final commit SHA`, where those tests actually executed and passed;
-3. real-machine evidence using the **public candidate artifact built from that same final commit** that demonstrates:
+2. exact-head CI tied to final source SHA where those tests executed;
+3. real-machine evidence using public candidate artifact built from that same source commit:
 
 ```text
 create/tune multi-slot Rack → close OBS normally
-→ reopen same scene collection → same slot order, available plug-in audible/observable states, bypass and rack controls return automatically
+→ reopen same scene collection → same slot order, available plug-in states, bypass and rack controls return automatically
 ```
 
-4. corrupt/interrupted-primary recovery evidence showing the last-known-good Rack remains recoverable.
+4. corrupt/interrupted-primary recovery evidence showing last-known-good Rack remains recoverable.
 
-A local/debug/differently packaged build is not sufficient evidence for the R5 persistence lock. If these are missing, `Persistence contract: PASS` is false.
+A local/debug/differently packaged build is insufficient.
 
-### Required evidence for R5 preset/reuse PASS
+### 9.4 Required evidence for R5 preset/reuse PASS
 
-Before Rack v2.0 can lock, the record must identify:
+Before Rack v2.0 can lock, evidence must cover the **complete mandatory Preset Library workflow**.
 
-1. automated tests covering **the complete mandatory Preset Library workflow**: Save as Preset, browse/list and load, independent reuse, Rename, Delete, explicit Update Preset, topology + per-slot component/controller state + bypass/rack controls, missing-plug-in behavior, and crash-safe/corrupt-write behavior;
-2. exact-head CI run(s), tied to the `Final commit SHA`, where all mandatory preset tests actually executed and passed, including:
-   - preset round-trip;
-   - `Rack A → Save named preset → independent Rack B on another filter/source → Load → equivalent observable chain/state`;
-   - post-load edits do not silently mutate the saved preset;
-   - explicit Update Preset changes the saved preset;
-   - Rename preserves preset identity/content and changes the user-visible name;
-   - Delete removes only the intentionally selected preset and leaves unrelated presets/Session Snapshots intact;
-   - missing-plug-in placeholder/pass-through;
-   - interrupted/corrupt preset write leaves the previous valid preset available and the current Session Snapshot untouched;
-3. real-machine evidence using the **public candidate build from that same final commit** that performs the complete normal reuse workflow:
+Automated exact-head coverage must include:
+
+- Save as Preset;
+- browse/list/select/load;
+- independent reuse into another Rack/filter/source;
+- Rename;
+- Delete;
+- explicit Update Preset;
+- topology + per-slot component/controller state + bypass/rack controls;
+- missing-plug-in placeholder/pass-through;
+- crash-safe/corrupt-write behavior;
+- post-load edits do not silently mutate saved preset;
+- interrupted/corrupt preset write preserves previous valid preset and current Session Snapshot.
+
+Public-candidate evidence from the same final source commit must demonstrate:
 
 ```text
 Rack A on source/filter A → build and tune complex chain → Save as Preset “Broadcast Vocal”
-→ create independent Rack B on a different source/filter (or another scene/scene collection where supported)
-→ browse/select and load “Broadcast Vocal”
-→ verify equivalent order, available plug-in audible/observable states, bypass and rack controls
+→ create independent Rack B on a different source/filter or supported scene workflow
+→ browse/select/load “Broadcast Vocal”
+→ verify equivalent order, available plug-in states, bypass and rack controls
 ```
 
-4. public-candidate evidence that the user can Rename the preset and load it by the new name without changing its stored chain/state;
-5. public-candidate evidence that edits made after loading do not silently mutate the saved preset until explicit **Update Preset**, and that explicit Update Preset intentionally changes the preset;
-6. public-candidate evidence that Delete requires/reflects the intentional preset choice, removes that preset, and does not remove unrelated presets or the current Rack Session Snapshot;
-7. exact-head CI coverage for missing-plug-in placeholder/pass-through behavior;
-8. exact-head CI coverage for interrupted/corrupt preset writes proving the previous valid preset remains available and the current Session Snapshot is untouched.
+It must also prove:
 
-A named test file that did not execute on the exact final head is not evidence. Generic Rack persistence testing is not a substitute for the independent preset-reuse workflow. Manual evidence from a different build is not evidence for the R5 lock. A Rack v2.0 candidate with missing/broken Save, Load, Rename, Delete, or explicit Update Preset behavior cannot be locked as stable.
+- Rename preserves preset identity/content and changes visible name;
+- edits after loading do not mutate preset until explicit Update Preset;
+- explicit Update Preset intentionally changes it;
+- Delete removes only the selected preset and preserves unrelated presets + current Session Snapshot;
+- missing plug-in behavior remains visible/pass-through;
+- corrupt write does not destroy the previous valid preset.
 
-If these are missing, `Preset/reuse contract: PASS` is false.
+A named test file that did not execute on the exact final source head is not evidence. Generic Rack persistence is not a substitute for independent preset reuse.
+
+`Persistence contract: N/A` and `Preset/reuse contract: N/A` are forbidden at R5.
 
 If any mandatory value is not evidence-backed `PASS`, the product lock does not exist and the next locked phase must not start.
 
-This prevents a future Codex session from guessing what “finished” meant, writing ceremonial `PASS` values, or closing v1.0/v2.0 without proof for mandatory persistence and reuse.
-
 ---
 
-## 9. Final North Star acceptance
+## 10. Final North Star acceptance
 
 The long-term product is successful when a normal OBS creator can do this without reading engineering documentation:
 
