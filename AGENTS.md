@@ -56,9 +56,11 @@ For one vertical tracer-bullet behavior:
 5. Implement the minimum change to make it green.
 6. Refactor only while all previous/new tests remain green.
 7. Review correctness/realtime/lifecycle/ownership **and** architecture boundaries from the fixed point.
-8. Run required CI on the exact reviewed head.
-9. Merge only that qualified exact head.
-10. Record milestone/release evidence as required by the execution contract.
+8. Resolve every review finding. If the source head changes, repeat the required review on the new head; older review/qualification evidence does not authorize the new head.
+9. Run required CI and any compatibility/package/manual qualification on the exact final reviewed source head.
+10. If any later change modifies that source head, invalidate the prior final qualification and return to review + required qualification.
+11. Merge only the unchanged, fully qualified exact source head.
+12. Record milestone/release evidence as required by the execution contract.
 
 Bug work follows:
 
