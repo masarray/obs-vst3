@@ -12,6 +12,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Align deterministic marker
+        run: python scripts/fix_s1_5_script.py
       - name: Apply S1.5 patch
         run: python scripts/apply_s1_5_engine.py
       - name: Validate
@@ -20,7 +22,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm scripts/apply_s1_5_engine.py .github/workflows/s1-5-apply.yml
+          git rm scripts/apply_s1_5_engine.py scripts/fix_s1_5_script.py .github/workflows/s1-5-apply.yml
           git add -A
           git diff --cached --check
           git commit -m "feat: handle dynamic VST3 mono stereo I/O [s1.5-applied]"
