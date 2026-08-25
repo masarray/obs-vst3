@@ -25,6 +25,11 @@ add_library(safevst3_source_selection STATIC
 )
 target_include_directories(safevst3_source_selection PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+add_library(safevst3_lifecycle_policy STATIC
+    src/common/lifecycle_restart_policy.cpp
+)
+target_include_directories(safevst3_lifecycle_policy PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
 if(WIN32)
     include(FetchContent)
     set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -84,7 +89,8 @@ if(WIN32)
         src/host/vst3_engine.cpp
     )
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(obs-safe-vst3-host PRIVATE safevst3_win_ipc safevst3_vst3_hosting_runtime Avrt)
+    target_link_libraries(obs-safe-vst3-host PRIVATE
+        safevst3_win_ipc safevst3_vst3_hosting_runtime safevst3_lifecycle_policy Avrt)
     target_compile_definitions(obs-safe-vst3-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
     add_executable(obs-safe-vst3-scanner src/scanner/main.cpp)
@@ -132,6 +138,10 @@ if(SAFEVST3_BUILD_TESTS)
     add_executable(vst3-source-selection-test tests/vst3_source_selection.cpp)
     target_link_libraries(vst3-source-selection-test PRIVATE safevst3_source_selection)
     add_test(NAME vst3-source-selection COMMAND vst3-source-selection-test)
+
+    add_executable(lifecycle-restart-policy-test tests/lifecycle_restart_policy.cpp)
+    target_link_libraries(lifecycle-restart-policy-test PRIVATE safevst3_lifecycle_policy)
+    add_test(NAME lifecycle-restart-policy COMMAND lifecycle-restart-policy-test)
 
     add_test(
         NAME obs-properties-ownership
@@ -206,7 +216,7 @@ if(SAFEVST3_BUILD_TESTS)
     add_executable(protocol-layout-test tests/protocol_layout.cpp)
     target_link_libraries(protocol-layout-test PRIVATE safevst3_protocol)
     add_dependencies(protocol-layout-test
-        vst3-source-selection-test
+        vst3-source-selection-test lifecycle-restart-policy-test
         parameter-control-test state-snapshot-test recovery-policy-test spsc-ring-test)
     if(WIN32)
         add_dependencies(protocol-layout-test

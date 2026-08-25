@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include "common/lifecycle_restart_policy.hpp"
 #include "common/parameter_utils.hpp"
 #include "common/spsc_ring.hpp"
 #include "host/native_editor.hpp"
@@ -30,6 +31,17 @@ constexpr std::size_t kMaxProcessorCommandsPerWake = 32;
 constexpr std::size_t kMaxPausedHostCatchupPasses = 4;
 constexpr ULONGLONG kPausedHeartbeatGraceMs = 2000;
 using ParameterQueue = safevst3::SpscRing<safevst3::EngineParameterUpdate, kParameterTransferCapacity>;
+
+static_assert(safevst3::kRestartReloadComponent ==
+              static_cast<std::uint32_t>(Steinberg::Vst::kReloadComponent));
+static_assert(safevst3::kRestartIoChanged ==
+              static_cast<std::uint32_t>(Steinberg::Vst::kIoChanged));
+static_assert(safevst3::kRestartParamValuesChanged ==
+              static_cast<std::uint32_t>(Steinberg::Vst::kParamValuesChanged));
+static_assert(safevst3::kRestartLatencyChanged ==
+              static_cast<std::uint32_t>(Steinberg::Vst::kLatencyChanged));
+static_assert(safevst3::kRestartParamTitlesChanged ==
+              static_cast<std::uint32_t>(Steinberg::Vst::kParamTitlesChanged));
 
 class NativeOverrideBuffer {
 public:
@@ -1051,7 +1063,9 @@ int wmain(int argc, wchar_t** argv)
         (void)component_handler.take_edit_pending();
 
         const Steinberg::int32 restart_flags = component_handler.take_restart_flags();
-        if ((restart_flags & Steinberg::Vst::kParamValuesChanged) != 0) {
+        const auto restart_plan = safevst3::plan_restart_component(
+            static_cast<std::uint32_t>(restart_flags));
+        if (restart_plan.refresh_parameter_values) {
             if (dsp.pause(2000)) {
                 if (native_overrides.empty()) {
                     reconcile_controller_feedback_after_pause(
@@ -1068,7 +1082,12 @@ int wmain(int argc, wchar_t** argv)
                 InterlockedExchange(&region->last_error, 9);
             }
         }
-        if ((restart_flags & (Steinberg::Vst::kReloadComponent | Steinberg::Vst::kIoChanged)) != 0)
+        // S1.1 makes every requested transaction explicit. The following
+        // actions remain deliberately unsupported until their individual S1
+        // tracer bullets implement them at a quiesced lifecycle frontier.
+        if (restart_plan.reload_component || restart_plan.reconfigure_io ||
+            restart_plan.refresh_latency || restart_plan.refresh_parameter_metadata ||
+            restart_plan.unknown_flags != 0)
             InterlockedExchange(&region->last_error, 3);
 
         const long state_requested = InterlockedCompareExchange(&region->state_request_generation, 0, 0);
