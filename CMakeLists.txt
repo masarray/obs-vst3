@@ -252,6 +252,18 @@ if(SAFEVST3_BUILD_TESTS)
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/scanner_discovery_cli.cmake
         )
 
+        add_executable(fake-startup-diagnostic-host tests/fake_startup_diagnostic_host.cpp)
+        target_include_directories(fake-startup-diagnostic-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(fake-startup-diagnostic-host PRIVATE safevst3_win_ipc)
+        target_compile_definitions(fake-startup-diagnostic-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+        add_executable(startup-diagnostic-test tests/startup_diagnostic.cpp)
+        target_include_directories(startup-diagnostic-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(startup-diagnostic-test PRIVATE safevst3_win_ipc)
+        target_compile_definitions(startup-diagnostic-test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        add_dependencies(startup-diagnostic-test fake-startup-diagnostic-host)
+        add_test(NAME startup-diagnostic COMMAND startup-diagnostic-test $<TARGET_FILE:fake-startup-diagnostic-host>)
+
         add_executable(fake-hung-host tests/fake_hung_host.cpp)
         target_include_directories(fake-hung-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
         target_link_libraries(fake-hung-host PRIVATE safevst3_win_ipc)
@@ -300,6 +312,7 @@ if(SAFEVST3_BUILD_TESTS)
     if(WIN32)
         add_dependencies(protocol-layout-test
             obs-safe-vst3-scanner
+            startup-diagnostic-test fake-startup-diagnostic-host
             hang-watchdog-test fake-hung-host
             control-stall-dsp-test fake-control-stall-host
             recovery-checkpoint-test fake-stateful-host)
