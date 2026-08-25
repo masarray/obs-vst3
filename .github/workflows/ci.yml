@@ -176,3 +176,43 @@ jobs:
       - name: Test module build
         shell: pwsh
         run: ctest --test-dir build/module -C Release --output-on-failure
+
+      - name: Package crash-proof real-test ZIP
+        shell: pwsh
+        run: |
+          .\scripts\package-windows.ps1 `
+            -BuildDir 'build/module' `
+            -Version '0.4.0-crashproof-realtest'
+          $Zip = Get-ChildItem dist -Filter '*-Windows-x64-Portable.zip' -File | Select-Object -First 1
+          if (-not $Zip) { throw 'Portable real-test ZIP was not created.' }
+          Write-Host "Real-test package: $($Zip.FullName)"
+
+      - name: Validate real-test ZIP layout
+        shell: pwsh
+        run: |
+          $Zip = Get-ChildItem dist -Filter '*-Windows-x64-Portable.zip' -File | Select-Object -First 1
+          $Extract = Join-Path $env:RUNNER_TEMP 'realtest-layout'
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Extract
+          Expand-Archive -Path $Zip.FullName -DestinationPath $Extract -Force
+          foreach ($Relative in @(
+            'obs-plugins\64bit\obs-safe-vst3.dll',
+            'obs-plugins\64bit\obs-safe-vst3-host.exe',
+            'obs-plugins\64bit\obs-safe-vst3-scanner.exe',
+            'data\obs-plugins\obs-safe-vst3\locale\en-US.ini',
+            'README-FIRST.txt',
+            'UNINSTALL-MANUAL.cmd'
+          )) {
+            if (-not (Test-Path (Join-Path $Extract $Relative))) {
+              throw "Real-test package missing: $Relative"
+            }
+          }
+
+      - name: Upload crash-proof real-test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBS-Safe-VST3-v0.4.0-crashproof-realtest-${{ github.sha }}
+          path: |
+            dist/*-Windows-x64-Portable.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
