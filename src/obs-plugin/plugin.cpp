@@ -964,7 +964,8 @@ obs_properties_t* filter_properties(void* data)
         obs_property_set_modified_callback2(list, identity_property_modified, filter);
     obs_properties_add_button(props, kRescan, obs_module_text("RescanVST3"), rescan_button);
     auto* custom_path = obs_properties_add_path(
-        props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+        props, kCustomPath, obs_module_text("CustomVST3Path"), OBS_PATH_FILE,
+        obs_module_text("VST3FileFilter"), nullptr);
     if (filter)
         obs_property_set_modified_callback2(custom_path, identity_property_modified, filter);
 

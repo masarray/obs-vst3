@@ -32,6 +32,25 @@ foreach(REQUIRED_TOKEN
     endif()
 endforeach()
 
+# Manual Browse is explicitly for selecting a standalone .vst3 file. A
+# directory-only picker makes the advertised Browse mode unusable for the
+# common single-file Windows VST3 layout.
+foreach(REQUIRED_BROWSE_TOKEN
+        "OBS_PATH_FILE"
+        "VST3FileFilter")
+    string(FIND "${SOURCE_TEXT}" "${REQUIRED_BROWSE_TOKEN}" TOKEN_POS)
+    if(TOKEN_POS EQUAL -1)
+        message(FATAL_ERROR
+            "Manual VST3 Browse must use a filtered file picker: ${REQUIRED_BROWSE_TOKEN}")
+    endif()
+endforeach()
+
+string(FIND "${SOURCE_TEXT}" "OBS_PATH_DIRECTORY" DIRECTORY_PICKER_POS)
+if(NOT DIRECTORY_PICKER_POS EQUAL -1)
+    message(FATAL_ERROR
+        "Manual VST3 Browse must not open the directory-only Select Folder dialog.")
+endif()
+
 string(FIND "${SOURCE_TEXT}" "add_generic_parameter_properties(" FALLBACK_UI_POS)
 if(NOT FALLBACK_UI_POS EQUAL -1)
     message(FATAL_ERROR
