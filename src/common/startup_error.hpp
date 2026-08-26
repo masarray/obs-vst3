@@ -33,6 +33,7 @@ enum class StartupErrorCode : long {
     SetProcessing = 119,
     ProcessContext = 120,
     LatencyQuery = 121,
+    InitialStateSync = 122,
 };
 
 struct StartupErrorEntry {
@@ -41,7 +42,7 @@ struct StartupErrorEntry {
     StartupErrorCode code;
 };
 
-inline constexpr std::array<StartupErrorEntry, 21> kStartupErrorEntries{{
+inline constexpr std::array<StartupErrorEntry, 22> kStartupErrorEntries{{
     {"VST3 init[module-load]", "module-load", StartupErrorCode::ModuleLoad},
     {"VST3 init[class-select]", "class-select", StartupErrorCode::ClassSelect},
     {"VST3 init[component-create]", "component-create", StartupErrorCode::ComponentCreate},
@@ -52,6 +53,7 @@ inline constexpr std::array<StartupErrorEntry, 21> kStartupErrorEntries{{
     {"VST3 init[connect-component-controller]", "connect-component-controller", StartupErrorCode::ConnectComponentController},
     {"VST3 init[connect-controller-component]", "connect-controller-component", StartupErrorCode::ConnectControllerComponent},
     {"VST3 init[connection-points]", "connection-points", StartupErrorCode::ConnectionPoints},
+    {"VST3 init[initial-state-sync]", "initial-state-sync", StartupErrorCode::InitialStateSync},
     {"VST3 init[processor-interface]", "processor-interface", StartupErrorCode::ProcessorInterface},
     {"VST3 init[sample-format]", "sample-format", StartupErrorCode::SampleFormat},
     {"VST3 init[parameter-catalog]", "parameter-catalog", StartupErrorCode::ParameterCatalog},

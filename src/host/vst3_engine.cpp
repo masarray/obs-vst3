@@ -453,6 +453,23 @@ bool Vst3Engine::open(const std::string& path,
         }
     }
 
+    // VST3 split components must begin with the controller synchronized to the
+    // component's current processor state. Steinberg's host contract places
+    // this after handler/connection setup and before the host scans parameters.
+    // The SDK examples intentionally treat the returned setComponentState code
+    // as advisory; the compliance requirement here is that the synchronization
+    // call happens whenever the component can provide an initial state.
+    if (controller_ && !controller_is_component_) {
+        MemoryStream initial_component_state;
+        initial_component_state.setByteOrder(kLittleEndian);
+        report_startup_phase(StartupErrorCode::InitialStateSync);
+        if (component_->getState(&initial_component_state) == kResultTrue) {
+            initial_component_state.rewind();
+            report_startup_phase(StartupErrorCode::InitialStateSync);
+            (void)controller_->setComponentState(&initial_component_state);
+        }
+    }
+
     report_startup_phase(StartupErrorCode::ProcessorInterface);
     processor_ = FUnknownPtr<IAudioProcessor>(component_).getInterface();
     if (!processor_) {
