@@ -5,6 +5,9 @@ endif()
 file(READ "${ENGINE_SOURCE}" ENGINE)
 file(READ "${MAIN_SOURCE}" MAIN)
 file(READ "${WIN_IPC_SOURCE}" WIN_IPC)
+get_filename_component(ENGINE_DIR "${ENGINE_SOURCE}" DIRECTORY)
+file(READ "${ENGINE_DIR}/vst3_engine.hpp" ENGINE_HEADER)
+file(READ "${ENGINE_DIR}/vst3_processing_compat.hpp" PROCESSING_COMPAT)
 
 string(FIND "${ENGINE}" "new PlugProvider" PROVIDER_POS)
 if(NOT PROVIDER_POS EQUAL -1)
@@ -40,6 +43,18 @@ if(NOT (HOST_CONTEXT LESS COMPONENT_INIT AND COMPONENT_INIT LESS HANDLER AND HAN
         PARAM_ENUM LESS SETUP AND SETUP LESS ACTIVATE_BUSES AND ACTIVATE_BUSES LESS SET_ACTIVE AND
         SET_ACTIVE LESS INITIAL_LATENCY AND INITIAL_LATENCY LESS SET_PROCESSING AND SET_PROCESSING LESS VENDOR_RESULT))
   message(FATAL_ERROR "Strict lifecycle ordering regressed: initialize -> handler -> connect -> component-state sync -> parameter scan -> setup -> bus activation -> active -> latency -> processing")
+endif()
+
+# S1.8d compatibility is deliberately centralized and narrow. The engine keeps
+# all lifecycle calls unchanged; the processor pointer adapter may normalize
+# only the documented kNotImplemented result while preserving every other
+# tresult for S1.8c diagnostics.
+string(FIND "${ENGINE_HEADER}" "CompatibleAudioProcessorPtr processor_;" COMPAT_MEMBER)
+string(FIND "${PROCESSING_COMPAT}" "result == Steinberg::kNotImplemented ? PluginCallResult::NotImplemented" COMPAT_NOT_IMPLEMENTED)
+string(FIND "${PROCESSING_COMPAT}" "result == Steinberg::kResultFalse ? PluginCallResult::ResultFalse" COMPAT_FALSE)
+string(FIND "${PROCESSING_COMPAT}" "accepts_processing_state_result(classified) ? Steinberg::kResultTrue : result" COMPAT_POLICY)
+if(COMPAT_MEMBER LESS 0 OR COMPAT_NOT_IMPLEMENTED LESS 0 OR COMPAT_FALSE LESS 0 OR COMPAT_POLICY LESS 0)
+  message(FATAL_ERROR "S1.8d setProcessing compatibility seam regressed")
 endif()
 
 string(FIND "${ENGINE}" "bool Vst3Engine::configure_buses" CONFIG_BEGIN)

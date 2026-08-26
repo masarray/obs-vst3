@@ -19,6 +19,7 @@ int main()
 {
     using safevst3::PluginCallResult;
     using safevst3::StateRestoreCall;
+    using safevst3::accepts_processing_state_result;
     using safevst3::accepts_state_restore_result;
 
     for (const auto call : {StateRestoreCall::ComponentState,
@@ -58,6 +59,15 @@ int main()
                                           PluginCallResult::UnexpectedFailure),
             "unexpected controller-private setState failures must reject the snapshot");
 
-    std::cout << "state restore result policy ok\n";
+    require(accepts_processing_state_result(PluginCallResult::Success),
+            "setProcessing success must be accepted");
+    require(accepts_processing_state_result(PluginCallResult::NotImplemented),
+            "setProcessing kNotImplemented is the single compatibility exception");
+    require(!accepts_processing_state_result(PluginCallResult::ResultFalse),
+            "setProcessing kResultFalse must remain fatal");
+    require(!accepts_processing_state_result(PluginCallResult::UnexpectedFailure),
+            "unexpected setProcessing failures must remain fatal");
+
+    std::cout << "state restore and processing result policy ok\n";
     return 0;
 }

@@ -8,6 +8,7 @@
 #include "common/process_context_policy.hpp"
 #include "common/startup_error.hpp"
 #include "common/state_snapshot.hpp"
+#include "host/vst3_processing_compat.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
@@ -143,7 +144,7 @@ private:
     Steinberg::IPtr<Steinberg::Vst::IEditController> controller_;
     Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> component_connection_;
     Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> controller_connection_;
-    Steinberg::FUnknownPtr<Steinberg::Vst::IAudioProcessor> processor_;
+    CompatibleAudioProcessorPtr processor_;
     Steinberg::Vst::HostProcessData process_data_;
     Steinberg::Vst::ParameterChanges input_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
     Steinberg::Vst::ParameterChanges output_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
