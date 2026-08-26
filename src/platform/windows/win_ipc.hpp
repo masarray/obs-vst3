@@ -150,6 +150,16 @@ public:
         MemoryBarrier();
     }
 
+    void publish_vendor_result(std::int32_t result) noexcept override
+    {
+        if (!region_)
+            return;
+        InterlockedExchange(&region_->startup_vendor_result, static_cast<long>(result));
+        MemoryBarrier();
+        InterlockedExchange(&region_->startup_vendor_result_valid, 1);
+        MemoryBarrier();
+    }
+
 private:
     SharedAudioRegion* region_ = nullptr;
 };

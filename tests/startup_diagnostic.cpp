@@ -48,6 +48,16 @@ int wmain(int argc, wchar_t** argv)
     {
         WinObsBridge bridge;
         std::string error;
+        require(!bridge.start(fake_helper, L"vendor-result.vst3", "", 48000, 2, error),
+                "vendor-result fake helper must not report startup success");
+        require_contains(error, "phase=set-processing");
+        require_contains(error, "host error 119");
+        require_contains(error, "vendor tresult=0xFFFFFFFF (-1)");
+    }
+
+    {
+        WinObsBridge bridge;
+        std::string error;
         require(!bridge.start(fake_helper, L"timeout.vst3", "", 48000, 2, error),
                 "stalled fake helper must not report startup success");
         require_contains(error, "VST3 helper startup timed out after");

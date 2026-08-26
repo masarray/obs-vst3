@@ -540,16 +540,25 @@ bool Vst3Engine::open(const std::string& path,
         error = "VST3 init[set-active]: setActive(true) failed";
         return false;
     }
+
+    // Steinberg's processing lifecycle queries initial latency after activation
+    // but before entering the Processing state. Some plug-ins tolerate the
+    // inverse order; strict hosts must not depend on that tolerance.
+    report_startup_phase(StartupErrorCode::LatencyQuery);
+    latency_samples_ = processor_->getLatencySamples();
+
     report_startup_phase(StartupErrorCode::SetProcessing);
-    if (processor_->setProcessing(true) != kResultTrue) {
-        report_startup_phase(StartupErrorCode::SetProcessing);
+    const tresult set_processing_result = processor_->setProcessing(true);
+    if (set_processing_result != kResultTrue) {
+        if (startup_phase_sink_)
+            startup_phase_sink_->publish_vendor_result(
+                static_cast<std::int32_t>(set_processing_result));
         component_->setActive(false);
-        error = "VST3 init[set-processing]: setProcessing(true) failed";
+        error = "VST3 init[set-processing]: setProcessing(true) failed (tresult=" +
+                format_vst3_tresult(static_cast<std::int32_t>(set_processing_result)) + ')';
         return false;
     }
 
-    report_startup_phase(StartupErrorCode::LatencyQuery);
-    latency_samples_ = processor_->getLatencySamples();
     startup_phase_sink_ = nullptr;
     return true;
 }

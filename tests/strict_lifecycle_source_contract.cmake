@@ -24,17 +24,22 @@ string(FIND "${ENGINE}" "if (!enumerate_parameters(error))" PARAM_ENUM)
 string(FIND "${ENGINE}" "processor_->setupProcessing(process_setup_)" SETUP)
 string(FIND "${ENGINE}" "activate_configured_buses(error)" ACTIVATE_BUSES)
 string(FIND "${ENGINE}" "component_->setActive(true)" SET_ACTIVE)
+string(FIND "${ENGINE}" "latency_samples_ = processor_->getLatencySamples();" INITIAL_LATENCY)
+string(FIND "${ENGINE}" "const tresult set_processing_result = processor_->setProcessing(true);" SET_PROCESSING)
+string(FIND "${ENGINE}" "startup_phase_sink_->publish_vendor_result" VENDOR_RESULT)
 if(HOST_CONTEXT LESS 0 OR COMPONENT_INIT LESS 0 OR HANDLER LESS 0 OR CONNECT_FORWARD LESS 0 OR CONNECT_REVERSE LESS 0 OR
    INITIAL_STATE_STREAM LESS 0 OR INITIAL_STATE_GET LESS 0 OR INITIAL_STATE_SEEK LESS 0 OR INITIAL_STATE_SET LESS 0 OR
-   PARAM_ENUM LESS 0 OR SETUP LESS 0 OR ACTIVATE_BUSES LESS 0 OR SET_ACTIVE LESS 0)
+   PARAM_ENUM LESS 0 OR SETUP LESS 0 OR ACTIVATE_BUSES LESS 0 OR SET_ACTIVE LESS 0 OR INITIAL_LATENCY LESS 0 OR
+   SET_PROCESSING LESS 0 OR VENDOR_RESULT LESS 0)
   message(FATAL_ERROR "Could not find strict lifecycle markers")
 endif()
 if(NOT (HOST_CONTEXT LESS COMPONENT_INIT AND COMPONENT_INIT LESS HANDLER AND HANDLER LESS CONNECT_FORWARD AND
         CONNECT_FORWARD LESS CONNECT_REVERSE AND CONNECT_REVERSE LESS INITIAL_STATE_STREAM AND
         INITIAL_STATE_STREAM LESS INITIAL_STATE_GET AND INITIAL_STATE_GET LESS INITIAL_STATE_SEEK AND
         INITIAL_STATE_SEEK LESS INITIAL_STATE_SET AND INITIAL_STATE_SET LESS PARAM_ENUM AND
-        PARAM_ENUM LESS SETUP AND SETUP LESS ACTIVATE_BUSES AND ACTIVATE_BUSES LESS SET_ACTIVE))
-  message(FATAL_ERROR "Strict lifecycle ordering regressed: initialize -> handler -> connect -> component-state sync -> parameter scan -> setup -> bus activation -> active")
+        PARAM_ENUM LESS SETUP AND SETUP LESS ACTIVATE_BUSES AND ACTIVATE_BUSES LESS SET_ACTIVE AND
+        SET_ACTIVE LESS INITIAL_LATENCY AND INITIAL_LATENCY LESS SET_PROCESSING AND SET_PROCESSING LESS VENDOR_RESULT))
+  message(FATAL_ERROR "Strict lifecycle ordering regressed: initialize -> handler -> connect -> component-state sync -> parameter scan -> setup -> bus activation -> active -> latency -> processing")
 endif()
 
 string(FIND "${ENGINE}" "bool Vst3Engine::configure_buses" CONFIG_BEGIN)

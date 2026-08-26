@@ -10,6 +10,7 @@ int main()
     using safevst3::classify_startup_error;
     using safevst3::format_startup_process_exit;
     using safevst3::format_startup_timeout;
+    using safevst3::format_vst3_tresult;
     using safevst3::kStartupErrorEntries;
     using safevst3::startup_error_phase;
     using safevst3::startup_phase_name;
@@ -27,6 +28,8 @@ int main()
     assert(std::string_view(startup_error_phase(StartupErrorCode::Generic)) == "generic");
     assert(startup_error_phase(static_cast<StartupErrorCode>(9999)) == nullptr);
     assert(startup_phase_name(9999) == "unknown");
+    assert(format_vst3_tresult(1) == "0x00000001 (1)");
+    assert(format_vst3_tresult(-1) == "0xFFFFFFFF (-1)");
 
     assert(format_startup_process_exit(
                static_cast<long>(StartupErrorCode::ConnectComponentController), 0xC0000005u) ==

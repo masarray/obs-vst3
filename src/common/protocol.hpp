@@ -6,7 +6,7 @@
 namespace safevst3 {
 
 inline constexpr std::uint32_t kProtocolMagic = 0x3356534Fu; // "OSV3"
-inline constexpr std::uint32_t kProtocolVersion = 7;
+inline constexpr std::uint32_t kProtocolVersion = 8;
 inline constexpr std::uint32_t kStateTransferMagic = 0x3154534Fu; // "OST1"
 inline constexpr std::uint32_t kStateTransferVersion = 1;
 inline constexpr std::uint32_t kMaxChannels = 2;
@@ -117,6 +117,10 @@ struct alignas(64) SharedAudioRegion {
     volatile long host_status = static_cast<long>(HostStatus::Booting);
     volatile long shutdown_requested = 0;
     volatile long last_error = 0;
+    // S1.8c startup-only vendor return detail. The phase remains in last_error;
+    // this pair is valid only when startup_vendor_result_valid is non-zero.
+    volatile long startup_vendor_result = 0;
+    volatile long startup_vendor_result_valid = 0;
     // Control/UI heartbeat is diagnostic only after S2.2. The watchdog follows
     // dsp_heartbeat_ms so a stuck vendor editor cannot kill healthy audio.
     volatile std::int64_t helper_heartbeat_ms = 0;

@@ -71,6 +71,7 @@ class StartupPhaseSink {
 public:
     virtual ~StartupPhaseSink() = default;
     virtual void publish(StartupErrorCode phase) noexcept = 0;
+    virtual void publish_vendor_result(std::int32_t result) noexcept { (void)result; }
 };
 
 inline thread_local StartupPhaseSink* current_startup_phase_sink_value = nullptr;
@@ -111,6 +112,14 @@ inline std::string startup_phase_name(long raw_code)
 {
     const char* phase = startup_error_phase(static_cast<StartupErrorCode>(raw_code));
     return phase ? phase : "unknown";
+}
+
+inline std::string format_vst3_tresult(std::int32_t result)
+{
+    std::ostringstream os;
+    os << "0x" << std::uppercase << std::hex << std::setw(8) << std::setfill('0')
+       << static_cast<std::uint32_t>(result) << std::dec << " (" << result << ')';
+    return os.str();
 }
 
 inline std::string format_startup_process_exit(long raw_phase, std::uint32_t exit_code)

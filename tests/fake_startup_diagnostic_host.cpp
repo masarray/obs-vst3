@@ -42,9 +42,9 @@ int wmain(int argc, wchar_t** argv)
         return 2;
     }
 
-    (void)endpoint.region(); // Binds the shared-memory StartupPhaseSink.
+    auto* region = endpoint.region(); // Binds the shared-memory StartupPhaseSink.
     StartupPhaseSink* sink = current_startup_phase_sink();
-    if (!sink)
+    if (!region || !sink)
         return 3;
 
     const std::wstring mode = get(L"--vst");
@@ -52,6 +52,15 @@ int wmain(int argc, wchar_t** argv)
         sink->publish(StartupErrorCode::ConnectComponentController);
         MemoryBarrier();
         ExitProcess(0xC0000005u);
+    }
+
+    if (mode.find(L"vendor-result") != std::wstring::npos) {
+        sink->publish(StartupErrorCode::SetProcessing);
+        sink->publish_vendor_result(-1);
+        MemoryBarrier();
+        InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Error));
+        SetEvent(endpoint.ready_event());
+        return 4;
     }
 
     sink->publish(StartupErrorCode::ControllerInitialize);

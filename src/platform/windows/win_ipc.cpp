@@ -142,6 +142,8 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     region_->parameter_total_count = 0;
     region_->host_status = static_cast<long>(HostStatus::Booting);
     region_->last_error = static_cast<long>(StartupErrorCode::None);
+    region_->startup_vendor_result = 0;
+    region_->startup_vendor_result_valid = 0;
     region_->state_command = static_cast<long>(StateCommand::None);
     region_->state_status = static_cast<long>(StateStatus::Idle);
     for (auto& slot : region_->slots)
@@ -268,9 +270,20 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
             const long host_error = InterlockedCompareExchange(&region_->last_error, 0, 0);
             const char* phase = startup_error_phase(static_cast<StartupErrorCode>(host_error));
             if (phase)
-                os << " (phase=" << phase << ", host error " << host_error << ')';
+                os << " (phase=" << phase << ", host error " << host_error;
             else
-                os << " (host error " << host_error << ')';
+                os << " (host error " << host_error;
+
+            const long vendor_valid = InterlockedCompareExchange(
+                &region_->startup_vendor_result_valid, 0, 0);
+            if (vendor_valid != 0) {
+                MemoryBarrier();
+                const long vendor_result = InterlockedCompareExchange(
+                    &region_->startup_vendor_result, 0, 0);
+                os << ", vendor tresult="
+                   << format_vst3_tresult(static_cast<std::int32_t>(vendor_result));
+            }
+            os << ')';
         }
         error = os.str();
         stop();
@@ -278,12 +291,13 @@ bool WinObsBridge::start(const std::filesystem::path& helper,
     }
 
     // During Booting, last_error doubles as a crash-safe startup breadcrumb.
-    // Clear only the known final breadcrumb. A runtime error published at the
-    // Ready boundary wins this CAS and must never be erased by the parent.
+    // S1.8c makes setProcessing the final successful vendor-facing startup call.
+    // Clear only that known breadcrumb so a runtime error published at the Ready
+    // boundary wins this CAS and is never erased by the parent.
     (void)InterlockedCompareExchange(
         &region_->last_error,
         static_cast<long>(StartupErrorCode::None),
-        static_cast<long>(StartupErrorCode::LatencyQuery));
+        static_cast<long>(StartupErrorCode::SetProcessing));
     return true;
 }
 
