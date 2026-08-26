@@ -18,21 +18,21 @@ string(FIND "${ENGINE}" "component_connection_->connect(controller_cp)" CONNECT_
 string(FIND "${ENGINE}" "controller_connection_->connect(component_cp)" CONNECT_REVERSE)
 string(FIND "${ENGINE}" "MemoryStream initial_component_state;" INITIAL_STATE_STREAM)
 string(FIND "${ENGINE}" "component_->getState(&initial_component_state)" INITIAL_STATE_GET)
-string(FIND "${ENGINE}" "initial_component_state.rewind()" INITIAL_STATE_REWIND)
+string(FIND "${ENGINE}" "initial_component_state.seek(0, IBStream::kIBSeekSet, nullptr)" INITIAL_STATE_SEEK)
 string(FIND "${ENGINE}" "controller_->setComponentState(&initial_component_state)" INITIAL_STATE_SET)
 string(FIND "${ENGINE}" "if (!enumerate_parameters(error))" PARAM_ENUM)
 string(FIND "${ENGINE}" "processor_->setupProcessing(process_setup_)" SETUP)
 string(FIND "${ENGINE}" "activate_configured_buses(error)" ACTIVATE_BUSES)
 string(FIND "${ENGINE}" "component_->setActive(true)" SET_ACTIVE)
 if(HOST_CONTEXT LESS 0 OR COMPONENT_INIT LESS 0 OR HANDLER LESS 0 OR CONNECT_FORWARD LESS 0 OR CONNECT_REVERSE LESS 0 OR
-   INITIAL_STATE_STREAM LESS 0 OR INITIAL_STATE_GET LESS 0 OR INITIAL_STATE_REWIND LESS 0 OR INITIAL_STATE_SET LESS 0 OR
+   INITIAL_STATE_STREAM LESS 0 OR INITIAL_STATE_GET LESS 0 OR INITIAL_STATE_SEEK LESS 0 OR INITIAL_STATE_SET LESS 0 OR
    PARAM_ENUM LESS 0 OR SETUP LESS 0 OR ACTIVATE_BUSES LESS 0 OR SET_ACTIVE LESS 0)
   message(FATAL_ERROR "Could not find strict lifecycle markers")
 endif()
 if(NOT (HOST_CONTEXT LESS COMPONENT_INIT AND COMPONENT_INIT LESS HANDLER AND HANDLER LESS CONNECT_FORWARD AND
         CONNECT_FORWARD LESS CONNECT_REVERSE AND CONNECT_REVERSE LESS INITIAL_STATE_STREAM AND
-        INITIAL_STATE_STREAM LESS INITIAL_STATE_GET AND INITIAL_STATE_GET LESS INITIAL_STATE_REWIND AND
-        INITIAL_STATE_REWIND LESS INITIAL_STATE_SET AND INITIAL_STATE_SET LESS PARAM_ENUM AND
+        INITIAL_STATE_STREAM LESS INITIAL_STATE_GET AND INITIAL_STATE_GET LESS INITIAL_STATE_SEEK AND
+        INITIAL_STATE_SEEK LESS INITIAL_STATE_SET AND INITIAL_STATE_SET LESS PARAM_ENUM AND
         PARAM_ENUM LESS SETUP AND SETUP LESS ACTIVATE_BUSES AND ACTIVATE_BUSES LESS SET_ACTIVE))
   message(FATAL_ERROR "Strict lifecycle ordering regressed: initialize -> handler -> connect -> component-state sync -> parameter scan -> setup -> bus activation -> active")
 endif()

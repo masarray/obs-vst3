@@ -461,10 +461,12 @@ bool Vst3Engine::open(const std::string& path,
     // call happens whenever the component can provide an initial state.
     if (controller_ && !controller_is_component_) {
         MemoryStream initial_component_state;
-        initial_component_state.setByteOrder(kLittleEndian);
         report_startup_phase(StartupErrorCode::InitialStateSync);
         if (component_->getState(&initial_component_state) == kResultTrue) {
-            initial_component_state.rewind();
+            if (initial_component_state.seek(0, IBStream::kIBSeekSet, nullptr) != kResultTrue) {
+                error = "VST3 init[initial-state-sync]: failed to rewind initial component state";
+                return false;
+            }
             report_startup_phase(StartupErrorCode::InitialStateSync);
             (void)controller_->setComponentState(&initial_component_state);
         }
