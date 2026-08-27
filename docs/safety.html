@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#071019">
+  <title>Is VST3 Safe in OBS? Crash Isolation Explained</title>
+  <meta name="description" content="How OBS Safe VST3 Host protects OBS from third-party plug-in crashes: external helper process, isolated scanner, dry fail-open audio, watchdog recovery and limits.">
+  <meta name="robots" content="index,follow,max-snippet:-1">
+  <link rel="canonical" href="https://masarray.github.io/obs-vst3/safety.html">
+  <link rel="stylesheet" href="site.css">
+  <meta property="og:title" content="Is VST3 Safe in OBS? Crash Isolation Explained">
+  <meta property="og:description" content="Understand the exact safety boundary before installing: third-party VST3 code runs outside obs64.exe, with bounded recovery and dry fail-open behavior.">
+  <meta property="og:url" content="https://masarray.github.io/obs-vst3/safety.html">
+  <meta property="og:type" content="article">
+</head>
+<body>
+<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a></nav></div></header>
+<main>
+  <section class="pageHero"><div class="wrap prose"><div class="eyebrow"><span class="pulse"></span> Safety model · plain language</div><h1><span class="gradient">What happens when a VST3 misbehaves?</span></h1><p class="lead">The project is built so third-party VST3 DSP and vendor GUI code are not deliberately loaded inside <code>obs64.exe</code>. That is the core crash-containment boundary.</p></div></section>
+  <section><div class="wrap prose">
+    <h2>The short answer</h2>
+    <p>A VST3 plug-in is native code. Native code can crash, hang, misuse memory or call operating-system APIs. The safest practical host design is therefore not to pretend plug-ins are harmless, but to place them behind a process boundary.</p>
+    <div class="code">OBS Studio (obs64.exe)
+        │
+        │ bounded shared-memory audio + control/state IPC
+        ▼
+obs-safe-vst3-host.exe
+        │
+        ├── VST3 DSP
+        ├── native vendor editor
+        └── state / recovery
+        ▼
+third-party VST3 audio effect</div>
+
+    <h2>What is isolated</h2>
+    <ul>
+      <li><strong>VST3 runtime:</strong> the third-party plug-in module runs in the helper process, not inside OBS.</li>
+      <li><strong>Vendor GUI:</strong> the plug-in's native editor is helper-owned rather than embedded as third-party code inside OBS.</li>
+      <li><strong>Scanning:</strong> VST3 candidates are probed outside OBS, with bounded child-process behavior.</li>
+      <li><strong>Recovery:</strong> helper health is monitored, and failures use bounded restart/backoff and state restoration.</li>
+    </ul>
+
+    <h2>What happens to audio during failure?</h2>
+    <p>The realtime OBS filter is designed around a bounded wait for a valid processed result. If a valid wet block is not available in time, the filter keeps the original dry buffer instead of intentionally waiting forever for the VST3.</p>
+    <p>This matters for streaming: a broken effect should not become an excuse to put unbounded lifecycle, editor or disk work on OBS's realtime audio callback.</p>
+
+    <h2>Can you promise OBS will never crash?</h2>
+    <p><strong>No responsible native-software project should make that absolute promise.</strong> Windows drivers, OBS itself, hardware faults, malicious code and operating-system failures exist outside this project's control.</p>
+    <p>The stronger and verifiable claim is this: <strong>third-party VST3 code is kept outside the OBS process by design.</strong> That materially changes the failure boundary compared with loading the same plug-in directly into <code>obs64.exe</code>.</p>
+
+    <h2>Crash isolation is not a malware sandbox</h2>
+    <p>The helper process runs with your Windows user permissions. A malicious VST3 could still access files, network resources or other APIs available to your account. Only load plug-ins from vendors you trust.</p>
+    <div class="notice">Treat VST3 files like normal native software. Process isolation is for crash/hang containment, not for safely running untrusted malware.</div>
+
+    <h2>What the release pipeline checks</h2>
+    <p>The public Windows release pipeline validates more than compilation. The current stable line includes protocol and lifecycle tests, scanner smoke tests, recovery/fault tests, OBS module compilation, compatibility loading against the supported OBS floor, portable-package validation, Smart Installer install/uninstall/reinstall checks and SHA-256 generation.</p>
+    <p>Automated CI still cannot prove every commercial plug-in on every machine. That is why real-machine plug-in compatibility evidence and reproducible user reports remain useful.</p>
+
+    <h2>Unsigned Windows package</h2>
+    <p>The current Windows package is not commercially Authenticode-signed. Windows may therefore show <strong>Unknown publisher</strong> or a SmartScreen reputation warning.</p>
+    <p>Do not disable Windows security globally. Download only from the project's official GitHub Releases page and compare the package against the published <code>SHA256SUMS.txt</code> when you want to verify integrity.</p>
+    <div class="code">Get-FileHash .\OBS-Safe-VST3-Host-v0.5.0-Setup-x64.exe -Algorithm SHA256</div>
+
+    <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Open official release</a><a class="btn secondary" href="install.html">Install guide</a><a class="btn secondary" href="compatibility.html">Compatibility</a></div>
+  </div></section>
+</main>
+<footer class="footer"><div class="wrap footerIn"><div>OBS Safe VST3 Host · safety and trust boundary</div><div class="footerLinks"><a href="./">Home</a><a href="https://github.com/masarray/obs-vst3/blob/main/SECURITY.md">Security policy</a><a href="https://github.com/masarray/obs-vst3/releases/latest">Releases</a></div></div></footer>
+</body>
+</html>
