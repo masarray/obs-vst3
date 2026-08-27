@@ -10,6 +10,8 @@
 > **Current public stable release: v0.5.0.**  
 > If you searched for **VST3 for OBS**, **OBS VST3 plugin**, **native VST3 in OBS**, or a safer replacement for direct in-process plug-in hosting, this project is built for that workflow.
 
+**Product website:** https://masarray.github.io/obs-vst3/
+
 ## Download
 
 ### Recommended for most users — Windows installer
@@ -26,7 +28,7 @@ A portable/manual ZIP is also available on the same release page:
 
 Every release includes `SHA256SUMS.txt` for file verification.
 
-**Beginner guides:** [Install on Windows](docs/install.html) · [VST3 compatibility](docs/compatibility.html) · [Why the crash isolation is safer](docs/safety.html)
+**Beginner guides:** [Install on Windows](https://masarray.github.io/obs-vst3/install.html) · [VST3 compatibility](https://masarray.github.io/obs-vst3/compatibility.html) · [Why the crash isolation is safer](https://masarray.github.io/obs-vst3/safety.html)
 
 ## Why use this instead of loading a VST3 directly into OBS?
 
@@ -81,7 +83,7 @@ Real-machine qualification has included commercial effects from vendors such as:
 
 This is not an artificial whitelist. The scanner uses VST3 metadata conservatively and keeps normal audio effects visible while excluding plug-ins that explicitly identify as instrument-only.
 
-See the [compatibility page](docs/compatibility.html) for the current scope and known limits.
+See the [live compatibility page](https://masarray.github.io/obs-vst3/compatibility.html) for the current scope and known limits.
 
 ## What users get
 
@@ -128,7 +130,7 @@ Do **not** disable Defender or SmartScreen globally for this project.
 
 This project is designed for **crash containment**, not malware containment. A VST3 is native software and still runs with your Windows user permissions inside the helper process. Only use plug-ins from vendors you trust.
 
-Read [Security and crash isolation](docs/safety.html) for the exact boundary.
+Read [Security and crash isolation](https://masarray.github.io/obs-vst3/safety.html) for the exact boundary.
 
 ## For developers and maintainers
 
