@@ -1,3 +1,4 @@
+#include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/vst/vstaudioeffect.h"
