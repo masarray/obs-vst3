@@ -4,7 +4,8 @@
 **Date:** 2026-08-27  
 **Scope:** Safe VST3 Rack v2.0  
 **Clarifies:** `docs/CODEX_EXECUTION_CONTRACT.md`, `docs/NORTH_STAR_PRD.md`  
-**Does not supersede:** existing Single Host safety invariants
+**Does not supersede:** existing Single Host safety invariants  
+**UI clarification:** `ADR-0003-ISOLATED-RACK-EDITOR.md` supersedes the earlier stock-Properties editor decision
 
 ---
 
@@ -35,6 +36,8 @@ obs-safe-vst3-rack-host.exe
 
 One Rack helper process owns all slots for that Rack filter. Per-slot worker processes are explicitly **out of scope for v2.0** unless later evidence proves their extra isolation is worth the CPU, latency, IPC and state-coordination cost.
 
+The Rack helper also owns the dedicated graphical Rack Editor described by ADR-0003. OBS Properties is only a launcher/status surface.
+
 ---
 
 ## 2. Why this decision
@@ -45,14 +48,15 @@ A Rack must preserve that promise.
 
 Research of mature live/plugin hosts supports several useful patterns:
 
-- Kushview Element demonstrates the value of separating processor runtime, topology, rendering order, shared-buffer planning and latency propagation.
+- Kushview Element demonstrates the value of separating processor runtime, topology, rendering order, shared-buffer planning, latency propagation and dedicated host/editor windows.
+- atkAudio PluginHost2 demonstrates a practical OBS workflow where Properties is a thin entry point and a dedicated graphical host window owns complex plug-in workflow; we adopt that product split while keeping our stronger helper-process isolation.
 - Cantabile demonstrates the product value of treating a rack as an understandable black box with stable state/reuse concepts and hiding routing complexity until needed.
 - Gig Performer demonstrates the value of separating configuration/wiring from live-performance controls and making reusable rack configurations first-class.
 - Carla demonstrates the power of rack/patchbay and bridging, but also the additional failure surface that appears when routing and process-bridge complexity are introduced too early.
 
 For OBS Safe VST3 Host, the correct v2 compromise is therefore:
 
-**deep engine separation internally; simple serial product surface externally.**
+**deep engine separation internally; simple serial product topology; rich helper-owned graphical workflow externally.**
 
 ---
 
@@ -97,9 +101,10 @@ Advantages:
 - no IPC/context switch between every serial slot;
 - one control plane can coordinate state and topology coherently;
 - latency and buffer handling remain predictable;
-- one helper restart restores one coherent Rack generation.
+- one helper restart restores one coherent Rack generation;
+- one helper-owned editor can control the complete Rack without importing a GUI framework into the OBS module.
 
-A crash in one vendor plugin can terminate the helper. This is acceptable because OBS remains protected and the Rack helper can be restarted from a coherent last-known-good snapshot.
+A crash in one vendor plugin or helper-owned UI path can terminate the helper. This is acceptable because OBS remains protected and the Rack helper can be restarted from a coherent last-known-good snapshot. UI/control failures must never be able to block normal Rack DSP through a required shared mutex.
 
 ### 3.4 Protocol-neutral `HostedPlugin` seam
 
@@ -134,7 +139,7 @@ build + validate generation N+1 off realtime path
 DSP swaps at a block frontier
 ```
 
-No vendor lifecycle operation, filesystem operation, topology allocation or unbounded lock may be introduced into OBS `filter_audio`.
+No vendor lifecycle operation, filesystem operation, topology allocation or unbounded lock may be introduced into OBS `filter_audio` or Rack normal DSP.
 
 During reconfiguration, the bounded safe result is dry/pass-through until a coherent Rack generation is ready.
 
@@ -244,34 +249,21 @@ Two persistence concepts remain intentionally separate:
 
 Both formats are versioned and validate all topology/state metadata before replacing a known-good copy.
 
-### 3.12 v2 UX boundary
+### 3.12 v2 UX boundary — superseded by ADR-0003
 
-Rack v2.0 must **not depend on custom Qt or internal OBS widget injection**.
+The previous plan made stock OBS Properties the complete Rack editor. That decision is superseded.
 
-Initial Rack UX uses public OBS Properties primitives only.
+The locked v2 boundary is now:
 
-A normal user sees a vertical signal lane, not nodes/cables:
+- OBS Properties uses only public OBS primitives and remains a minimal launcher/status surface;
+- primary Rack editing occurs in a dedicated graphical `RackEditorWindow` owned by `obs-safe-vst3-rack-host.exe`;
+- no private OBS Qt/widget injection;
+- no GUI framework dependency is linked into the OBS module for Rack editing;
+- the Rack Editor talks to `RackControlPlane` through commands and immutable UI snapshots; it does not mutate DSP/runtime objects directly;
+- vendor editors remain floating native helper-owned windows in v2;
+- free-form cable routing remains post-v2.
 
-```text
-VST3 Rack
-
-Preset: [ Broadcast Vocal v ]  [Load]
-
-1  RX De-noise       Ready       [Bypass] [Open UI]
-   [Replace] [Move Up] [Move Down] [Remove]
-
-2  Pro-Q 3           Ready       [Bypass] [Open UI]
-   [Replace] [Move Up] [Move Down] [Remove]
-
-3  Pro-C 2           Ready       [Bypass] [Open UI]
-   [Replace] [Move Up] [Move Down] [Remove]
-
-[ + Add Effect ]
-
-[Save as Preset] [Update Preset] [Rename] [Delete]
-```
-
-Drag-and-drop is optional future polish, not a v2 release gate.
+Toolkit, thread and UI-state details are defined by `ADR-0003-ISOLATED-RACK-EDITOR.md` and `RACK_EDITOR_SPEC.md`.
 
 ### 3.13 v2 limits
 
@@ -297,7 +289,8 @@ Explicitly out of scope for v2:
 - per-slot helper processes;
 - arbitrary multichannel;
 - Float64;
-- custom Qt/canvas dependency;
+- embedded vendor editors;
+- private/custom OBS Qt integration;
 - macOS/Linux Rack package.
 
 ---
@@ -341,9 +334,11 @@ Examples that are **not automatically blockers** to a serial Rack extraction:
 - Single sidechain feature not shipped;
 - MIDI/instruments not shipped;
 - graph routing not shipped;
-- custom Rack UX not built.
+- graphical Rack editor not built.
 
 REG-0 exists to make this sequencing decision explicit and evidence-based.
+
+After REG-0 GO, run the architecture-critical **UI-0 graphical helper feasibility gate** before R0 production extraction. UI-0 does not load VST3 or implement Rack runtime; it validates the chosen helper-only GUI dependency and packaging boundary early so a late UI dependency surprise cannot invalidate R0–R2 work.
 
 ---
 
@@ -354,16 +349,18 @@ REG-0 exists to make this sequencing decision explicit and evidence-based.
 - preserves OBS crash containment;
 - avoids IPC between every serial plugin;
 - prevents Rack semantics from destabilizing Single protocol;
-- keeps v2 user workflow understandable;
+- removes OBS Properties as a graphical UX bottleneck;
+- keeps OBS-module GUI dependencies minimal;
+- makes drag reorder/search/presets practical without private OBS widgets;
 - creates a direct path to deterministic two-plugin tracer tests;
-- leaves a clean future seam for routing/MIDI without paying that complexity now.
+- leaves a clean future seam for routing/MIDI without paying that engine complexity now.
 
 ### Negative / accepted tradeoffs
 
-- one vendor crash can restart the whole Rack helper;
+- one vendor or helper-UI crash can restart the whole Rack helper;
 - crash attribution is probabilistic for asynchronous failures;
 - no true parallel routing/sidechain in v2;
-- stock OBS Properties limits visual polish;
+- helper package now includes a small dedicated graphical stack after UI-0 approval;
 - one-process Rack has a larger failure domain than per-slot process isolation.
 
 Those tradeoffs are accepted because the primary containment boundary remains **OBS vs third-party Rack process**, which is the product's core safety promise.
@@ -374,7 +371,7 @@ Those tradeoffs are accepted because the primary containment boundary remains **
 
 ### Free-form graph for v2
 
-Rejected. Too much product/engine/UX complexity before the serial safety contract is proven.
+Rejected. Too much product/engine/UX complexity before the serial safety contract is proven. The graphical Rack is a serial lane, not a patchbay.
 
 ### One helper process per slot
 
@@ -384,9 +381,21 @@ Rejected for v2. Adds IPC, context switches, orchestration and persistence compl
 
 Rejected. Violates the existing Rack separation invariant and couples two product lifecycles.
 
-### Custom Qt Rack editor as v2 dependency
+### Full Rack editing inside OBS Properties
 
-Rejected. Compatibility floor is more valuable than drag-and-drop polish. Public OBS Properties is the v2 baseline.
+Rejected as the primary v2 workflow. Public Properties remains the safe launcher/status surface, but its layout primitives are not a suitable long-term graphical Rack foundation.
+
+### Private Qt/widget injection into OBS
+
+Rejected. It couples the product to OBS GUI internals and has already demonstrated compatibility-floor risk in prior experiments.
+
+### In-process atkAudio-style Rack runtime/UI inside OBS
+
+Rejected. atkAudio's graphical workflow is useful reference material, but our differentiator requires third-party VST3 and Rack host UI/runtime dependencies to remain outside `obs64.exe`.
+
+### Embedded vendor UI in Rack cards
+
+Rejected for v2. Keep the already proven floating native editor path; revisit embedding only after v2 lock.
 
 ### Partial-wet output after a failed slot
 
@@ -402,8 +411,11 @@ For Rack work, read in this order:
 2. `docs/CODEX_EXECUTION_CONTRACT.md`
 3. applicable section of `docs/NORTH_STAR_PRD.md`
 4. this ADR
-5. `docs/rack/VST3_RACK_EXECUTION_SPEC.md`
-6. `docs/rack/VST3_RACK_TICKETS.md`
-7. the current GitHub ticket and exact fixed-point repository code
+5. `docs/rack/ADR-0003-ISOLATED-RACK-EDITOR.md`
+6. `docs/rack/VST3_RACK_RESEARCH.md`
+7. `docs/rack/RACK_EDITOR_SPEC.md`
+8. `docs/rack/VST3_RACK_EXECUTION_SPEC.md`
+9. `docs/rack/VST3_RACK_TICKETS.md`
+10. the current GitHub ticket and exact fixed-point repository code
 
-If this ADR conflicts with the normative contract on a product invariant, **the normative contract wins** unless that contract is explicitly amended by a later accepted ADR/document change.
+If this ADR conflicts with the normative contract on a product invariant, **the normative contract wins** unless that contract is explicitly amended by a later accepted ADR/document change. ADR-0003 specifically supersedes only the older Rack UI implementation decision, not the safety/runtime contract.

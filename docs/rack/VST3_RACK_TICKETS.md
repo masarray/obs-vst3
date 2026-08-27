@@ -11,17 +11,18 @@ Each ticket is intentionally a **vertical behavior**, not a horizontal subsystem
 
 For every ticket:
 
-1. create/assign a GitHub issue from the ticket body;
+1. create/assign a GitHub issue from the ticket body only when it is approaching unblocked state;
 2. record `Parent:` and `Blocked by:` explicitly;
 3. start a fresh thread/context;
-4. read the authoritative Rack documents;
+4. read the authoritative Rack documents in `THREAD_HANDOFF.md` order;
 5. establish exact `main` base SHA and baseline tests;
 6. implement only this ticket;
-7. review diff from the fixed point;
+7. review diff from fixed point: Standards + Spec;
 8. exact-head qualify before merge;
-9. update the parent issue with evidence.
+9. update parent issue #56 with evidence;
+10. stop.
 
-Do not batch R0/R1/R2 into one PR.
+Do not batch REG-0/UI-0/R0/R1 into one PR.
 
 ---
 
@@ -29,46 +30,114 @@ Do not batch R0/R1/R2 into one PR.
 
 ## REG-0 — Prove and authorize the Rack extraction baseline
 
-**Parent:** VST3 Rack v2.0  
+**Parent:** #56 VST3 Rack v2.0  
 **Blocked by:** none  
 **Type:** research + evidence + ADR, no Rack production feature
 
-### Behavior / decision
+### Decision
 
-Resolve the current sequencing conflict: existing North Star requires Single v1.0 lock before Rack, while Rack is now the next major product target.
+Resolve the sequencing conflict: historical contract requires Single v1.0 lock before Rack, while Rack is now the next major product target.
 
 ### Required work
 
 - pin exact `main` SHA;
 - inventory current Single runtime/lifecycle/state/recovery tests;
 - identify exact code seam R0 would change;
-- run required baseline CI/compatibility;
-- map current stable capabilities against the **minimum extraction prerequisites**, not unrelated future breadth;
-- identify true blockers vs deferred Single features;
-- produce a short entry report;
-- amend/clarify the execution contract by ADR if R0 is intentionally unlocked before historical full S6 breadth.
+- run/inspect required baseline CI/compatibility;
+- map current stable capabilities against **minimum extraction prerequisites**;
+- identify true blockers vs deferred Single breadth;
+- produce concise entry report;
+- amend/clarify execution order by accepted ADR/doc if R0 is intentionally unlocked before historical full S6 breadth.
 
 ### Must answer
 
-- Can `Vst3Engine` be made protocol-neutral without changing Single observable behavior?
-- Is current component/controller state capture/restore deterministic enough to protect extraction?
-- Are helper/realtime ownership boundaries sufficiently covered?
-- Does current fixed point have exact tests that will detect Single regression?
-- Does current protocol remain untouched by R0?
+- Can `Vst3Engine` become protocol-neutral without changing Single behavior?
+- Is component/controller state capture/restore deterministic enough for extraction?
+- Are helper/realtime ownership boundaries covered?
+- Which exact tests form mandatory Single regression during Rack work?
+- Does current Single protocol remain untouched by R0?
 
 ### Acceptance
 
-One explicit result:
+Exactly one:
 
-- **GO R0** with exact evidence and accepted phase-order clarification; or
-- **BLOCKED** with one or more minimal prerequisite tickets.
+- **GO** with exact evidence + phase-order clarification; next unblocked ticket = UI-0; or
+- **BLOCKED** with minimum prerequisite ticket(s).
 
 ### Non-goals
 
+- no GUI toolkit work;
+- no Rack protocol/helper;
+- no HostedPlugin refactor;
+- no multi-plugin runtime.
+
+---
+
+# UI-0 — Graphical helper dependency gate
+
+## UI-0 — Prove helper-only Dear ImGui Rack editor shell without touching OBS module dependencies
+
+**Parent:** #56  
+**Blocked by:** REG-0 GO  
+**Type:** timeboxed architecture/dependency proof, no VST3 loading
+
+### Vertical proof
+
+A helper-only/non-shipping smoke executable can host the chosen graphical stack while the existing OBS module and Single Host compatibility floor remain unchanged.
+
+### Mandatory read
+
+- ADR-0003
+- `RACK_EDITOR_SPEC.md`
+- this ticket
+
+### Default stack
+
+- Dear ImGui pinned exact upstream version/commit;
+- Win32 platform backend;
+- DirectX 11 renderer backend.
+
+### Test/proof first
+
+Create a minimal smoke target that renders:
+
+- three dummy serial Rack cards;
+- search text input;
+- status text/badge;
+- drag reorder that records/emits a command event only.
+
+No VST3, no Rack protocol, no OBS filter.
+
+### Required evidence
+
+- exact dependency pin + licence evidence recorded;
+- open/close/reopen loop clean;
+- message pump/D3D teardown clean;
+- no vendor load;
+- OBS module PE dependencies unchanged;
+- Single helper/module tests green;
+- minimum/current OBS loader compatibility green;
+- package/binary size impact recorded.
+
+### Acceptance
+
+Exactly one:
+
+- **GO IMGUI** — pin the accepted stack and unlock R0-1; or
+- **BLOCKED** — document exact reason and bounded fallback ADR/ticket.
+
+### Non-goals
+
+- no production Rack window;
+- no visual-design polish;
+- no VST3 hosting;
+- no plugin browser integration;
 - no Rack protocol;
-- no Rack helper;
-- no multi-plugin processing;
-- no UI.
+- no R0 refactor.
+
+### Thread rule
+
+Stop after GO/BLOCKED. R0-1 starts in a fresh thread.
 
 ---
 
@@ -76,37 +145,37 @@ One explicit result:
 
 ## R0-1 — Introduce protocol-neutral ProcessBlockView without changing Single behavior
 
-**Blocked by:** REG-0 GO
+**Blocked by:** UI-0 GO + REG-0 GO
 
 ### Vertical proof
 
-The existing Single Host processes the same deterministic audio through the same VST3 engine behavior, but vendor processing no longer fundamentally depends on the `AudioSlot` transport type.
+The existing Single Host processes the same deterministic audio through the same VST3 engine behavior, but vendor processing no longer fundamentally depends on Single `AudioSlot` transport.
 
 ### Test first
 
-Characterize current Single processing at the engine seam.
-
-Add a failing/compile-contract test for the new protocol-neutral view before migrating production calls.
+- characterize current Single processing at engine seam;
+- add compile/behavior test for protocol-neutral view before migrating calls.
 
 ### Implementation
 
 - introduce bounded non-owning `ProcessBlockView` or equivalent;
-- add protocol-neutral `Vst3Engine::process(view)`;
+- add protocol-neutral engine process entry;
 - keep `process(AudioSlot&)` as adapter;
 - no Single protocol layout/version change;
-- no OBS-facing behavior change.
+- no OBS-facing behavior change;
+- do not mix UI-0 smoke code into Single runtime.
 
 ### Acceptance
 
-- deterministic audio result unchanged;
+- deterministic audio unchanged;
 - Single protocol layout tests unchanged/green;
-- state/latency/parameter tests unchanged/green;
-- Windows helper build green;
-- supported OBS compatibility gate green.
+- state/latency/parameter tests green;
+- Windows helper/module green;
+- supported OBS compatibility green.
 
 ### Non-goals
 
-- no rename to HostedPlugin yet if it causes unnecessary diff;
+- no HostedPlugin rename if unnecessary;
 - no Rack code.
 
 ---
@@ -117,40 +186,41 @@ Add a failing/compile-contract test for the new protocol-neutral view before mig
 
 ### Vertical proof
 
-A helper-side object that owns one VST3 can be instantiated and exercised independently of Single transport semantics while the existing Single Host still behaves identically.
+One helper-side object owning one VST3 can be exercised independently of Single transport semantics while Single Host remains behaviorally equivalent.
 
 ### Test first
 
-Add/extend characterization around:
+Characterize:
 
 - open/close;
 - process;
 - latency;
 - component/controller state round-trip;
-- restart/lifecycle behavior already supported;
-- editor accessor ownership boundary.
+- supported restart/lifecycle behavior;
+- editor accessor ownership.
 
 ### Implementation
 
-- converge proven `Vst3Engine` responsibilities into `HostedPlugin` seam;
-- keep transport adapter outside the deep seam;
-- keep Single helper orchestration behavior unchanged;
-- do not move OBS-side state/recovery into HostedPlugin.
+- converge proven `Vst3Engine` responsibilities into deep `HostedPlugin` seam;
+- transport adapter remains outside;
+- Single helper orchestration stays equivalent;
+- no OBS-side state/recovery moved into HostedPlugin.
 
 ### Acceptance
 
-All Single regression + compatibility gates remain green on exact head.
+All mandatory Single regression + compatibility gates green on exact head.
 
 ### Non-goals
 
-- no generic plugin format abstraction;
+- no generic plugin-format abstraction;
 - no MIDI;
 - no graph ports;
-- no scanner redesign.
+- no scanner redesign;
+- no graphical Rack implementation.
 
 ---
 
-# R1 — Rack runtime tracer bullet
+# R1 — Rack runtime tracer bullets
 
 ## R1-1 — Separate Rack protocol/helper processes two deterministic VST3 effects in serial
 
@@ -158,35 +228,33 @@ All Single regression + compatibility gates remain green on exact head.
 
 ### Vertical proof
 
-Through the real Rack transport and separate Rack helper:
+Through real Rack transport and separate Rack helper:
 
 ```text
 input -> Gain A -> Gain B -> output
 ```
 
-produces the exact expected output.
+produces exact expected output.
 
 ### Test first
 
-Deterministic two-effect integration test.
-
-Use simple fixture VST3 processors with known math.
+Deterministic two-effect integration test with simple fixture VST3 processors.
 
 ### Implementation
 
 - new Rack protocol namespace/layout/version;
 - new `obs-safe-vst3-rack-host.exe` target;
-- minimal Rack runtime with two fixed slots in test harness;
+- minimal Rack runtime with two fixed test slots;
 - one Rack DSP worker;
 - preallocated ping-pong buffers;
-- no UI.
+- no production Rack editor yet.
 
 ### Acceptance
 
 - correct A→B processing;
-- Rack helper is a separate process/binary;
-- no Rack change to Single protocol;
-- no DSP allocation in normal block path;
+- Rack helper separate binary/process;
+- no Single protocol change;
+- no normal DSP allocation;
 - Single regressions green.
 
 ---
@@ -197,24 +265,22 @@ Use simple fixture VST3 processors with known math.
 
 ### Vertical proof
 
-A two-slot Rack correctly handles bypass and latency, and a process failure in one active slot returns the original dry block instead of partial Rack output.
+Two-slot Rack correctly handles bypass/latency; a process failure in an active slot returns **original dry input**, not partial Rack output.
 
-### Test first
-
-Cases:
+### Test cases
 
 - both active;
-- slot A bypassed;
-- slot B bypassed;
+- A bypassed;
+- B bypassed;
 - fixed latency A+B;
-- B process error after A succeeds -> original dry output.
+- B process error after A succeeds -> original dry.
 
 ### Acceptance
 
-- total latency equals sum of active processing slots;
-- bypass contributes zero processing latency when vendor process is skipped;
-- no partial wet block escapes;
-- failure result is bounded.
+- total latency = sum of active processing slots;
+- bypass contributes zero processing latency when vendor process skipped;
+- no partial wet escapes;
+- failure bounded.
 
 ---
 
@@ -224,23 +290,19 @@ Cases:
 
 ### Vertical proof
 
-While audio is active, topology changes build a new coherent chain generation off the DSP path and swap at a safe block frontier.
+While audio is active, topology changes build a coherent generation off DSP and swap at a safe block frontier.
 
 ### Test first
 
-- A→B then reorder B→A produces expected output;
+- A→B then B→A;
 - remove A while processing;
 - add C while processing;
 - stable slot IDs survive reorder;
-- old generation resources are not destroyed while reachable.
-
-### Implementation
-
-No in-place mutation of the live DSP ordered container.
+- old generation resources stay alive while reachable.
 
 ### Acceptance
 
-Repeated topology mutations do not crash, leak stale slots or produce mixed generation metadata.
+Repeated topology mutations do not crash, leak stale slots or produce mixed-generation metadata.
 
 ---
 
@@ -250,21 +312,21 @@ Repeated topology mutations do not crash, leak stale slots or produce mixed gene
 
 ### Vertical proof
 
-Killing/crashing the Rack helper does not crash the outer host path; the latest processing breadcrumb is available diagnostically; helper restart returns to a coherent chain.
+Killing/crashing Rack helper does not crash outer host; latest breadcrumb is diagnostic; bounded restart returns to coherent chain.
 
 ### Test first
 
-- crash fixture in slot A;
-- crash fixture in slot B;
+- crash fixture slot A;
+- crash fixture slot B;
 - arbitrary helper kill with ambiguous attribution;
-- restart from known topology.
+- restart known topology.
 
 ### Acceptance
 
 - outer path dry/pass-through during outage;
-- breadcrumb reports generation/block/slot/phase when known;
-- ambiguous death is not falsely classified as proven slot guilt;
-- restart/backoff is bounded.
+- breadcrumb reports generation/block/slot/phase where known;
+- ambiguous death not falsely classified as proven slot guilt;
+- restart/backoff bounded.
 
 ---
 
@@ -276,7 +338,7 @@ Killing/crashing the Rack helper does not crash the outer host path; the latest 
 
 ### Vertical proof
 
-A Rack with multiple slots saves and restores exact order, stable slot IDs, plugin identity, bypass and complete per-slot component/controller state.
+Multi-slot Rack saves/restores exact order, stable IDs, plug-in identity, bypass and complete component/controller state automatically.
 
 ### Test first
 
@@ -288,7 +350,7 @@ Encode/decode + full destroy/recreate round-trip.
 - bounded per-slot state blobs;
 - validation/checksum;
 - atomic persistence;
-- previous/LKG recovery strategy.
+- previous/LKG recovery.
 
 ### Acceptance
 
@@ -302,18 +364,18 @@ Close/recreate harness produces equivalent Rack state without user Save.
 
 ### Vertical proof
 
-A missing or repeatedly failing slot remains visible/pass-through while every other available slot restores and processes normally.
+Missing/repeatedly failing slot remains visible/pass-through while other slots restore/process normally.
 
 ### Test first
 
 - missing middle slot;
-- repeated deterministic crash in one slot;
+- repeated deterministic crash one slot;
 - ambiguous helper death;
-- helper restart after quarantine.
+- restart after quarantine.
 
 ### Acceptance
 
-- missing/quarantined topology is preserved;
+- missing/quarantined topology preserved;
 - good slots retain state/order;
 - no restart storm;
 - ambiguous crash does not automatically quarantine innocent slot.
@@ -328,101 +390,189 @@ A missing or repeatedly failing slot remains visible/pass-through while every ot
 
 ```text
 Rack A -> Save as Preset "Broadcast Vocal"
--> create independent Rack B
--> Load "Broadcast Vocal"
+-> independent Rack B
+-> Load preset
 -> equivalent order/state/bypass restored
 ```
 
 ### Test first
 
-Independent source/filter identity reuse test.
+Independent source/filter identity reuse.
 
 ### Implementation
 
 - stable preset UUID;
 - name separate from identity;
-- user-level library location;
+- user-level library;
 - atomic versioned persistence;
-- load creates working Rack state, not a live link to preset.
+- load creates working Rack state, not live link.
 
 ### Acceptance
 
-Edits to Rack B after load do not mutate the saved preset.
+Edits to Rack B after load do not mutate saved preset.
 
 ---
 
-# R3 — User workflow
+# R3 — Graphical user workflow
 
-## R3-1 — Register native `VST3 Rack` OBS filter with stock Properties slot lane
+## R3-0 — Promote graphical Rack Editor shell into Rack helper with command/snapshot bridge
 
-**Blocked by:** R2-1, R1-3
+**Blocked by:** UI-0 GO, R2-1, R1-3
 
 ### Vertical proof
 
-A real OBS user can add **VST3 Rack**, see current slots/status, add one effect and open its vendor UI using public OBS Properties only.
+The real Rack helper starts with editor hidden; a control command opens a graphical Rack window showing authoritative Rack state; closing/reopening the editor does not alter DSP or topology.
+
+### Test first
+
+Use deterministic fake `RackUiSnapshot` + command sink before wiring full product state.
+
+Required cases:
+
+- editor hidden on helper/session restore;
+- OpenRack shows/foregrounds editor;
+- editor renders ordered cards by stable slot IDs;
+- close editor while DSP/harness processing continues;
+- reopen editor receives current state;
+- dummy Move command is emitted/correlated, not applied optimistically;
+- repeated window open/close teardown.
 
 ### Implementation rules
 
-- separate filter internal ID;
-- do not alter Single filter internal ID;
-- no internal Qt injection;
-- background runtime/scanner must not rebuild OBS-owned Properties unsafely.
+- GUI stack remains Rack-helper-only;
+- no OBS Qt dependency;
+- no direct mutable Rack runtime pointers in UI;
+- no UI lock required by DSP.
 
 ### Acceptance
 
-Real OBS Properties open/close/reopen is stable at minimum/current supported OBS versions.
+Editor lifetime is independent of audio lifetime and exact-head Single regression/loader compatibility remains green.
 
 ---
 
-## R3-2 — Complete slot editing workflow
+## R3-1 — Register native `VST3 Rack` OBS filter as thin launcher/status surface
 
-**Blocked by:** R3-1
+**Blocked by:** R3-0, R2-1
+
+### Vertical proof
+
+A real OBS user can add **VST3 Rack**, see concise Rack health/effect count/latency and press **Open Rack** to foreground the helper-owned graphical editor.
+
+### OBS Properties scope
+
+- Rack/preset summary;
+- status;
+- effect count;
+- total latency;
+- `Open Rack`;
+- actionable recovery text only when needed.
+
+### Rules
+
+- separate filter internal ID;
+- Single filter ID unchanged;
+- public `obs_properties` only;
+- no private Qt/widget injection;
+- scanner/recovery threads never rebuild open Properties unsafely;
+- closing Properties does not close/reset Rack.
+
+### Acceptance
+
+Properties open/close/reopen stable at minimum/current supported OBS versions; Open Rack reliably brings the helper window forward.
+
+---
+
+## R3-2 — Complete graphical slot editing + plug-in browser
+
+**Blocked by:** R3-1, R1-3
+
+### Vertical proof
+
+In Rack Editor user can:
+
+- search installed catalog;
+- add/insert;
+- drag reorder;
+- Move Up/Down fallback;
+- replace;
+- bypass;
+- remove;
+- see health/latency;
+- see Missing/Quarantined placeholders.
+
+### Test first
+
+Pure command/snapshot tests:
+
+- search filtering;
+- stable slot UI identity;
+- move command + ack;
+- rejected move restores authoritative order;
+- add/replace/remove correlation;
+- command replay/idempotency policy;
+- malformed snapshot rejection.
+
+### Scanner rule
+
+Refresh requests existing isolated scanner asynchronously. Existing catalog remains usable during scan. No vendor scan fallback in OBS/Rack UI process path.
+
+### Acceptance
+
+Every UI action maps to a control-plane transaction; normal DSP never performs vendor lifecycle/UI/scan work.
+
+---
+
+## R3-3 — Vendor editor orchestration across Rack slots
+
+**Blocked by:** R3-2
+
+### Vertical proof
+
+Each loaded slot can open/close/reopen its floating native vendor UI from the Rack Editor without embedding vendor UI or destabilizing DSP.
+
+### Implementation
+
+Reuse proven helper-side native VST3 IPlugView/HWND ownership concepts behind `HostedPlugin`/Rack editor coordination.
+
+### Required tests/evidence
+
+- editor open slot A/B;
+- close/reopen;
+- foreground behavior;
+- Rack Editor can close while vendor window open according to defined policy;
+- helper shutdown closes vendor/editor windows safely;
+- helper kill with vendor/Rack editor open -> OBS survives/dry/recovery;
+- vendor windows do not auto-open on restore/preset load.
+
+### Acceptance
+
+Representative known-good vendor editors function without changing Single editor behavior.
+
+---
+
+## R3-4 — Complete Preset management UX in Rack Editor
+
+**Blocked by:** R2-3, R3-2
 
 ### Vertical proof
 
 User can:
-
-- add;
-- insert where supported by the chosen stock-Properties layout;
-- replace;
-- bypass;
-- Move Up;
-- Move Down;
-- remove;
-- open each vendor UI.
-
-### Test first
-
-Pure command/topology tests plus OBS Properties ownership contract tests.
-
-### Acceptance
-
-Every user action maps to a control-plane topology transaction; no vendor lifecycle work occurs from realtime callback.
-
----
-
-## R3-3 — Complete Preset management UX
-
-**Blocked by:** R2-3, R3-1
-
-### Vertical proof
-
-In the real Rack filter user can:
 
 - Save as Preset;
 - browse/select/load;
 - Rename;
 - Delete;
 - explicit Update Preset;
-- load a preset with Missing plugin placeholder.
+- load preset with Missing placeholder.
 
 ### Acceptance
 
 - post-load edits do not mutate saved preset;
 - Rename preserves identity/content;
-- Delete affects only selected preset;
-- Update is explicit;
-- corrupt preset does not destroy current Rack.
+- Delete affects selected preset only;
+- Update explicit;
+- corrupt preset does not destroy current Rack;
+- preset/library UI renders authoritative snapshots rather than a second mutable model.
 
 ---
 
@@ -430,11 +580,11 @@ In the real Rack filter user can:
 
 ## R4-1 — Deterministic Rack torture/stress matrix
 
-**Blocked by:** R2-2, R3-2, R3-3
+**Blocked by:** R2-2, R3-3, R3-4
 
 ### Vertical proof
 
-Automated suite covers live mutation and failure under 1/2/4/8 slots.
+Automated suite covers runtime, UI/control and failure under 1/2/4/8 slots.
 
 ### Required matrix
 
@@ -446,16 +596,31 @@ Automated suite covers live mutation and failure under 1/2/4/8 slots.
 - one crashing slot;
 - one hanging slot;
 - repeated Rack helper kill;
-- editor open/close across slots;
+- Rack editor open/close loop;
+- editor hidden while DSP runs;
+- vendor editor open/close across slots;
 - state capture while active;
-- multiple independent Racks;
+- multiple independent Racks/editor windows;
 - corrupt Session Snapshot;
 - corrupt preset candidate;
-- missing plugin restore.
+- missing plug-in restore;
+- helper kill while Rack Editor/vendor editor open;
+- UI snapshot/command malformed/overflow negative tests.
+
+### Performance evidence
+
+Record:
+
+- Rack helper CPU 1/2/4/8 slots;
+- DSP deadline misses;
+- memory;
+- editor hidden cost;
+- editor CPU/GPU 1/4/8 slots;
+- open/close resource stability.
 
 ### Acceptance
 
-No required test is merely registered; CI evidence must show it executed and passed.
+No required test is merely registered; CI evidence must show execution/pass.
 
 ---
 
@@ -465,19 +630,21 @@ No required test is merely registered; CI evidence must show it executed and pas
 
 ### Vertical proof
 
-One exact candidate source head builds/installs both Single and Rack products and passes minimum/current OBS compatibility plus representative real-machine chains.
+One exact candidate source head installs Single + Rack, passes supported OBS compatibility and representative real-machine chains.
 
-### Required package checks
+### Package checks
 
-- Rack helper included exactly once in correct root;
+- Rack helper exactly once in correct root;
+- pinned graphical dependency source/licence notices correct;
+- no unexpected GUI DLL dependency in OBS module;
 - Single helper still correct;
 - installer upgrade/uninstall ownership correct;
-- portable package correct;
-- OBS compatibility floor loader probe;
-- current supported OBS lane;
+- portable correct;
+- minimum OBS loader probe;
+- current OBS lane;
 - artifact provenance names actual source SHA.
 
-### Real-machine representative chains
+### Real-machine chains
 
 Use known-good categories such as:
 
@@ -487,7 +654,14 @@ Use known-good categories such as:
 - Klevgrand;
 - Process Audio.
 
-Test state restore, reorder/bypass and vendor UI, not only initial load.
+Test:
+
+- add/search/reorder/bypass;
+- Rack Editor close/reopen;
+- vendor UI;
+- zero-action restore;
+- preset independent reuse;
+- missing/quarantine behavior.
 
 ---
 
@@ -499,17 +673,16 @@ Test state restore, reorder/bypass and vendor UI, not only initial load.
 
 ### Required evidence
 
-Use the normative milestone closure template.
-
-Must prove on the unchanged final source head:
+On one unchanged final source head prove:
 
 - full Single regression contract green;
-- full Rack runtime/stress suite green;
+- full Rack runtime/UI/stress suite green;
 - automatic Session Snapshot close/reopen restoration;
 - helper recovery restoration;
 - slot quarantine/missing behavior;
 - complete Preset Library workflow;
 - independent preset reuse;
+- Rack Editor helper-only dependency boundary;
 - package/installer/OBS compatibility;
 - representative real-machine Rack chain;
 - no unresolved review finding;
@@ -525,15 +698,18 @@ No feature additions after RC except release blockers with permanent regression 
 
 # Post-v2 — explicitly NOT part of these tickets
 
-Create new architecture phases after Rack v2 lock for:
+Create later architecture phases for:
 
 - sidechain / multiple buses;
 - routing matrix / parallel paths;
+- visual patchbay/routing canvas;
 - MIDI event transport;
 - VST3 instruments;
-- performance controls;
+- live performance/macros;
 - scene-aware snapshots;
 - nested racks;
-- optional maximum per-slot process isolation.
+- embedded vendor editors if ever justified;
+- optional per-slot process isolation;
+- cross-platform Rack UI.
 
-Do not append these to R1–R5 tickets.
+The dedicated Rack Editor is intentionally future-ready, but these features must not leak into v2 runtime tickets.

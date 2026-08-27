@@ -10,55 +10,117 @@ Before planning, coding, reviewing, or declaring a milestone complete, read in t
 2. `docs/ADR-0001-GATE0-STABILIZATION-SUCCESSOR.md` when working on Gate 0 / stabilization.
 3. The relevant section of `docs/NORTH_STAR_PRD.md` — full roadmap, rationale, gates, testing and release strategy.
 4. When working on Rack planning or implementation, read `docs/rack/THREAD_HANDOFF.md` and then follow its Rack-specific read order.
-5. The current GitHub parent issue/tracer ticket and the repository code at its declared fixed-point SHA.
+5. The current GitHub parent issue/tracer ticket and repository code at its declared fixed-point SHA.
 
-If wording conflicts, `docs/CODEX_EXECUTION_CONTRACT.md` wins. An accepted ADR may clarify or supersede a historical implementation decision, but must not silently reorder the North Star phases.
+If wording conflicts, `docs/CODEX_EXECUTION_CONTRACT.md` wins on product invariants/order. Accepted Rack ADRs may replace historical Rack implementation choices while preserving the normative safety/product contract.
 
 Do not use chat history, stale issue names, old PR descriptions, or historical branch labels as architecture or milestone sources of truth.
 
+---
+
 ## Current next planning target — VST3 Rack
 
-The next major product target is the separate **VST3 Rack** serial multi-effect system described by the North Star.
+The next major product target is the separate **VST3 Rack** serial multi-effect system.
 
-Before any Rack production code, execute **REG-0 Rack Entry Gate** from `docs/rack/VST3_RACK_TICKETS.md`. REG-0 exists because the historical locked phase order requires Single v1.0 before Rack while current product direction wants Rack next. Do not resolve that conflict informally: REG-0 must produce exact evidence and an explicit accepted clarification/ADR before R0 extraction is unlocked.
+Before Rack production code, execute **REG-0 Rack Entry Gate** from `docs/rack/VST3_RACK_TICKETS.md`. REG-0 exists because historical locked phase order requires Single v1.0 before Rack while current product direction wants Rack next. Do not resolve that conflict informally: REG-0 must produce exact evidence and an explicit accepted clarification/ADR before extraction is unlocked.
 
-Rack-specific authoritative planning files:
+Rack-specific authoritative planning files, in order:
 
 1. `docs/rack/ADR-0002-RACK-RUNTIME-ARCHITECTURE.md`
-2. `docs/rack/VST3_RACK_RESEARCH.md`
-3. `docs/rack/VST3_RACK_EXECUTION_SPEC.md`
-4. `docs/rack/VST3_RACK_TICKETS.md`
-5. `docs/rack/THREAD_HANDOFF.md`
+2. `docs/rack/ADR-0003-ISOLATED-RACK-EDITOR.md`
+3. `docs/rack/VST3_RACK_RESEARCH.md`
+4. `docs/rack/RACK_EDITOR_SPEC.md`
+5. `docs/rack/VST3_RACK_EXECUTION_SPEC.md`
+6. `docs/rack/VST3_RACK_TICKETS.md`
+7. `docs/rack/CURRENT_STATUS.md`
 
-The v2 Rack architecture is serial-first, one isolated Rack helper process per Rack filter, a separate Rack protocol, protocol-neutral deep VST3 lifecycle seams, immutable chain-generation swaps, preallocated serial processing, whole-block fail-dry semantics, automatic Session Snapshot persistence, named reusable Rack Presets, and compatibility-first stock OBS Properties UI. Free-form graph, sidechain/routing, MIDI/instruments and custom Qt Rack UI are not v2 scope.
+### Locked Rack v2 shape
 
-## Current Gate 0 routing — do not regress
+- separate OBS `VST3 Rack` filter;
+- separate Rack helper executable and Rack protocol;
+- one isolated Rack helper process per Rack filter;
+- protocol-neutral deep VST3 lifecycle seam shared only after behavior-preserving R0 extraction;
+- serial effects chain first;
+- immutable chain-generation swaps;
+- preallocated ping-pong processing;
+- whole-block fail-dry semantics;
+- automatic Session Snapshot persistence;
+- named reusable Rack Presets;
+- dedicated graphical Rack Editor owned by the isolated Rack helper;
+- OBS Properties is only thin launcher/status surface;
+- floating native vendor editor windows remain helper-owned;
+- free-form routing, sidechain, MIDI/instruments and embedded vendor editors are post-v2.
 
-- PR #22 (`fix/obs-load-compatibility`) is **historical/reference only** for runtime stabilization. It was superseded after real OBS 32.2.2 testing exposed a Properties-lifetime crash in the mixed stabilization approach. Do not merge, revive, or continue #22 as the Gate 0 implementation branch.
-- PR #23 (`stabilize/v040-crashproof-baseline`) is the current stabilization successor/candidate. Useful fixes from #22 may be ported only selectively and must be independently reviewed and revalidated on the crash-proof baseline.
-- PR #23 being green is **not by itself Gate 0 LOCK**, because its maintenance baseline is not the canonical `main` baseline. Gate 0 closes only after the validated stabilization result is integrated onto a clean `main`-target path, exact-head CI/review passes again, required real-machine evidence is tied to that final integration head, and the known-good baseline is recorded/tagged.
-- Do not begin North Star S1 implementation until Gate 0 is formally locked under those rules.
+### Rack GUI rule
+
+The earlier “stock OBS Properties is the complete Rack editor” decision is superseded by `ADR-0003-ISOLATED-RACK-EDITOR.md`.
+
+Do not reintroduce private OBS Qt/widget injection.
+
+Default Windows v2 graphical candidate is **Dear ImGui + Win32 + DirectX 11**, pinned exact upstream version/commit, helper-only, but it must pass **UI-0** before R0 production extraction.
+
+JUCE/atkAudio/Element are reference material. Do not copy their source. Do not introduce JUCE into the public product without an explicit licensing/dependency ADR.
+
+---
+
+## Current Rack execution gate
+
+Current parent/evidence ledger: **#56**.
+
+Current only unblocked ticket: **#57 REG-0**.
+
+Do not start UI-0/R0 production work until REG-0 reaches accepted GO.
+
+After REG-0 GO:
+
+1. run **UI-0** in a fresh thread;
+2. prove helper-only graphical dependency/window boundary;
+3. result is `GO IMGUI` or `BLOCKED`;
+4. stop;
+5. only a later fresh thread starts R0-1.
+
+---
+
+## Current Gate 0 routing — historical / do not regress
+
+- PR #22 (`fix/obs-load-compatibility`) is historical/reference only for runtime stabilization. It was superseded after real OBS 32.2.2 testing exposed a Properties-lifetime crash in the mixed stabilization approach. Do not merge, revive, or continue #22 as the Gate 0 implementation branch.
+- PR #23 (`stabilize/v040-crashproof-baseline`) is the historical stabilization successor/candidate. Useful fixes from #22 may be ported only selectively and independently reviewed/revalidated.
+- Historical Gate 0 details remain useful as lessons in OBS Properties lifetime/compatibility. Do not infer current milestone status from old PR labels alone.
+
+The key durable lesson is: **OBS owns `obs_properties_t` / `obs_property_t` lifetime.** Background scanner/recovery/runtime code must not rebuild an open Properties tree in a way that invalidates OBS-owned pointers mid-callback.
+
+---
 
 ## Product finish line
 
 The intended product has two separate OBS filters in the supported Windows package:
 
 - `VST3` — one isolated VST3 effect, simple and production-safe.
-- `VST3 Rack` — a separate isolated serial multi-VST3 chain with automatic Session Snapshot persistence and a reusable named Rack Preset Library.
+- `VST3 Rack` — a separate isolated serial multi-VST3 chain with graphical helper-owned editor, automatic Session Snapshot persistence and reusable named Rack Preset Library.
 
-Normal user work must survive restart/recovery without a manual Save action. Rack presets must support safe reuse of complex chains across independent filters/sources/scenes/project workflows as specified by the execution contract.
+Normal user work must survive restart/recovery without manual Save. Rack presets must support safe reuse of complex chains across independent filters/sources/scenes/project workflows.
+
+---
 
 ## Non-negotiable architecture invariants
 
 - Third-party VST3/vendor GUI code never runs in `obs64.exe`.
+- Rack graphical UI/toolkit code must not be linked into the OBS module merely to implement Rack editing.
 - OBS `filter_audio` never performs vendor lifecycle/UI/state/scanning/filesystem/process work, project-owned heap allocation, blocking mutex acquisition, or unbounded waits.
+- Rack DSP worker never performs GUI/D3D/filesystem/scanner/preset work.
 - Invalid/late/unavailable wet processing fails open to bounded dry/pass-through audio.
-- Scanner/vendor failures remain isolated; never introduce an unsafe in-process vendor scan retry.
+- Scanner/vendor failures remain isolated; never introduce unsafe in-process vendor scan retry.
 - Recovery is bounded; repeated failures back off/quarantine rather than restart-loop.
 - State promoted as last-known-good must be coherent and validated.
-- OBS Properties objects remain OBS-owned. Runtime/recovery/scanner code must not rebuild an open Properties tree in a way that can invalidate OBS-owned property pointers mid-callback.
-- After Single Host v1.0 lock, Rack work must keep the Single v1.0 regression contract green.
-- Rack owns a separate helper/protocol; do not repurpose the Single Host protocol into a general Rack protocol.
+- OBS Properties objects remain OBS-owned; async code must not invalidate open property pointers.
+- After accepted Single extraction baseline, Rack work must keep the named Single regression contract green.
+- Rack owns separate helper/protocol; do not repurpose Single protocol into a general Rack protocol.
+- Rack Editor is a command/snapshot view/controller, not a second mutable Rack model.
+- UI/control thread must not own a lock required for normal Rack DSP progress.
+- Slot identity is stable across reorder; list index is presentation only.
+- Vendor editor windows do not auto-open on restore/preset load.
+
+---
 
 ## Required engineering loop
 
@@ -67,47 +129,66 @@ Never treat a whole milestone as one coding task.
 For one vertical tracer-bullet behavior:
 
 1. Establish fixed-point base SHA and current green gates.
-2. Research authoritative OBS/VST3/Windows behavior when uncertain.
-3. Define scope, non-goals, failure modes and acceptance tests.
-4. Add the smallest failing behavior/regression test first at the highest stable seam.
-5. Implement the minimum change to make it green.
-6. Refactor only while all previous/new tests remain green.
-7. Review correctness/realtime/lifecycle/ownership **and** architecture boundaries from the fixed point.
-8. Resolve every review finding. If the source head changes, repeat the required review on the new head; older review/qualification evidence does not authorize the new head.
-9. Run required CI and any compatibility/package/manual qualification on the exact final reviewed source head.
-10. If any later change modifies that source head, invalidate the prior final qualification and return to review + required qualification.
-11. Merge only the unchanged, fully qualified exact source head.
-12. Record milestone/release evidence as required by the execution contract.
+2. Read contract + applicable ADRs + relevant PRD + current ticket.
+3. Research authoritative OBS/VST3/Windows/dependency behavior only where uncertain.
+4. Define scope, non-goals, failure modes and acceptance tests.
+5. Add smallest failing behavior/regression test first at highest stable seam where feasible.
+6. Implement minimum change to make it green.
+7. Refactor only while all previous/new tests remain green.
+8. Review from fixed point in two passes:
+   - Standards/invariants;
+   - Spec/ticket compliance.
+9. Resolve every finding. If source head changes, repeat required final review/qualification.
+10. Run required exact-head CI/compat/package/manual qualification.
+11. Merge only unchanged qualified source head.
+12. Record evidence in parent/child issue.
+13. Stop; next ticket gets a fresh context.
 
-Bug work follows:
+Bug loop:
 
 `reproduce → minimise → hypothesise → instrument → fix → permanent regression test`
 
 Do not start a difficult bug by rewriting the subsystem.
 
-## Locked phase order
+---
 
-Do not skip lock gates:
+## Rack execution order
 
-`Gate 0 crash-proof stabilization successor → S1 → S2 → S3 → S4 → S5 → S6 Single v1.0 LOCK → R0 → R1 → R2 → R3 → R4 → R5 Rack v2.0 LOCK → post-v2 North Star`
+Historical normative product order is maintained by the execution contract. The current Rack entry exception must be explicitly authorized by REG-0.
 
-Historical issue names such as old `S1`/`S2` tickets created before the North Star contract do **not** redefine these phases. When a legacy issue label conflicts with the execution contract, treat the issue as historical implementation evidence and follow the phase meaning in `docs/CODEX_EXECUTION_CONTRACT.md`.
+Within Rack work, use:
 
-Do not begin Rack implementation before the Single Host v1.0 contract is locked with the evidence required by `docs/CODEX_EXECUTION_CONTRACT.md` **unless REG-0 results in an explicit accepted contract/ADR clarification that authorizes a narrower R0 extraction path**. Planning/research may proceed before that decision; Rack production code may not.
+```text
+REG-0
+→ UI-0 helper-only graphical dependency proof
+→ R0-1 ProcessBlockView
+→ R0-2 HostedPlugin extraction
+→ R1 serial Rack runtime
+→ R2 persistence/recovery/preset foundation
+→ R3 graphical Rack Editor + thin OBS launcher
+→ R4 stress/package/compatibility
+→ R5 Rack v2.0 LOCK
+→ post-v2 routing/sidechain/MIDI/instruments
+```
+
+Do not skip lock gates.
+
+---
 
 ## Completion is evidence, not a label
 
 Do not write ceremonial `PASS` values.
 
-For mandatory product locks, cite the exact final SHA, exact-head CI run IDs/URLs, named tests that actually executed, and the specific public-candidate real-machine workflows required by `docs/CODEX_EXECUTION_CONTRACT.md`.
+For mandatory product locks, cite exact final SHA, exact-head CI run IDs/URLs, named tests that actually executed, and public-candidate real-machine workflows required by the execution contract.
 
-Artifact provenance must identify the **actual source head commit** being qualified. A synthetic pull-request merge SHA may be useful to GitHub internally, but it must not be presented as the source commit of a public candidate.
+Artifact provenance must identify the **actual source head commit**. Synthetic PR merge SHAs may be useful internally but are not the public candidate source identity.
 
 In particular:
 
-- Gate 0 cannot lock while the validated stabilization result exists only on a non-`main` maintenance baseline.
-- Single v1.0 cannot lock without proven zero-action close/reopen state restoration and helper-recovery restoration.
-- Rack v2.0 cannot lock without proven zero-action Rack Session Snapshot restoration.
-- Rack v2.0 cannot lock without the full named Preset Library workflow, including Save, Load/reuse into an independent Rack, Rename, Delete, explicit Update Preset, missing-plugin behavior and crash-safe persistence, with the required exact-head CI and public-candidate evidence.
+- Single/Rack shared-runtime work cannot merge if named Single regressions are not green.
+- Rack v2.0 cannot lock without zero-action Rack Session Snapshot restoration.
+- Rack v2.0 cannot lock without full named Preset Library workflow.
+- Rack v2.0 cannot lock if graphical editor dependencies leak into the OBS module or minimum supported OBS loader compatibility regresses.
+- Rack v2.0 cannot lock without helper kill/recovery testing while Rack Editor/vendor windows are exercised.
 
-If required evidence is missing, the milestone is not complete and the next locked phase must not start.
+If required evidence is missing, milestone is not complete and next locked phase must not start.
