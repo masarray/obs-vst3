@@ -9,11 +9,28 @@ Before planning, coding, reviewing, or declaring a milestone complete, read in t
 1. `docs/CODEX_EXECUTION_CONTRACT.md` — **normative product/AI execution contract**.
 2. `docs/ADR-0001-GATE0-STABILIZATION-SUCCESSOR.md` when working on Gate 0 / stabilization.
 3. The relevant section of `docs/NORTH_STAR_PRD.md` — full roadmap, rationale, gates, testing and release strategy.
-4. The current GitHub parent issue/tracer ticket and the repository code at its declared fixed-point SHA.
+4. When working on Rack planning or implementation, read `docs/rack/THREAD_HANDOFF.md` and then follow its Rack-specific read order.
+5. The current GitHub parent issue/tracer ticket and the repository code at its declared fixed-point SHA.
 
 If wording conflicts, `docs/CODEX_EXECUTION_CONTRACT.md` wins. An accepted ADR may clarify or supersede a historical implementation decision, but must not silently reorder the North Star phases.
 
 Do not use chat history, stale issue names, old PR descriptions, or historical branch labels as architecture or milestone sources of truth.
+
+## Current next planning target — VST3 Rack
+
+The next major product target is the separate **VST3 Rack** serial multi-effect system described by the North Star.
+
+Before any Rack production code, execute **REG-0 Rack Entry Gate** from `docs/rack/VST3_RACK_TICKETS.md`. REG-0 exists because the historical locked phase order requires Single v1.0 before Rack while current product direction wants Rack next. Do not resolve that conflict informally: REG-0 must produce exact evidence and an explicit accepted clarification/ADR before R0 extraction is unlocked.
+
+Rack-specific authoritative planning files:
+
+1. `docs/rack/ADR-0002-RACK-RUNTIME-ARCHITECTURE.md`
+2. `docs/rack/VST3_RACK_RESEARCH.md`
+3. `docs/rack/VST3_RACK_EXECUTION_SPEC.md`
+4. `docs/rack/VST3_RACK_TICKETS.md`
+5. `docs/rack/THREAD_HANDOFF.md`
+
+The v2 Rack architecture is serial-first, one isolated Rack helper process per Rack filter, a separate Rack protocol, protocol-neutral deep VST3 lifecycle seams, immutable chain-generation swaps, preallocated serial processing, whole-block fail-dry semantics, automatic Session Snapshot persistence, named reusable Rack Presets, and compatibility-first stock OBS Properties UI. Free-form graph, sidechain/routing, MIDI/instruments and custom Qt Rack UI are not v2 scope.
 
 ## Current Gate 0 routing — do not regress
 
@@ -76,7 +93,7 @@ Do not skip lock gates:
 
 Historical issue names such as old `S1`/`S2` tickets created before the North Star contract do **not** redefine these phases. When a legacy issue label conflicts with the execution contract, treat the issue as historical implementation evidence and follow the phase meaning in `docs/CODEX_EXECUTION_CONTRACT.md`.
 
-Do not begin Rack implementation before the Single Host v1.0 contract is locked with the evidence required by `docs/CODEX_EXECUTION_CONTRACT.md`.
+Do not begin Rack implementation before the Single Host v1.0 contract is locked with the evidence required by `docs/CODEX_EXECUTION_CONTRACT.md` **unless REG-0 results in an explicit accepted contract/ADR clarification that authorizes a narrower R0 extraction path**. Planning/research may proceed before that decision; Rack production code may not.
 
 ## Completion is evidence, not a label
 
