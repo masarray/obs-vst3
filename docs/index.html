@@ -3,376 +3,204 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#08111f">
-  <meta name="description" content="Crash-isolated VST3 audio-effect hosting for OBS Studio. Beginner-friendly Windows installer, automatic plug-in discovery, native VST3 UI support, and dry fail-open behavior.">
-  <meta property="og:title" content="OBS Safe VST3 Host">
-  <meta property="og:description" content="Use modern VST3 audio effects in OBS without loading the VST3 binary inside OBS.">
+  <meta name="theme-color" content="#071019">
+  <title>VST3 for OBS Studio – Safe Native OBS VST3 Plugin for Windows</title>
+  <meta name="description" content="Use VST3 audio effects in OBS Studio with a native OBS filter and crash-isolated helper. Easy Windows install, vendor GUIs, plug-in discovery and recovery.">
+  <meta name="keywords" content="VST3 for OBS, OBS VST3 plugin, OBS Studio VST3, native OBS VST3, VST3 plugin OBS, VST3 audio effects OBS, VST3 host OBS Windows">
+  <meta name="author" content="MasArray">
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+  <link rel="canonical" href="https://masarray.github.io/obs-vst3/">
+  <link rel="stylesheet" href="site.css">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://masarray.github.io/obs-safe-vst3-host/">
-  <title>OBS Safe VST3 Host — VST3 for OBS, isolated from the OBS process</title>
-  <style>
-    :root {
-      --bg: #07101d;
-      --bg2: #0a1628;
-      --card: rgba(15, 28, 48, .78);
-      --card-solid: #0d1a2d;
-      --line: rgba(148, 163, 184, .17);
-      --text: #f7fbff;
-      --muted: #a7b6c8;
-      --blue: #58a6ff;
-      --cyan: #36d7e8;
-      --green: #4ade80;
-      --amber: #fbbf24;
-      --violet: #a78bfa;
-      --max: 1160px;
-      --shadow: 0 28px 80px rgba(0,0,0,.32);
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      color: var(--text);
-      background:
-        radial-gradient(900px 520px at 18% -5%, rgba(54,215,232,.15), transparent 62%),
-        radial-gradient(820px 520px at 88% 4%, rgba(88,166,255,.14), transparent 62%),
-        linear-gradient(180deg, #07101d 0%, #081424 46%, #06101b 100%);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
-    a { color: inherit; }
-    .wrap { width: min(var(--max), calc(100% - 36px)); margin: 0 auto; }
-    .nav {
-      position: sticky; top: 0; z-index: 20;
-      background: rgba(7,16,29,.75); backdrop-filter: blur(18px);
-      border-bottom: 1px solid var(--line);
-    }
-    .nav-inner { height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 22px; }
-    .brand { display: flex; align-items: center; gap: 11px; font-weight: 800; letter-spacing: -.02em; text-decoration: none; }
-    .brand-mark {
-      width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center;
-      background: linear-gradient(135deg, rgba(54,215,232,.22), rgba(88,166,255,.18));
-      border: 1px solid rgba(91,205,255,.27); box-shadow: inset 0 0 20px rgba(54,215,232,.07);
-    }
-    .nav-links { display: flex; align-items: center; gap: 20px; font-size: 14px; color: var(--muted); }
-    .nav-links a { text-decoration: none; }
-    .nav-links a:hover { color: #fff; }
-    .nav-cta { padding: 9px 14px; border: 1px solid rgba(88,166,255,.35); border-radius: 10px; color: #dff4ff !important; background: rgba(88,166,255,.09); }
-
-    .hero { padding: 92px 0 72px; position: relative; overflow: hidden; }
-    .hero-grid { display: grid; grid-template-columns: 1.04fr .96fr; gap: 58px; align-items: center; }
-    .eyebrow { display: inline-flex; gap: 9px; align-items: center; padding: 7px 11px; border: 1px solid rgba(251,191,36,.28); background: rgba(251,191,36,.08); border-radius: 999px; color: #fde68a; font-size: 13px; font-weight: 700; }
-    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 13px rgba(251,191,36,.7); }
-    h1 { font-size: clamp(44px, 6vw, 72px); line-height: .99; letter-spacing: -.055em; margin: 22px 0 22px; max-width: 820px; }
-    .gradient { background: linear-gradient(90deg, #fff 0%, #9be8ff 50%, #a5bfff 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .lead { color: #b8c7d9; font-size: 19px; max-width: 700px; margin: 0 0 28px; }
-    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 28px 0 18px; }
-    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 48px; padding: 0 18px; border-radius: 12px; text-decoration: none; font-weight: 800; font-size: 15px; border: 1px solid transparent; transition: transform .15s ease, border-color .15s ease, background .15s ease; }
-    .btn:hover { transform: translateY(-1px); }
-    .btn-primary { background: linear-gradient(135deg, #36d7e8, #58a6ff); color: #04111c; box-shadow: 0 16px 38px rgba(54,215,232,.18); }
-    .btn-secondary { border-color: rgba(148,163,184,.24); background: rgba(255,255,255,.035); color: #eaf4ff; }
-    .trustline { color: #8396ab; font-size: 13px; display: flex; flex-wrap: wrap; gap: 12px 18px; }
-    .trustline span { display: inline-flex; align-items: center; gap: 6px; }
-    .check { color: var(--green); font-weight: 900; }
-
-    .hero-card { position: relative; border: 1px solid rgba(119,190,255,.19); background: linear-gradient(180deg, rgba(15,30,52,.88), rgba(8,19,34,.94)); border-radius: 24px; padding: 25px; box-shadow: var(--shadow); overflow: hidden; }
-    .hero-card:before { content: ""; position: absolute; inset: -80px auto auto -80px; width: 240px; height: 240px; background: radial-gradient(circle, rgba(54,215,232,.15), transparent 68%); }
-    .window-bar { display: flex; align-items: center; justify-content: space-between; color: #7890a8; font-size: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
-    .lights { display: flex; gap: 6px; }
-    .lights i { width: 8px; height: 8px; display: block; border-radius: 50%; background: #334155; }
-    .pipeline { display: grid; gap: 13px; padding: 22px 0 7px; }
-    .node { border: 1px solid var(--line); background: rgba(255,255,255,.025); border-radius: 15px; padding: 15px 16px; display: grid; grid-template-columns: 39px 1fr auto; gap: 12px; align-items: center; }
-    .node-icon { width: 39px; height: 39px; border-radius: 11px; display: grid; place-items: center; background: rgba(88,166,255,.10); color: #bde4ff; border: 1px solid rgba(88,166,255,.18); }
-    .node h3 { margin: 0; font-size: 14px; }
-    .node p { margin: 2px 0 0; color: #8196ac; font-size: 12px; }
-    .pill { font-size: 11px; font-weight: 800; padding: 5px 8px; border-radius: 999px; white-space: nowrap; }
-    .pill-blue { color: #bde4ff; background: rgba(88,166,255,.10); border: 1px solid rgba(88,166,255,.18); }
-    .pill-green { color: #baf7cc; background: rgba(74,222,128,.09); border: 1px solid rgba(74,222,128,.18); }
-    .connector { height: 20px; width: 2px; background: linear-gradient(var(--cyan), rgba(88,166,255,.25)); margin: -3px 0 -3px 35px; position: relative; }
-    .connector:after { content: ""; position: absolute; bottom: -1px; left: -3px; width: 8px; height: 8px; border-right: 2px solid var(--blue); border-bottom: 2px solid var(--blue); transform: rotate(45deg); }
-    .failopen { margin-top: 16px; padding: 12px 13px; border-radius: 12px; background: rgba(74,222,128,.055); border: 1px solid rgba(74,222,128,.15); color: #a9d7b8; font-size: 12px; }
-
-    section { padding: 76px 0; }
-    .section-head { max-width: 760px; margin-bottom: 34px; }
-    .kicker { color: #77ddec; text-transform: uppercase; font-weight: 900; letter-spacing: .13em; font-size: 11px; }
-    h2 { margin: 8px 0 13px; font-size: clamp(30px, 4vw, 46px); line-height: 1.08; letter-spacing: -.035em; }
-    .section-head p { margin: 0; color: var(--muted); font-size: 17px; }
-    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-    .feature { padding: 24px; border-radius: 18px; border: 1px solid var(--line); background: var(--card); }
-    .feature .ico { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 17px; background: rgba(54,215,232,.08); border: 1px solid rgba(54,215,232,.15); color: #aeefff; }
-    .feature h3 { margin: 0 0 8px; font-size: 18px; }
-    .feature p { margin: 0; color: #91a5b9; font-size: 14px; }
-
-    .steps { counter-reset: step; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-    .step { counter-increment: step; min-height: 220px; padding: 24px; border-radius: 19px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(17,31,52,.72), rgba(10,21,37,.72)); }
-    .step:before { content: counter(step); width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 38px; background: linear-gradient(135deg, rgba(54,215,232,.18), rgba(88,166,255,.18)); border: 1px solid rgba(91,205,255,.25); color: #dff7ff; font-weight: 900; }
-    .step h3 { margin: 0 0 8px; }
-    .step p { margin: 0; color: #90a4b8; font-size: 14px; }
-
-    .trust { display: grid; grid-template-columns: .88fr 1.12fr; gap: 24px; align-items: stretch; }
-    .shield { border-radius: 24px; min-height: 390px; background: radial-gradient(circle at 50% 32%, rgba(54,215,232,.13), transparent 38%), rgba(10,22,39,.72); border: 1px solid var(--line); display: grid; place-items: center; padding: 28px; text-align: center; }
-    .shield svg { width: 105px; height: 105px; filter: drop-shadow(0 14px 28px rgba(54,215,232,.16)); }
-    .shield strong { display: block; font-size: 22px; margin-top: 16px; }
-    .shield p { color: var(--muted); max-width: 390px; margin: 7px auto 0; font-size: 14px; }
-    .trust-copy { padding: 30px; border: 1px solid var(--line); background: var(--card); border-radius: 24px; }
-    .trust-copy h2 { margin-top: 0; }
-    .trust-copy > p { color: var(--muted); }
-    .trust-list { display: grid; gap: 13px; margin: 22px 0 24px; }
-    .trust-item { display: grid; grid-template-columns: 27px 1fr; gap: 10px; align-items: start; color: #bdcad7; font-size: 14px; }
-    .trust-item b { color: #eef8ff; }
-    .mini-code { background: #050c15; border: 1px solid rgba(148,163,184,.16); border-radius: 12px; padding: 13px 14px; overflow-x: auto; color: #9fe9f4; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .warn { color: #fde68a; font-size: 13px; margin-top: 14px; }
-
-    .compat { overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: rgba(10,22,39,.7); }
-    .compat-row { display: grid; grid-template-columns: 1fr 1.2fr; border-bottom: 1px solid var(--line); }
-    .compat-row:last-child { border-bottom: 0; }
-    .compat-row > div { padding: 15px 18px; }
-    .compat-row > div:first-child { color: #dfeaf5; font-weight: 700; }
-    .compat-row > div:last-child { color: #91a5b9; border-left: 1px solid var(--line); }
-    .yes { color: #8af0a9; } .no { color: #f3a8a8; } .later { color: #f5d68b; }
-
-    .proof { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 26px; }
-    .stat { padding: 22px 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.025); }
-    .stat strong { display: block; font-size: 28px; line-height: 1.1; letter-spacing: -.04em; color: #ddf7ff; }
-    .stat span { color: #879bb0; font-size: 12px; }
-    .proof-note { color: var(--muted); max-width: 820px; }
-
-    .faq { display: grid; gap: 11px; }
-    details { border: 1px solid var(--line); background: rgba(12,25,43,.72); border-radius: 14px; padding: 0 18px; }
-    summary { cursor: pointer; list-style: none; padding: 17px 30px 17px 0; font-weight: 800; position: relative; }
-    summary::-webkit-details-marker { display: none; }
-    summary:after { content: "+"; position: absolute; right: 0; color: #79ddeb; font-size: 20px; top: 13px; }
-    details[open] summary:after { content: "–"; }
-    details p, details ul { color: #9aacc0; font-size: 14px; margin-top: 0; }
-    details code { color: #b7eef5; }
-
-    .cta { margin: 36px 0 76px; padding: 46px; border: 1px solid rgba(88,166,255,.22); border-radius: 26px; background: radial-gradient(600px 280px at 20% 0, rgba(54,215,232,.12), transparent 70%), linear-gradient(135deg, rgba(15,31,53,.92), rgba(8,20,35,.92)); display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
-    .cta h2 { margin: 0 0 10px; }
-    .cta p { color: var(--muted); margin: 0; max-width: 700px; }
-
-    footer { border-top: 1px solid var(--line); color: #71869a; padding: 28px 0 46px; font-size: 13px; }
-    .footer-grid { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
-    footer a { color: #9cb2c7; text-decoration: none; margin-right: 14px; }
-
-    @media (max-width: 900px) {
-      .hero-grid, .trust { grid-template-columns: 1fr; }
-      .hero { padding-top: 68px; }
-      .hero-card { max-width: 650px; }
-      .grid3, .steps { grid-template-columns: 1fr; }
-      .proof { grid-template-columns: repeat(2, 1fr); }
-      .cta { grid-template-columns: 1fr; }
-      .nav-links a:not(.nav-cta) { display: none; }
-    }
-    @media (max-width: 560px) {
-      .wrap { width: min(100% - 24px, var(--max)); }
-      .nav-inner { height: 62px; }
-      .brand { font-size: 14px; }
-      .brand-mark { width: 31px; height: 31px; }
-      h1 { font-size: 44px; }
-      .lead { font-size: 17px; }
-      section { padding: 60px 0; }
-      .hero-card, .feature, .step, .trust-copy, .shield, .cta { border-radius: 18px; }
-      .node { grid-template-columns: 36px 1fr; }
-      .node .pill { grid-column: 2; justify-self: start; }
-      .proof { grid-template-columns: 1fr 1fr; }
-      .compat-row { grid-template-columns: 1fr; }
-      .compat-row > div:last-child { border-left: 0; border-top: 1px solid var(--line); }
-      .cta { padding: 28px; }
-    }
-  </style>
+  <meta property="og:site_name" content="OBS Safe VST3 Host">
+  <meta property="og:title" content="VST3 for OBS Studio – Safe Native OBS VST3 Host">
+  <meta property="og:description" content="A native OBS filter for modern VST3 audio effects, with third-party VST3 DSP and vendor UI isolated outside obs64.exe.">
+  <meta property="og:url" content="https://masarray.github.io/obs-vst3/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="VST3 for OBS Studio – OBS Safe VST3 Host">
+  <meta name="twitter:description" content="Use VST3 effects in OBS with an easy native filter workflow and crash-isolated helper process.">
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@type":"SoftwareApplication",
+    "name":"OBS Safe VST3 Host",
+    "alternateName":["VST3 for OBS","OBS VST3 Plugin"],
+    "applicationCategory":"MultimediaApplication",
+    "operatingSystem":"Windows 10, Windows 11",
+    "softwareVersion":"0.5.0",
+    "description":"A native OBS Studio filter plug-in for hosting VST3 audio effects in an isolated helper process, with installed plug-in discovery, native vendor editors, state persistence and recovery.",
+    "url":"https://masarray.github.io/obs-vst3/",
+    "downloadUrl":"https://github.com/masarray/obs-vst3/releases/latest",
+    "softwareRequirements":"OBS Studio 29.1 or later; Windows x64",
+    "license":"https://www.gnu.org/licenses/gpl-3.0.html",
+    "isAccessibleForFree":true,
+    "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@type":"FAQPage",
+    "mainEntity":[
+      {"@type":"Question","name":"Does OBS Studio support VST3 with this plug-in?","acceptedAnswer":{"@type":"Answer","text":"Yes. OBS Safe VST3 Host adds a native OBS filter named VST 3.x Plug-in and hosts compatible VST3 audio effects through an isolated helper process on Windows x64."}},
+      {"@type":"Question","name":"Can a VST3 crash OBS?","acceptedAnswer":{"@type":"Answer","text":"This project is designed to reduce that risk by keeping third-party VST3 DSP and vendor GUI code outside obs64.exe. A failing helper can be recovered and the filter can fall back to dry audio. No software can guarantee zero crashes from every driver, system or malicious-code failure."}},
+      {"@type":"Question","name":"Which VST3 plug-ins work in OBS Safe VST3 Host?","acceptedAnswer":{"@type":"Answer","text":"The host targets Windows VST3 audio effects and has been real-machine tested with effects from iZotope, FabFilter, Waves, Klevgrand, Neuro Audio and Process Audio. Instrument-only VST3 and MIDI are outside the current scope."}},
+      {"@type":"Question","name":"How do I install VST3 support in OBS?","acceptedAnswer":{"@type":"Answer","text":"Close OBS, run the Windows installer from the official GitHub release, choose the OBS root folder, reopen OBS, add VST 3.x Plug-in to an audio source, select an installed effect and click Open Plug-in Interface."}}
+    ]
+  }
+  </script>
 </head>
 <body>
-  <nav class="nav">
-    <div class="wrap nav-inner">
-      <a class="brand" href="#top" aria-label="OBS Safe VST3 Host home">
-        <span class="brand-mark" aria-hidden="true">
-          <svg width="21" height="21" viewBox="0 0 24 24" fill="none"><path d="M12 3 5.5 6.4v5.1c0 4.3 2.7 7.8 6.5 9.5 3.8-1.7 6.5-5.2 6.5-9.5V6.4L12 3Z" stroke="currentColor" stroke-width="1.6"/><path d="M8.6 12.1h2l1.2-3.1 1.5 6 1.1-2.9h1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </span>
-        OBS Safe VST3 Host
-      </a>
-      <div class="nav-links">
+  <header class="nav">
+    <div class="wrap navin">
+      <a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a>
+      <nav class="navlinks" aria-label="Main navigation">
         <a href="#how">How it works</a>
-        <a href="#trust">Windows trust</a>
-        <a href="#compatibility">Compatibility</a>
-        <a class="nav-cta" href="https://github.com/masarray/obs-safe-vst3-host/releases">Download</a>
-      </div>
+        <a href="compatibility.html">Compatibility</a>
+        <a href="safety.html">Safety</a>
+        <a href="install.html">Install guide</a>
+        <a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a>
+      </nav>
     </div>
-  </nav>
+  </header>
 
-  <main id="top">
-    <header class="hero">
-      <div class="wrap hero-grid">
+  <main>
+    <section class="hero">
+      <div class="wrap heroGrid">
         <div>
-          <span class="eyebrow"><span class="dot"></span> Windows x64 · Public Preview</span>
-          <h1><span class="gradient">Modern VST3 effects in OBS.</span><br>Kept outside the OBS process.</h1>
-          <p class="lead">OBS Safe VST3 Host adds a beginner-friendly <strong>VST 3.x Plug-in</strong> audio filter to OBS Studio and runs the third-party VST3 in an isolated helper process instead of loading it directly inside OBS.</p>
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="https://github.com/masarray/obs-safe-vst3-host/releases/download/v0.3.0-preview.2/OBS-Safe-VST3-Host-v0.3.0-preview.2-Setup-x64.exe">Download Preview 2 Setup <span aria-hidden="true">↓</span></a>
-            <a class="btn btn-secondary" href="https://github.com/masarray/obs-safe-vst3-host/releases">All releases</a>
+          <div class="eyebrow"><span class="pulse"></span> Public stable v0.5.0 · Windows x64</div>
+          <h1><span class="gradient">VST3 for OBS Studio</span>, without putting third-party plug-in code inside OBS.</h1>
+          <p class="lead">OBS Safe VST3 Host is a native OBS filter plug-in for modern VST3 audio effects. Pick an installed effect, open its real vendor interface, tweak it normally, and keep the VST3 runtime isolated from <code>obs64.exe</code>.</p>
+          <div class="actions">
+            <a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.5.0 stable</a>
+            <a class="btn secondary" href="install.html">Beginner install guide</a>
           </div>
           <div class="trustline">
-            <span><b class="check">✓</b> Open source</span>
-            <span><b class="check">✓</b> SHA-256 published</span>
-            <span><b class="check">✓</b> Smart installer</span>
-            <span><b class="check">✓</b> No Defender disable required</span>
+            <span><b>✓</b> Native OBS filter</span>
+            <span><b>✓</b> Real VST3 vendor GUI</span>
+            <span><b>✓</b> Crash-isolated helper</span>
+            <span><b>✓</b> Open source</span>
           </div>
         </div>
 
-        <div class="hero-card" aria-label="Isolation architecture overview">
-          <div class="window-bar"><span>audio processing boundary</span><span class="lights"><i></i><i></i><i></i></span></div>
-          <div class="pipeline">
-            <div class="node">
-              <span class="node-icon" aria-hidden="true">OBS</span>
-              <div><h3>OBS Studio</h3><p>Your live scene and audio source</p></div>
-              <span class="pill pill-blue">stays host</span>
-            </div>
-            <div class="connector"></div>
-            <div class="node">
-              <span class="node-icon" aria-hidden="true">↔</span>
-              <div><h3>Bounded shared-memory bridge</h3><p>Realtime audio with a finite deadline</p></div>
-              <span class="pill pill-green">fail-open</span>
-            </div>
-            <div class="connector"></div>
-            <div class="node">
-              <span class="node-icon" aria-hidden="true">V3</span>
-              <div><h3>Isolated VST3 helper</h3><p>The third-party VST3 lives here, not in OBS</p></div>
-              <span class="pill pill-blue">separate process</span>
-            </div>
+        <div class="mock" aria-label="Illustration of the OBS VST3 filter workflow">
+          <div class="mockTop"><span>Filters for Desktop Audio</span><span class="dots"><i></i><i></i><i></i></span></div>
+          <div class="form">
+            <div class="field"><label>1. Plug-in Source</label><div class="control"><span>Installed plug-ins</span><span>⌄</span></div></div>
+            <div class="field"><label>2. Installed Plug-in</label><div class="control"><span>Choose your VST3 audio effect</span><span>⌄</span></div></div>
+            <div class="openBtn">3. Open Plug-in Interface</div>
+            <div class="status"><i></i><span>Ready · vendor editor available</span></div>
           </div>
-          <div class="failopen"><strong>Designed failure behavior:</strong> if helper processing exits or misses its bounded deadline, the OBS filter leaves the original dry audio for that failed path instead of waiting forever.</div>
         </div>
       </div>
-    </header>
+    </section>
 
     <section>
       <div class="wrap">
-        <div class="section-head">
-          <span class="kicker">Why it exists</span>
-          <h2>VST3 support without turning setup into a developer project.</h2>
-          <p>Install it, pick a plug-in, open its normal interface, and keep streaming. The architecture is technical; the workflow should not be.</p>
+        <div class="sectionHead">
+          <div class="kicker">Why this exists</div>
+          <h2>OBS gets a familiar VST3 workflow. The risky code gets a separate process.</h2>
+          <p>Many modern effects are VST3-only. This project makes them practical in OBS without deliberately loading the third-party VST3 binary into the OBS process itself.</p>
         </div>
         <div class="grid3">
-          <article class="feature"><div class="ico">⛨</div><h3>Crash-isolated hosting</h3><p>Third-party VST3 code is loaded by a separate helper process. The isolation boundary is designed to protect OBS from plug-in process failures.</p></article>
-          <article class="feature"><div class="ico">⌕</div><h3>Automatic discovery</h3><p>Choose from installed VST3 effects, rescan when needed, or browse to a custom VST3 location. No manual Class ID workflow for normal use.</p></article>
-          <article class="feature"><div class="ico">▣</div><h3>Real plug-in interfaces</h3><p>When a VST3 provides a native editor, open the plug-in's own GUI. When it does not, simple generic parameter controls can be shown instead.</p></article>
+          <article class="card"><div class="icon">OBS</div><h3>Feels native in OBS</h3><p>Add <strong>VST 3.x Plug-in</strong> from the normal Filters window. Installed and manual VST3 workflows stay inside the standard OBS properties experience.</p></article>
+          <article class="card"><div class="icon">UI</div><h3>Use the real plug-in GUI</h3><p>Open the vendor interface you already know from your DAW. The editor is brought to the foreground so knob tweaking does not turn into an Alt-Tab workflow.</p></article>
+          <article class="card"><div class="icon">SAFE</div><h3>Built around containment</h3><p>VST3 DSP, vendor UI and scanning run outside <code>obs64.exe</code>. Recovery and dry fail-open behavior are designed around keeping OBS responsive.</p></article>
         </div>
       </div>
     </section>
 
     <section id="how">
       <div class="wrap">
-        <div class="section-head">
-          <span class="kicker">Getting started</span>
-          <h2>Three steps from download to your first VST3.</h2>
-          <p>The recommended path is the Windows Smart Installer. Portable/manual installation remains available for advanced or portable OBS setups.</p>
+        <div class="sectionHead">
+          <div class="kicker">Three-step workflow</div>
+          <h2>Install once. Choose an effect. Open the knobs.</h2>
+          <p>No Class ID entry, no routing graph and no separate DAW required for the normal single-effect workflow.</p>
         </div>
         <div class="steps">
-          <article class="step"><h3>Close OBS and install</h3><p>Run the Setup x64 file. The installer asks you to confirm the exact OBS Studio folder you actually launch and refuses to copy over a running OBS instance.</p></article>
-          <article class="step"><h3>Add the audio filter</h3><p>Open OBS, select your microphone or audio source, choose <strong>Filters → + → VST 3.x Plug-in</strong>.</p></article>
-          <article class="step"><h3>Pick your effect</h3><p>Choose an installed VST3, rescan, or browse to a custom bundle. Click <strong>Open Plug-in Interface</strong> when the effect has a GUI.</p></article>
+          <article class="step"><h3>Install the OBS plug-in</h3><p>Close OBS, run the official Windows installer, choose your OBS root and reopen OBS. The installer remembers the validated location for later updates.</p></article>
+          <article class="step"><h3>Select a VST3 effect</h3><p>Add <strong>VST 3.x Plug-in</strong> to an audio source. Installed effects are discovered automatically, or you can browse to a non-standard <code>.vst3</code> bundle.</p></article>
+          <article class="step"><h3>Open and tweak</h3><p>Click <strong>Open Plug-in Interface</strong>. The native vendor editor appears in front, and the host preserves plug-in state for recovery and future sessions.</p></article>
         </div>
       </div>
     </section>
 
-    <section id="trust">
-      <div class="wrap trust">
+    <section>
+      <div class="wrap safety">
         <div class="shield">
-          <div>
-            <svg viewBox="0 0 120 120" fill="none" aria-hidden="true"><path d="M60 10 22 29v29c0 25 15.7 44.8 38 54 22.3-9.2 38-29 38-54V29L60 10Z" fill="rgba(54,215,232,.08)" stroke="#65ddea" stroke-width="3"/><path d="m42 61 12 12 25-29" stroke="#86efac" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <strong>Verify. Don't disable security.</strong>
-            <p>The project publishes source code and SHA-256 checksums. It will never ask you to turn off Microsoft Defender or antivirus just to install it.</p>
+          <div><div class="shieldMark">🛡</div><strong>Crash isolation by architecture</strong><p>A plug-in problem is handled in an external helper boundary rather than intentionally putting third-party VST3 code in OBS itself.</p></div>
+        </div>
+        <div class="copyPanel">
+          <div class="kicker">Trust before marketing</div>
+          <h2>What “safe” means here</h2>
+          <p>“Safe” is not a promise that every computer can never crash. It describes a concrete process boundary and failure strategy.</p>
+          <div class="ticks">
+            <div class="tick"><span>✓</span><div><b>Third-party VST3 code stays outside OBS.</b> The VST3 module and vendor editor run in <code>obs-safe-vst3-host.exe</code>.</div></div>
+            <div class="tick"><span>✓</span><div><b>Scanner probing is isolated too.</b> Plug-in discovery does not intentionally load candidates into <code>obs64.exe</code>.</div></div>
+            <div class="tick"><span>✓</span><div><b>Audio fails open to dry.</b> When a valid wet result is unavailable in time, the filter is designed to keep the original audio instead of blocking the realtime path.</div></div>
+            <div class="tick"><span>✓</span><div><b>Recovery is bounded.</b> Helper failures use watchdog detection, state restoration and bounded backoff instead of an uncontrolled restart loop.</div></div>
           </div>
-        </div>
-        <div class="trust-copy">
-          <span class="kicker">Windows SmartScreen</span>
-          <h2>Why “Unknown publisher” can appear.</h2>
-          <p>The current public-preview Setup is not yet Authenticode code-signed. Windows SmartScreen can therefore show a publisher/reputation warning on some PCs. That warning alone is not a malware verdict, but you should still verify what you downloaded.</p>
-          <div class="trust-list">
-            <div class="trust-item"><span class="check">✓</span><div><b>Download from the official GitHub Release.</b><br>Do not use re-upload sites or random mirrors.</div></div>
-            <div class="trust-item"><span class="check">✓</span><div><b>Check SHA-256 before running.</b><br>Every release includes <code>SHA256SUMS.txt</code>.</div></div>
-            <div class="trust-item"><span class="check">✓</span><div><b>Keep Defender enabled.</b><br>If origin or checksum does not match, do not run the file.</div></div>
-          </div>
-          <div class="mini-code">Get-FileHash .\OBS-Safe-VST3-Host-v0.3.0-preview.2-Setup-x64.exe -Algorithm SHA256</div>
-          <div class="warn">Preview 2 Setup SHA-256: <code>5e4fda9798a864d0db4bb072c9006f4cbe5afa6c131fa81ab5fc201841d7b1e4</code></div>
-        </div>
-      </div>
-    </section>
-
-    <section id="compatibility">
-      <div class="wrap">
-        <div class="section-head">
-          <span class="kicker">Compatibility</span>
-          <h2>Know the scope before you install.</h2>
-          <p>The project stays explicit about what the current Windows Public Preview supports and what is still outside scope.</p>
-        </div>
-        <div class="compat">
-          <div class="compat-row"><div>Windows x64</div><div><span class="yes">Supported target</span></div></div>
-          <div class="compat-row"><div>VST3 audio effects</div><div><span class="yes">Supported</span> — mono/stereo, float32</div></div>
-          <div class="compat-row"><div>Installed VST3 discovery</div><div><span class="yes">Included</span> — rescan and custom browse are available</div></div>
-          <div class="compat-row"><div>Native plug-in UI</div><div><span class="yes">Supported when provided by the VST3</span></div></div>
-          <div class="compat-row"><div>VST2</div><div>Use the VST2 filter already provided by OBS</div></div>
-          <div class="compat-row"><div>VST3 instruments / MIDI</div><div><span class="no">Not supported</span></div></div>
-          <div class="compat-row"><div>32-bit VST3</div><div><span class="no">Not supported</span></div></div>
-          <div class="compat-row"><div>Sidechain / arbitrary multichannel</div><div><span class="later">Not yet</span></div></div>
-          <div class="compat-row"><div>Linux public package</div><div><span class="later">Not included in this Windows preview</span></div></div>
+          <div class="notice">Crash isolation is not a malware sandbox. Only install VST3 software from vendors you trust. <a href="safety.html">Read the exact safety boundary →</a></div>
         </div>
       </div>
     </section>
 
     <section>
       <div class="wrap">
-        <div class="section-head">
-          <span class="kicker">Evidence, not promises</span>
-          <h2>The release pipeline tests failure behavior too.</h2>
-          <p>Automated validation cannot certify every VST3 vendor in existence, but the release process intentionally checks more than “the code compiled.”</p>
+        <div class="sectionHead">
+          <div class="kicker">VST3 compatibility</div>
+          <h2>Built for audio effects, tested with real commercial plug-ins.</h2>
+          <p>The host is not tied to one vendor or a hand-written name whitelist. v0.5.0 targets Windows VST3 audio effects and conservatively filters explicit instrument-only classes from the OBS insert-effect list.</p>
         </div>
-        <div class="proof">
-          <div class="stat"><strong>57 / 57</strong><span>Steinberg Validator tests passed for the CI ADelay fixture</span></div>
-          <div class="stat"><strong>libobs</strong><span>Real OBS module-load and filter registration smoke test</span></div>
-          <div class="stat"><strong>dry</strong><span>Fail-open verified after forced helper termination</span></div>
-          <div class="stat"><strong>scan</strong><span>Scanner isolation tested against malformed/crashing probes</span></div>
+        <div class="brands" aria-label="Examples of real-machine tested vendors">
+          <span class="brandPill">iZotope Ozone / RX</span><span class="brandPill">FabFilter</span><span class="brandPill">Waves</span><span class="brandPill">Klevgrand</span><span class="brandPill">Neuro Audio</span><span class="brandPill">Process Audio</span>
         </div>
-        <p class="proof-note">The pipeline also verifies parameter-to-DSP delivery, real audio processing, state round-trip, repeated audio-slot processing, installer compilation, synthetic OBS installation, and release checksums. Real desktop testing across vendor GUIs, licensing systems, dynamic latency, and long sessions is why this remains a Public Preview.</p>
+        <div class="compat" style="margin-top:20px">
+          <div class="row"><div>Windows x64</div><div><span class="yes">Supported</span></div></div>
+          <div class="row"><div>OBS Studio</div><div><span class="yes">29.1+ compatibility floor</span>; release builds use pinned OBS/libobs validation.</div></div>
+          <div class="row"><div>VST3 audio effects</div><div><span class="yes">Supported</span> for the current mono/stereo Float32 host scope.</div></div>
+          <div class="row"><div>Instrument-only VST3 / MIDI</div><div><span class="no">Not supported</span>; instrument-only classes are intentionally excluded from the insert-effect list.</div></div>
+          <div class="row"><div>Sidechain / multiple buses</div><div><span class="warnTxt">Not fully supported yet</span>.</div></div>
+          <div class="row"><div>macOS / Linux packages</div><div><span class="no">Not currently shipped</span>.</div></div>
+        </div>
+        <div class="actions"><a class="btn secondary" href="compatibility.html">See compatibility details</a></div>
       </div>
     </section>
 
-    <section>
-      <div class="wrap">
-        <div class="section-head">
-          <span class="kicker">FAQ</span>
-          <h2>Questions users should not need to ask the developer twice.</h2>
-        </div>
-        <div class="faq">
-          <details><summary>Will this replace OBS's VST2 support?</summary><p>No. OBS already has a VST2 filter. This project exists for VST3 audio effects and keeps that scope clear.</p></details>
-          <details><summary>Does “isolated” mean I can safely load any random VST3?</summary><p>No. Crash isolation is not a malware/security sandbox. Only load VST3 plug-ins you trust. The separate helper process is designed to contain plug-in process crashes/hangs from the OBS process, not to make malicious software safe.</p></details>
-          <details><summary>I still see “Enabled”, “VST3 Class ID”, or “Live deadline fraction”. What happened?</summary><p>OBS is loading an older development copy. Run the current Preview 2 Setup again and confirm the exact OBS Studio folder you actually launch. Preview 2 also cleans up known legacy project-owned copies that can shadow the new module. An old filter instance name on the left may remain because OBS stores scene names; the right-side properties are the important check.</p></details>
-          <details><summary>My plug-in is not listed.</summary><p>Use <strong>Rescan Installed Plug-ins</strong>. Confirm it is a 64-bit VST3 <em>audio effect</em>. For non-standard locations, use <strong>Browse / Custom VST3</strong>.</p></details>
-          <details><summary>My VST3 has no graphical editor.</summary><p>Some plug-ins do not provide a native UI. The host can expose generic <strong>Plug-in Controls</strong> when available instead.</p></details>
-          <details><summary>What happens if a plug-in crashes while OBS is live?</summary><p>The VST3 runs in the isolated helper, not inside OBS. The bridge is designed to fail open to dry audio on helper/process failure or missed processing deadlines rather than deadlock the OBS audio callback. Automatic restart/recovery policy is still evolving, so reloading the filter or restarting OBS may be required after a failed third-party plug-in.</p></details>
-          <details><summary>Is Preview 2 “stable”?</summary><p>It is intentionally labeled <strong>Public Preview</strong>. Automated runtime and installer acceptance are strong, but universal VST3 compatibility requires broad real-world testing across many vendors, editors, licensing systems, and long sessions.</p></details>
-        </div>
-      </div>
-    </section>
-
-    <div class="wrap">
-      <section class="cta">
+    <section id="download">
+      <div class="wrap downloadBox">
         <div>
-          <h2>Try your VST3 in OBS—without putting it inside OBS.</h2>
-          <p>Start with the Smart Installer. If a plug-in behaves differently than expected, report the exact plug-in/version so the compatibility picture becomes more useful for everyone.</p>
+          <div class="kicker">Official download</div>
+          <h2>Start with the Windows installer.</h2>
+          <p>For most users, the installer is the simplest route. It validates the OBS root, installs only the project-owned files and registers a normal Windows uninstaller. A portable ZIP is available for manual or portable OBS setups.</p>
+          <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Open official stable release</a><a class="btn secondary" href="install.html">Installation steps</a></div>
         </div>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="https://github.com/masarray/obs-safe-vst3-host/releases/download/v0.3.0-preview.2/OBS-Safe-VST3-Host-v0.3.0-preview.2-Setup-x64.exe">Download Setup</a>
-          <a class="btn btn-secondary" href="https://github.com/masarray/obs-safe-vst3-host/issues">Report an issue</a>
+        <div class="releaseCard">
+          <strong>OBS Safe VST3 Host v0.5.0</strong>
+          <code>OBS-Safe-VST3-Host-v0.5.0-Setup-x64.exe</code>
+          <code>OBS-Safe-VST3-Host-v0.5.0-Windows-x64-Portable.zip</code>
+          <code>SHA256SUMS.txt</code>
+          <p class="small">Windows packages are currently not commercially Authenticode-signed, so SmartScreen may show Unknown publisher. Keep Windows security enabled and download only from the official GitHub release.</p>
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <div class="sectionHead"><div class="kicker">FAQ</div><h2>Questions people ask before trying VST3 in OBS</h2></div>
+        <div class="faq">
+          <details><summary>Does this add real VST3 support to OBS Studio?</summary><p>Yes. It adds a native OBS audio filter named <strong>VST 3.x Plug-in</strong> and hosts compatible VST3 audio effects through the project's external helper process.</p></details>
+          <details><summary>Will a bad VST3 crash OBS?</summary><p>The architecture is specifically designed to reduce that risk: third-party VST3 DSP and GUI code are not deliberately loaded inside <code>obs64.exe</code>. A helper failure can be detected and recovered while the filter keeps dry audio. That is a strong containment boundary, not a mathematical promise of zero crashes from every driver, OS or malicious-code failure.</p></details>
+          <details><summary>Does it support every VST3?</summary><p>It targets VST3 <strong>audio effects</strong>, not instruments or MIDI. Many normal commercial effects work, including real-machine-tested iZotope, FabFilter, Waves, Klevgrand, Neuro Audio and Process Audio examples. Advanced multi-bus, sidechain, arbitrary multichannel and Float64-only behavior are outside the complete current scope.</p></details>
+          <details><summary>Why does Windows show Unknown publisher?</summary><p>The current binaries are not commercially Authenticode-signed. Download only from the official GitHub Releases page and use the published SHA-256 checksums if you want to verify the exact file. Do not disable Defender or SmartScreen globally.</p></details>
+          <details><summary>Is this an official OBS or Steinberg product?</summary><p>No. It is an independent open-source project. OBS and VST are trademarks of their respective owners, and no endorsement is implied.</p></details>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <footer>
-    <div class="wrap footer-grid">
-      <div>OBS Safe VST3 Host · GPL-3.0-or-later · Independent open-source project.</div>
-      <div><a href="https://github.com/masarray/obs-safe-vst3-host">GitHub</a><a href="https://github.com/masarray/obs-safe-vst3-host/releases">Releases</a><a href="https://github.com/masarray/obs-safe-vst3-host/blob/main/README.md">README</a><a href="https://github.com/masarray/obs-safe-vst3-host/issues">Issues</a></div>
-    </div>
+  <footer class="footer">
+    <div class="wrap footerIn"><div>OBS Safe VST3 Host · open-source VST3 audio-effect hosting for OBS Studio</div><div class="footerLinks"><a href="https://github.com/masarray/obs-vst3">GitHub</a><a href="https://github.com/masarray/obs-vst3/releases/latest">Releases</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a></div></div>
   </footer>
 </body>
 </html>
