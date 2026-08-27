@@ -28,8 +28,16 @@ if ($LASTEXITCODE -ne 0 -or $ActualCommit -ne $ImguiCommit) {
 
 $License = Join-Path $ImguiRoot 'LICENSE.txt'
 if (-not (Test-Path $License)) { throw 'Dear ImGui LICENSE.txt missing' }
-if (-not (Select-String -Path $License -Pattern '^MIT License$' -Quiet)) {
-    throw 'Dear ImGui license is not the expected MIT license text'
+$LicenseText = Get-Content $License -Raw
+foreach ($RequiredClause in @(
+    'The MIT License (MIT)',
+    'Copyright (c) 2014-2026 Omar Cornut',
+    'Permission is hereby granted, free of charge',
+    'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND'
+)) {
+    if (-not $LicenseText.Contains($RequiredClause)) {
+        throw "Dear ImGui MIT license clause missing: $RequiredClause"
+    }
 }
 $LicenseHash = (Get-FileHash -Algorithm SHA256 $License).Hash.ToLowerInvariant()
 
