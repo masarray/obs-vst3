@@ -100,6 +100,7 @@ struct Filter {
     // actually published, not the possibly newer identity selected in the UI.
     std::string bridge_path;
     std::string bridge_class_id;
+    std::string last_startup_failure;
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
     std::atomic<std::uint32_t> observed_state_generation{0};
@@ -724,6 +725,7 @@ void restart_bridge(Filter* filter)
     const auto [path, class_id] = current_identity(filter);
 
     if (!filter->enabled.load(std::memory_order_relaxed) || path.empty()) {
+        filter->last_startup_failure.clear();
         publish_bridge_locked(filter, {});
         return;
     }
@@ -731,6 +733,9 @@ void restart_bridge(Filter* filter)
     const auto sample_rate = filter->sample_rate;
     const auto channels = filter->channels;
     if (channels == 0 || channels > safevst3::kMaxChannels) {
+        filter->last_startup_failure =
+            "Unsupported OBS channel layout (mono/stereo only; current channels=" +
+            std::to_string(channels) + ")";
         blog(LOG_WARNING, "[obs-safe-vst3] stable runtime supports mono/stereo only; current OBS layout has %u channels", channels);
         publish_bridge_locked(filter, {});
         return;
@@ -738,6 +743,7 @@ void restart_bridge(Filter* filter)
 
     const auto helper = helper_path();
     if (helper.empty() || !std::filesystem::exists(helper)) {
+        filter->last_startup_failure = "VST3 helper executable not found next to plugin binary";
         blog(LOG_ERROR, "[obs-safe-vst3] helper executable not found next to plugin binary");
         publish_bridge_locked(filter, {});
         return;
@@ -762,6 +768,7 @@ void restart_bridge(Filter* filter)
     if (!bridge) {
         if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
             return;
+        filter->last_startup_failure = error;
         blog(LOG_ERROR, "[obs-safe-vst3] failed to start isolated VST3 host: %s", error.c_str());
         publish_bridge_locked(filter, {});
         return;
@@ -794,6 +801,7 @@ void restart_bridge(Filter* filter)
         if (!bridge) {
             if (cancel.stop_requested() || filter->shutting_down.load(std::memory_order_acquire))
                 return;
+            filter->last_startup_failure = error;
             blog(LOG_ERROR, "[obs-safe-vst3] clean helper restart after rejected state failed: %s", error.c_str());
             publish_bridge_locked(filter, {});
             return;
@@ -806,6 +814,7 @@ void restart_bridge(Filter* filter)
     const std::uint32_t state_generation = bridge->state_dirty_generation();
     filter->observed_state_generation.store(state_generation, std::memory_order_release);
     filter->saved_state_generation.store(state_generation, std::memory_order_release);
+    filter->last_startup_failure.clear();
 
     blog(LOG_INFO, "[obs-safe-vst3] isolated VST3 helper ready: %s (%s, %u samples latency, %u/%u parameters exposed, state=%s)",
          path.c_str(), bridge->plugin_name().c_str(), bridge->latency_samples(),
@@ -1224,11 +1233,13 @@ obs_properties_t* filter_properties(void* data)
 
     bool running = false;
     std::string plugin_name;
+    std::string startup_failure;
     std::uint32_t latency_samples = 0;
     {
         std::lock_guard restart_lock(filter->restart_mutex);
         running = filter->bridge_owner && filter->bridge_owner->running() &&
                   filter->bridge_path == path && filter->bridge_class_id == class_id;
+        startup_failure = filter->last_startup_failure;
         if (running) {
             plugin_name = filter->bridge_owner->plugin_name();
             latency_samples = filter->bridge_owner->latency_samples();
@@ -1242,6 +1253,8 @@ obs_properties_t* filter_properties(void* data)
         status = plugin_name + " — Ready — " + std::to_string(latency_samples) + " samples latency";
     } else {
         status = "Plug-in unavailable — dry audio remains active";
+        if (!startup_failure.empty())
+            status += " — " + startup_failure;
     }
     obs_properties_add_text(props, kPluginStatus, status.c_str(), OBS_TEXT_INFO);
     return props;

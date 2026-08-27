@@ -18,6 +18,40 @@ std::string win_error(const char* what)
     stream << what << " failed (Win32 error " << GetLastError() << ')';
     return stream.str();
 }
+
+void activate_editor_window(HWND window) noexcept
+{
+    if (!window || !IsWindow(window))
+        return;
+
+    // The editor lives in the isolated helper process while the user's click
+    // originates in OBS. SetForegroundWindow alone is therefore allowed to be
+    // rejected by Windows foreground-lock rules. Temporarily join the current
+    // foreground input queue, then promote the editor to the top of the normal
+    // z-order. The TOPMOST transition is immediately undone: this is an
+    // activation boost, not a persistent always-on-top policy.
+    const HWND foreground = GetForegroundWindow();
+    const DWORD current_thread = GetCurrentThreadId();
+    const DWORD foreground_thread = foreground
+        ? GetWindowThreadProcessId(foreground, nullptr)
+        : 0;
+    const bool attached_input = foreground_thread != 0 &&
+                                foreground_thread != current_thread &&
+                                AttachThreadInput(current_thread, foreground_thread, TRUE) != FALSE;
+
+    ShowWindow(window, IsIconic(window) ? SW_RESTORE : SW_SHOW);
+
+    constexpr UINT position_flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW;
+    (void)SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, position_flags);
+    (void)SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, position_flags);
+    (void)BringWindowToTop(window);
+    (void)SetForegroundWindow(window);
+    (void)SetActiveWindow(window);
+    (void)SetFocus(window);
+
+    if (attached_input)
+        (void)AttachThreadInput(current_thread, foreground_thread, FALSE);
+}
 } // namespace
 
 NativeEditorWindow::~NativeEditorWindow()
@@ -62,8 +96,7 @@ bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
                               std::string& error)
 {
     if (window_ && view_) {
-        ShowWindow(window_, SW_SHOWNORMAL);
-        SetForegroundWindow(window_);
+        activate_editor_window(window_);
         return true;
     }
 
@@ -145,9 +178,8 @@ bool NativeEditorWindow::open(Steinberg::Vst::IEditController* controller,
     }
     attached_ = true;
 
-    ShowWindow(window_, SW_SHOWNORMAL);
     UpdateWindow(window_);
-    SetForegroundWindow(window_);
+    activate_editor_window(window_);
     return true;
 }
 

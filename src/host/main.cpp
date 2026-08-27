@@ -7,6 +7,7 @@
 #include "common/parameter_utils.hpp"
 #include "common/reload_component_transaction.hpp"
 #include "common/spsc_ring.hpp"
+#include "common/startup_error.hpp"
 #include "host/native_editor.hpp"
 #include "host/vst3_engine.hpp"
 #include "platform/windows/win_ipc.hpp"
@@ -1053,12 +1054,12 @@ public:
         engine_.close();
 
         std::string error;
-        if (!engine_.open(path_, class_id_, sample_rate_, channels_, error)) {
+        if (!engine_.open(path_, class_id_, sample_rate_, channels_,
+                          &component_handler_, error)) {
             if (!error.empty())
                 std::cerr << "VST3 full reload recreate: " << error << '\n';
             return false;
         }
-        engine_.set_component_handler(&component_handler_);
         return true;
     }
 
@@ -1458,9 +1459,20 @@ int wmain(int argc, wchar_t** argv)
     }
 
     auto* region = endpoint.region();
+    ParameterQueue control_to_dsp;
+    ParameterQueue dsp_to_control;
+    std::atomic<bool> feedback_resync_required{false};
+    NativeOverrideBuffer native_overrides;
+    ComponentHandler component_handler(
+        region, control_to_dsp, native_overrides,
+        endpoint.dsp_event(), endpoint.request_event());
+
     Vst3Engine engine;
-    if (!engine.open(vst_path, class_id, region->sample_rate, region->channels, error)) {
-        region->last_error = 1;
+    if (!engine.open(vst_path, class_id, region->sample_rate, region->channels,
+                     &component_handler, error)) {
+        InterlockedExchange(
+            &region->last_error,
+            static_cast<long>(safevst3::classify_startup_error(error)));
         InterlockedExchange(&region->host_status, static_cast<long>(HostStatus::Error));
         SetEvent(endpoint.ready_event());
         std::cerr << "VST3 init failed: " << error << '\n';
@@ -1469,15 +1481,6 @@ int wmain(int argc, wchar_t** argv)
 
     copy_text(region->plugin_name, kPluginNameBytes, engine.plugin_name());
     region->latency_samples = engine.latency_samples();
-
-    ParameterQueue control_to_dsp;
-    ParameterQueue dsp_to_control;
-    std::atomic<bool> feedback_resync_required{false};
-    NativeOverrideBuffer native_overrides;
-    ComponentHandler component_handler(
-        region, control_to_dsp, native_overrides,
-        endpoint.dsp_event(), endpoint.request_event());
-    engine.set_component_handler(&component_handler);
     NativeEditorWindow editor;
 
     if (!publish_parameter_catalog(region, engine, true)) {

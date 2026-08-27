@@ -6,7 +6,9 @@
 #include "common/io_restart_transaction.hpp"
 #include "common/latency_restart_transaction.hpp"
 #include "common/process_context_policy.hpp"
+#include "common/startup_error.hpp"
 #include "common/state_snapshot.hpp"
+#include "host/vst3_processing_compat.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
@@ -15,7 +17,7 @@
 #include "public.sdk/source/vst/hosting/hostclasses.h"
 #include "public.sdk/source/vst/hosting/module.h"
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
-#include "public.sdk/source/vst/hosting/plugprovider.h"
+#include "public.sdk/source/vst/hosting/connectionproxy.h"
 #include "public.sdk/source/vst/hosting/processdata.h"
 
 #include <array>
@@ -53,7 +55,23 @@ public:
               const std::string& class_id,
               std::uint32_t sample_rate,
               std::uint32_t channels,
+              Steinberg::Vst::IComponentHandler* component_handler,
+              StartupPhaseSink* startup_phase_sink,
               std::string& error);
+    bool open(const std::string& path,
+              const std::string& class_id,
+              std::uint32_t sample_rate,
+              std::uint32_t channels,
+              Steinberg::Vst::IComponentHandler* component_handler,
+              std::string& error)
+    {
+        StartupPhaseSink* sink = current_startup_phase_sink();
+        const bool opened = open(path, class_id, sample_rate, channels,
+                                 component_handler, sink, error);
+        if (sink)
+            set_current_startup_phase_sink(nullptr);
+        return opened;
+    }
     void close() noexcept;
     bool process(AudioSlot& slot) noexcept;
 
@@ -108,7 +126,9 @@ private:
     bool io_start_processing() noexcept override;
     void io_commit_layout(const IoLayout& layout, std::uint32_t latency_samples) noexcept override;
 
+    void report_startup_phase(StartupErrorCode phase) noexcept;
     bool configure_buses(std::uint32_t channels, std::string& error);
+    bool activate_configured_buses(std::string& error);
     bool collect_io_layout_candidate(IoLayout& layout) noexcept;
     bool enumerate_parameters(std::string& error);
     bool queue_parameter_impl(std::uint32_t id, double normalized, bool update_controller) noexcept;
@@ -120,16 +140,18 @@ private:
 
     Steinberg::IPtr<Steinberg::Vst::HostApplication> host_;
     VST3::Hosting::Module::Ptr module_;
-    Steinberg::IPtr<Steinberg::Vst::PlugProvider> provider_;
     Steinberg::IPtr<Steinberg::Vst::IComponent> component_;
     Steinberg::IPtr<Steinberg::Vst::IEditController> controller_;
-    Steinberg::FUnknownPtr<Steinberg::Vst::IAudioProcessor> processor_;
+    Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> component_connection_;
+    Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> controller_connection_;
+    CompatibleAudioProcessorPtr processor_;
     Steinberg::Vst::HostProcessData process_data_;
     Steinberg::Vst::ParameterChanges input_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
     Steinberg::Vst::ParameterChanges output_parameter_changes_{static_cast<Steinberg::int32>(kMaxParameters)};
     Steinberg::Vst::ProcessSetup process_setup_{};
     Steinberg::Vst::ProcessContext process_context_{};
     ProcessContextPolicy process_context_policy_{};
+    StartupPhaseSink* startup_phase_sink_ = nullptr;
     Steinberg::int32 main_input_bus_ = -1;
     Steinberg::int32 main_output_bus_ = -1;
     static constexpr std::size_t kMaxDynamicAudioBuses = 16;
@@ -155,6 +177,9 @@ private:
     std::uint32_t latency_samples_ = 0;
     Steinberg::int64 sample_position_ = 0;
     bool parameter_changes_pending_ = false;
+    bool component_initialized_ = false;
+    bool controller_initialized_ = false;
+    bool controller_is_component_ = false;
 };
 
 } // namespace safevst3

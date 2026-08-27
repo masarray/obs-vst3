@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include "common/protocol.hpp"
+#include "common/startup_error.hpp"
 #include "common/state_snapshot.hpp"
 
 #include <windows.h>
@@ -137,6 +138,32 @@ private:
     std::atomic<std::uint64_t> deadline_misses_{0};
 };
 
+class SharedRegionStartupPhaseSink final : public StartupPhaseSink {
+public:
+    void bind(SharedAudioRegion* region) noexcept { region_ = region; }
+
+    void publish(StartupErrorCode phase) noexcept override
+    {
+        if (!region_)
+            return;
+        InterlockedExchange(&region_->last_error, static_cast<long>(phase));
+        MemoryBarrier();
+    }
+
+    void publish_vendor_result(std::int32_t result) noexcept override
+    {
+        if (!region_)
+            return;
+        InterlockedExchange(&region_->startup_vendor_result, static_cast<long>(result));
+        MemoryBarrier();
+        InterlockedExchange(&region_->startup_vendor_result_valid, 1);
+        MemoryBarrier();
+    }
+
+private:
+    SharedAudioRegion* region_ = nullptr;
+};
+
 class WinHostEndpoint {
 public:
     WinHostEndpoint() = default;
@@ -148,7 +175,12 @@ public:
     bool open(const BridgeNames& names, std::string& error);
     void close() noexcept;
 
-    SharedAudioRegion* region() const noexcept { return region_; }
+    SharedAudioRegion* region() const noexcept
+    {
+        startup_phase_sink_.bind(region_);
+        set_current_startup_phase_sink(region_ ? &startup_phase_sink_ : nullptr);
+        return region_;
+    }
     StateTransferRegion* state_region() const noexcept { return state_region_; }
     HANDLE request_event() const noexcept { return request_event_; }
     HANDLE dsp_event() const noexcept { return dsp_event_; }
@@ -166,6 +198,7 @@ private:
     HANDLE state_event_ = nullptr;
     SharedAudioRegion* region_ = nullptr;
     StateTransferRegion* state_region_ = nullptr;
+    mutable SharedRegionStartupPhaseSink startup_phase_sink_{};
 };
 
 } // namespace safevst3

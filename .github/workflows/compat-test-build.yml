@@ -7,6 +7,7 @@ on:
       - 'CMakeLists.txt'
       - 'src/obs-plugin/obs_compat_floor.hpp'
       - 'src/obs-plugin/plugin.cpp'
+      - 'src/host/native_editor.cpp'
       - 'src/scanner/main.cpp'
       - 'installer/windows/obs-safe-vst3.iss'
       - 'data/locale/en-US.ini'
