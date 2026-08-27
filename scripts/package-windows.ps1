@@ -130,6 +130,14 @@ pause
 '@
 Set-Content -Path (Join-Path $PortableStage 'UNINSTALL-MANUAL.cmd') -Value $Uninstall -Encoding ASCII
 
+# UI-0 is a non-shipping dependency/window proof. Even when its standalone
+# smoke executable exists elsewhere in the build tree, neither portable nor
+# installer staging may acquire it implicitly.
+$Ui0Leak = Get-ChildItem -Path $PortableStage, $InstallerPayload -Filter 'obs-safe-vst3-rack-ui-smoke*' -File -Recurse -ErrorAction SilentlyContinue
+if ($Ui0Leak) {
+    throw "UI-0 smoke proof leaked into a shipping package: $($Ui0Leak.FullName -join ', ')"
+}
+
 $PortableZip = Join-Path $OutDir "OBS-Safe-VST3-Host-v$Version-Windows-x64-Portable.zip"
 Remove-Item -Force -ErrorAction SilentlyContinue $PortableZip
 Compress-Archive -Path (Join-Path $PortableStage '*') -DestinationPath $PortableZip -CompressionLevel Optimal
