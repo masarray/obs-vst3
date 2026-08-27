@@ -7,6 +7,7 @@ on:
       - 'CMakeLists.txt'
       - 'src/obs-plugin/obs_compat_floor.hpp'
       - 'src/obs-plugin/plugin.cpp'
+      - 'src/obs-plugin/properties_ux.cpp'
       - 'src/host/native_editor.cpp'
       - 'src/scanner/main.cpp'
       - 'installer/windows/obs-safe-vst3.iss'
@@ -72,16 +73,22 @@ jobs:
             Where-Object { Test-Path (Join-Path $_.FullName 'include\simde\simde-common.h') } |
             Select-Object -First 1
           if (-not $ObsDepsPrefix) { throw 'OBS dependency prefix missing.' }
+          $QtPrefix = Get-ChildItem -Path $ObsDepsRoot -Directory -Filter 'obs-deps-qt6-*-x64' -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'lib\cmake\Qt6\Qt6Config.cmake') } |
+            Select-Object -First 1
+          if (-not $QtPrefix) { throw 'OBS Qt6 dependency prefix missing.' }
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
           "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
           "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT
+          "qt_prefix=$($QtPrefix.FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Using OBS Qt6 dependency prefix: $($QtPrefix.FullName)"
 
       - name: Configure compatibility build
         shell: pwsh
         run: |
           cmake -S . -B build/compat -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
-            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }}" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }};${{ steps.libobs.outputs.qt_prefix }}" `
             -DSAFEVST3_STATIC_MSVC_RUNTIME=ON `
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
