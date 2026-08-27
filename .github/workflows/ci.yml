@@ -157,19 +157,28 @@ jobs:
             throw 'OBS public dependency prefix containing include\simde\simde-common.h was not found.'
           }
 
+          $QtPrefix = Get-ChildItem -Path $ObsDepsRoot -Directory -Filter 'obs-deps-qt6-*-x64' -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'lib\cmake\Qt6\Qt6Config.cmake') } |
+            Select-Object -First 1
+          if (-not $QtPrefix) {
+            throw 'OBS Qt6 dependency prefix containing lib\cmake\Qt6\Qt6Config.cmake was not found.'
+          }
+
           "dir=$($Config.Directory.FullName)" >> $env:GITHUB_OUTPUT
           "prefix=$SdkPrefix" >> $env:GITHUB_OUTPUT
           "deps_prefix=$($ObsDepsPrefix.FullName)" >> $env:GITHUB_OUTPUT
+          "qt_prefix=$($QtPrefix.FullName)" >> $env:GITHUB_OUTPUT
           Write-Host "Using staged libobs package: $($Config.FullName)"
           Write-Host "Using staged w32-pthreads package: $($W32PthreadsConfig.FullName)"
           Write-Host "Using OBS public dependency prefix: $($ObsDepsPrefix.FullName)"
+          Write-Host "Using OBS Qt6 dependency prefix: $($QtPrefix.FullName)"
 
       - name: Configure public-preview module
         shell: pwsh
         run: |
           cmake -S . -B build/module -A x64 `
             "-Dlibobs_DIR=${{ steps.libobs.outputs.dir }}" `
-            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }}" `
+            "-DCMAKE_PREFIX_PATH=${{ steps.libobs.outputs.prefix }};${{ steps.libobs.outputs.deps_prefix }};${{ steps.libobs.outputs.qt_prefix }}" `
             -DSAFEVST3_BUILD_OBS_PLUGIN=ON `
             -DSAFEVST3_BUILD_TESTS=ON
 
