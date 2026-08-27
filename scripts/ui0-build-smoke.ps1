@@ -43,7 +43,8 @@ $LicenseHash = (Get-FileHash -Algorithm SHA256 $License).Hash.ToLowerInvariant()
 
 $SourceDir = Join-Path $RepoRoot 'tests\ui0'
 $CmakeBuild = Join-Path $BuildRoot 'cmake'
-cmake -S $SourceDir -B $CmakeBuild -A x64 "-DIMGUI_SOURCE_DIR=$ImguiRoot"
+$ImguiCmakeRoot = $ImguiRoot.Replace('\', '/')
+cmake -S $SourceDir -B $CmakeBuild -A x64 "-DIMGUI_SOURCE_DIR=$ImguiCmakeRoot"
 if ($LASTEXITCODE -ne 0) { throw "UI-0 CMake configure failed: $LASTEXITCODE" }
 cmake --build $CmakeBuild --config $Configuration --target obs-safe-vst3-rack-ui-smoke --parallel
 if ($LASTEXITCODE -ne 0) { throw "UI-0 build failed: $LASTEXITCODE" }
