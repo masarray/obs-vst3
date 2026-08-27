@@ -28,11 +28,11 @@ target_include_directories(ui0-dear-imgui PUBLIC
     "${IMGUI_SOURCE_DIR}"
     "${IMGUI_SOURCE_DIR}/backends"
 )
-target_compile_definitions(ui0-dear-imgui PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(ui0-dear-imgui PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(ui0-dear-imgui PUBLIC d3d11 dxgi dwmapi)
 
 add_executable(obs-safe-vst3-rack-ui-smoke WIN32 rack_ui_smoke.cpp)
-target_compile_definitions(obs-safe-vst3-rack-ui-smoke PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(obs-safe-vst3-rack-ui-smoke PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(obs-safe-vst3-rack-ui-smoke PRIVATE ui0-dear-imgui d3d11 dxgi dwmapi)
 
 set_target_properties(obs-safe-vst3-rack-ui-smoke PROPERTIES
