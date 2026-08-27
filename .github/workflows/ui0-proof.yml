@@ -1,0 +1,60 @@
+name: UI-0 ImGui Isolation Proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ui0-proof.yml'
+      - 'scripts/ui0-build-smoke.ps1'
+      - 'tests/ui0/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui0-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  imgui-win32-d3d11:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run pinned helper-only UI smoke
+        shell: pwsh
+        run: .\scripts\ui0-build-smoke.ps1 -BuildDir 'build/ui0' -Configuration Release
+
+      - name: Verify proof has no VST3 or OBS source coupling
+        shell: pwsh
+        run: |
+          $Source = Get-Content 'tests\ui0\rack_ui_smoke.cpp' -Raw
+          $Cmake = Get-Content 'tests\ui0\CMakeLists.txt' -Raw
+          foreach ($Forbidden in @('vst3_engine', 'pluginterfaces/', 'public.sdk/', 'obs-module.h', 'libobs')) {
+            if ($Source.Contains($Forbidden) -or $Cmake.Contains($Forbidden)) {
+              throw "UI-0 proof leaked forbidden production/VST3 dependency token: $Forbidden"
+            }
+          }
+          if ($Cmake -notmatch '\bd3d11\b' -or $Cmake -notmatch 'imgui_impl_win32\.cpp' -or $Cmake -notmatch 'imgui_impl_dx11\.cpp') {
+            throw 'UI-0 proof does not explicitly build the Win32 + DirectX 11 backend pair'
+          }
+
+      - name: Publish UI-0 size and pin evidence
+        shell: pwsh
+        run: |
+          $Evidence = Get-Content 'build\ui0\ui0-evidence.json' -Raw | ConvertFrom-Json
+          Write-Host "imgui_tag=$($Evidence.imgui_tag)"
+          Write-Host "imgui_commit=$($Evidence.imgui_commit)"
+          Write-Host "imgui_license=$($Evidence.imgui_license)"
+          Write-Host "imgui_license_sha256=$($Evidence.imgui_license_sha256)"
+          Write-Host "smoke_bytes=$($Evidence.smoke_bytes)"
+          if ($Evidence.imgui_commit -ne '01380c579715e62fb9a8d6ec0502c4ea83bfde6e') { throw 'Unexpected Dear ImGui commit in evidence' }
+          if ($Evidence.imgui_license -ne 'MIT') { throw 'Unexpected Dear ImGui license in evidence' }
+
+      - name: Upload non-shipping UI-0 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui0-imgui-proof-${{ github.sha }}
+          path: build/ui0/ui0-evidence.json
+          if-no-files-found: error
+          retention-days: 14
