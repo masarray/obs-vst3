@@ -2,7 +2,7 @@
 
 **Status:** Research input for Rack v2 execution  
 **Date:** 2026-08-27  
-**Implementation authority:** ADR-0002 + Execution Spec, not this document alone
+**Implementation authority:** ADR-0002 + ADR-0003 + Execution Spec, not this document alone
 
 ---
 
@@ -14,66 +14,152 @@ The question is not:
 
 The question is:
 
-> “How do we add a professional multi-VST3 Rack to OBS while preserving the product's strongest advantage: simple workflow, crash isolation, bounded realtime behavior and recoverable user state?”
+> “How do we add a professional graphical multi-VST3 Rack to OBS while preserving the product's strongest advantage: simple workflow, crash isolation, bounded realtime behavior and recoverable user state?”
 
 This research deliberately looks at mature hosts for **patterns**, not source-code copying.
 
+The most important synthesis is now:
+
+> **Use atkAudio/Element-style dedicated host-window workflow, but keep that complete Rack editor/runtime outside `obs64.exe`.**
+
 ---
 
-## 2. Kushview Element
+## 2. atkAudio PluginHost2 — the closest OBS product reference
+
+Repository reviewed: `https://github.com/atkAudio/PluginForObsRelease`
+
+Relevant source areas reviewed:
+
+- `src/plugin_host2.cpp`
+- `src/core/atkaudio/PluginHost2/PluginHost2.cpp`
+- `src/core/atkaudio/PluginHost2/PluginHost2.h`
+- `src/core/atkaudio/PluginHost2/Editor/MainHostWindow.*`
+- `src/core/atkaudio/PluginHost2/Editor/GraphEditorPanel.*`
+- `src/core/atkaudio/PluginHost2/PluginGraph.*`
+- `src/core/atkaudio/atkAudioModule.h`
+- `src/core/atkaudio/MessagePump.cpp`
+- `src/core/atkaudio/SandboxedPluginScanner.*`
+
+### 2.1 What atkAudio proves about OBS workflow
+
+atkAudio PluginHost2 uses an excellent product split for complex hosting:
+
+```text
+OBS Properties
+-> Open Filter Graph
+-> dedicated host window
+-> graphical plugin workflow
+```
+
+Its OBS Properties surface is deliberately tiny while `MainHostWindow`, a dedicated JUCE `DocumentWindow`, owns graph editing, plugin menus/listing, file/state workflow and plug-in windows.
+
+This directly validates the idea that a professional Rack does **not** need to fit inside OBS Properties.
+
+### 2.2 What atkAudio proves about graphical implementation velocity
+
+Its graph editor uses normal host-GUI primitives:
+
+- dedicated top-level window;
+- plugin-list browser;
+- node/card components;
+- connector/pin components;
+- drag/drop;
+- popup menus;
+- vendor plug-in windows;
+- persistent host-window settings.
+
+The lesson is product architecture: once UI is a dedicated application-like window, graphical Rack workflow is straightforward compared with forcing complex controls into `obs_properties`.
+
+### 2.3 Critical safety difference
+
+Do **not** copy atkAudio's process topology.
+
+In PluginHost2, the OBS filter owns a `PluginHost2` object directly and `filter_audio` invokes `pluginHost2->process(...)`. JUCE/host UI lifecycle is integrated with OBS/Qt's process/message loop.
+
+That is a valid design choice for atkAudio, but it is not our product differentiator.
+
+OBS Safe VST3 must preserve:
+
+```text
+obs64.exe
+   |
+   | bounded IPC
+   v
+isolated Rack helper
+   |-- graphical Rack editor
+   |-- VST3 controller/editor
+   `-- Rack DSP
+```
+
+Thus we copy **thin OBS entry point + dedicated host window**, but keep the window/runtime in the helper process.
+
+### 2.4 Scanner lesson
+
+atkAudio has an isolated scanner path, but the reviewed PluginHost2 plugin-list code can fall back to in-process scanning when the sandboxed scanner is unavailable.
+
+Our rule remains stronger:
+
+- scanner/probe stays isolated;
+- no unsafe in-process vendor scan fallback in OBS or Rack editor process path.
+
+### 2.5 Licensing/source rule
+
+atkAudio source is reference material only. Do not copy its graph/editor implementation.
+
+Implement the product pattern independently against our own runtime/command/snapshot model.
+
+---
+
+## 3. Kushview Element
 
 Repository: `https://github.com/kushview/element`
 
-Element is a mature C++/JUCE plugin host with VST/VST3, MIDI and graph capabilities.
+Element is a mature C++ plugin host with a rich engine/UI separation.
 
-### 2.1 Useful architecture patterns
+### 3.1 Useful architecture patterns
 
 Element separates several concerns that should also remain separate in our Rack:
 
 - **Processor/runtime abstraction** — one processing object has lifecycle, ports, latency, bypass and render behavior.
-- **Graph topology** — nodes and connections are separate from the processor implementation.
-- **Render-plan construction** — the graph computes a sequence of render operations instead of rediscovering topology inside every audio block.
-- **Shared-buffer planning** — rendering reuses buffers according to the precomputed execution plan.
-- **Latency propagation** — graph construction accounts for node latency.
-- **State model vs runtime** — Element's project guidance separates persistent model state from the actual processor/runtime object.
-- **message-thread vs audio-thread discipline** — configuration/state work is marshalled away from the audio thread.
-- **testable engine core** — engine behavior is intentionally structured so it can be exercised without real hardware.
+- **Graph topology** — nodes and connections are separate from processor implementation.
+- **Render-plan construction** — topology becomes a prepared sequence instead of being rediscovered inside every block.
+- **Shared-buffer planning** — rendering reuses buffers according to a precomputed plan.
+- **Latency propagation** — latency is explicit engine metadata.
+- **State model vs runtime** — persistent state is separate from live processor ownership.
+- **message-thread vs audio-thread discipline** — configuration/UI work is off the audio thread.
+- **window manager** — plug-in editor windows are managed separately from graph/runtime objects.
+- **testable engine core** — engine behavior can be exercised without real hardware/UI.
 
-Relevant Element source areas reviewed:
+Relevant source areas reviewed include graph/runtime and window-management code such as `src/ui/windowmanager.cpp`.
 
-- `src/engine/graphnode.hpp`
-- `src/engine/graphbuilder.hpp`
-- `include/element/processor.hpp`
-- `include/element/session.hpp`
-- `CLAUDE.md`
-
-### 2.2 What we should take from Element
+### 3.2 What we should take from Element
 
 1. A protocol-neutral **HostedPlugin** runtime seam.
 2. Stable IDs independent of visual order.
 3. Topology and processing plan as separate concepts.
-4. Build/validate a new plan off the realtime path.
+4. Build/validate a new plan off realtime path.
 5. Latency as explicit runtime metadata.
 6. State representation separate from live processor ownership.
-7. Deterministic engine tests independent of OBS UI.
+7. Dedicated window-management responsibility.
+8. Deterministic engine tests independent of OBS UI.
 
-### 2.3 What we should NOT take into Rack v2
+### 3.3 What we should NOT take into Rack v2
 
 Do not copy Element's full graph product shape.
 
 For v2 we do **not** need:
 
 - arbitrary cables;
-- user-created node graph;
+- user-created routing graph;
 - MIDI graph;
 - nested graph processing;
 - arbitrary audio/CV ports;
 - parallel branches;
-- graph editor UI.
+- embedded vendor editors.
 
-A free-form graph would multiply the state space before the serial-chain safety contract is proven.
+The Rack Editor may be graphical while the engine topology remains serial.
 
-### 2.4 Key translation for our project
+### 3.4 Key translation
 
 Element concept:
 
@@ -84,107 +170,147 @@ Graph -> nodes -> connections -> build rendering sequence -> render
 Our v2 translation:
 
 ```text
-Rack topology -> ordered slots -> build immutable chain generation -> serial render
+Rack UI -> ordered stable slot IDs -> build immutable chain generation -> serial render
 ```
 
-We preserve the **engine discipline** but drastically reduce the product topology.
+The graphical editor is a better view/controller over this simple topology, not permission to turn R1 into a graph engine.
 
 ---
 
-## 3. Cantabile
+## 4. Cantabile
 
-Official product/documentation reviewed from Cantabile's rack, routing and state concepts.
-
-### 3.1 Useful product patterns
-
-Cantabile's strongest lesson is not a specific C++ architecture; it is **how a live host presents complexity**.
+Cantabile's strongest lesson is how a live host presents complexity.
 
 Useful concepts:
 
-- a Rack is an understandable **black box**;
-- the normal user works with plugins and signal flow, not implementation details;
-- ports/routes exist, but advanced routing does not need to dominate the basic workflow;
-- rack/song states preserve reusable configuration;
-- reusable racks reduce repeated setup work;
-- default insertion/routing should be sensible instead of requiring manual wiring for the common case.
+- Rack is an understandable **black box**;
+- normal users work with plug-ins and signal flow, not implementation details;
+- reusable rack states/configurations reduce repeated setup work;
+- advanced routing can exist without dominating the default workflow;
+- predictable recall is a core live-performance feature.
 
-### 3.2 What we should take
+### Translation to our v2
 
-- Rack is a **user-facing unit**, not merely an array of plugins.
-- State and reuse are product features, not engineering afterthoughts.
-- A simple chain must work without exposing a patchbay.
-- Advanced routing can arrive later without forcing the initial Rack into a graph UI.
+- the dedicated Rack Editor shows one clear top-to-bottom serial lane;
+- users never need cables for the common case;
+- Rack Preset is a first-class reusable artifact;
+- later routing/sidechain can add a separate advanced view without replacing the basic Rack lane.
 
-### 3.3 What we should not copy yet
-
-- linked/embedded rack complexity;
-- arbitrary route matrix;
-- live bindings/triggers breadth;
-- MIDI route semantics;
-- large state/switching model.
-
-Those may inspire post-v2 features, but are not prerequisites for a world-class OBS serial Rack.
+Do not copy linked/embedded rack complexity or large live-state semantics into v2.
 
 ---
 
-## 4. Gig Performer
+## 5. Gig Performer
 
-Gig Performer is a live-performance host organized around rackspaces, wiring and performance controls.
-
-### 4.1 Useful product patterns
+Useful product patterns:
 
 - **configuration view and performance view are different jobs**;
-- a reusable rackspace is more valuable than forcing users to reconstruct a chain;
+- reusable rackspaces are more valuable than reconstructing chains;
 - live software benefits from fast, predictable recall;
-- the audio topology can be sophisticated internally while the performance surface remains simple.
+- sophisticated topology can coexist with a simple performance surface.
 
-### 4.2 Translation to OBS Safe VST3
+### Translation
 
 For v2:
 
-- OBS Properties is the **configuration surface**;
-- native vendor editors remain the detailed plugin-control surface;
-- Rack Presets are the reusable configuration artifact;
-- a future dedicated live/performance panel can be added only after the Rack runtime is stable.
-
-Do not make v2 depend on a performance dashboard.
+- Rack Editor is the configuration surface;
+- vendor editors are detailed plug-in-control surfaces;
+- Presets are reusable Rack configuration;
+- OBS Properties is merely launcher/status;
+- a future performance/macros panel is post-v2.
 
 ---
 
-## 5. Carla
+## 6. Carla
 
 Carla demonstrates both Rack and Patchbay modes and supports plugin bridging.
 
-### 5.1 Useful patterns
+Useful lessons:
 
-- Rack and Patchbay are legitimately different user modes.
-- Bridging can isolate plugins or formats.
-- A patchbay becomes valuable once routing is a primary problem.
+- Rack and Patchbay are legitimately different user modes;
+- bridging can isolate plugins/formats;
+- patchbay becomes valuable only when routing is the primary user problem.
 
-### 5.2 Warning for this project
+Warning for this project:
 
-Every extra process boundary, routing mode and bridge protocol adds:
+Every extra process boundary/routing mode adds:
 
-- more failure states;
-- more latency accounting;
-- more synchronization;
-- more persistence complexity;
-- more diagnostics;
-- more UI states.
+- failure states;
+- latency accounting;
+- synchronization;
+- persistence complexity;
+- diagnostics;
+- UI states.
 
-OBS Safe VST3 already has a strong outer isolation boundary: **OBS vs helper**.
+Our strong outer isolation boundary is already **OBS vs Rack helper**.
 
-For v2, adding an IPC boundary between every serial plugin would solve a problem we have not yet proven is worth the cost.
-
-### 5.3 Decision
-
-Keep one Rack helper process for v2. Revisit per-slot processes only after real crash data shows that whole-rack helper restart/quarantine is insufficient.
+For v2, one helper process plus a serial chain remains the best tradeoff. Revisit per-slot processes only if measured crash data proves whole-Rack restart/quarantine insufficient.
 
 ---
 
-## 6. Matt Pocock engineering workflow applied to this repository
+## 7. GUI toolkit research
 
-The useful part of the Matt Pocock workflow is not a magic command name; it is **context discipline and vertical execution**.
+The dedicated editor decision does **not** imply that the OBS module should link to a large GUI framework.
+
+### 7.1 JUCE
+
+JUCE is an excellent technical reference because atkAudio and Element demonstrate its suitability for plugin-host windows.
+
+However, current JUCE releases are dual licensed under AGPLv3 or a commercial JUCE licence. This repository currently uses GPL-3.0.
+
+Therefore:
+
+- do not casually vendor JUCE into the public product;
+- do not change project licensing merely to get a UI toolkit;
+- using JUCE requires a separate licensing/dependency decision.
+
+### 7.2 Dear ImGui
+
+Dear ImGui is the preferred v2 Windows UI candidate because:
+
+- MIT licensed;
+- small and self-contained;
+- official Win32 platform backend;
+- DirectX 11 renderer backend;
+- well suited to content-creation/tool UI;
+- fast drag/drop/search/card iteration;
+- no dependency on OBS Qt.
+
+For v2, use a pinned upstream version/commit and only the modules/backends required by the helper editor.
+
+### 7.3 Why not private OBS Qt
+
+Prior project evidence already showed that custom Qt integration in the OBS module can compromise the minimum OBS loader/compatibility floor.
+
+The new architecture avoids the problem rather than trying another private-widget trick.
+
+### 7.4 Why not native Win32-only immediately
+
+Native Win32/Direct2D is the fallback when dependency evidence requires it, but implementing a polished rack/browser/drag workflow manually would add more project code and slow product iteration.
+
+Use the UI-0 gate to prove Dear ImGui early; fall back only with evidence.
+
+---
+
+## 8. Existing project readiness for a helper-owned editor
+
+The current Single helper already owns native VST editor HWNDs and pumps Windows messages on its control/editor path.
+
+This means the project already has proven concepts for:
+
+- helper-owned top-level windows;
+- VST3 `IPlugView` attachment to helper HWND;
+- focus/foreground handling across OBS/helper process boundary;
+- message pumping separate from DSP worker;
+- closing/hiding vendor UI without unloading audio runtime.
+
+The Rack Editor should build on those ownership lessons while remaining a separate v2 helper implementation.
+
+Do not move the current Single native editor into OBS or rewrite it as part of UI-0/R0.
+
+---
+
+## 9. Matt Pocock engineering workflow applied to this repository
 
 Use this sequence:
 
@@ -198,136 +324,110 @@ RESEARCH
   -> EXACT-HEAD QUALIFICATION
 ```
 
-### 6.1 Research
+### Research
 
 Before coding a behavior:
 
-- find the current repository fixed point;
+- establish current repository fixed point;
 - read authoritative product/architecture docs;
-- inspect current code at the relevant seam;
-- research external API behavior when uncertain;
-- resolve architectural uncertainty before implementation.
+- inspect actual code at the relevant seam;
+- research external API/dependency behavior only when uncertain;
+- resolve architecture uncertainty before implementation.
 
-### 6.2 Spec
+### Spec
 
-The spec must define:
+Define:
 
 - observable behavior;
-- scope and non-goals;
-- ownership/threading boundary;
+- scope/non-goals;
+- ownership/threading;
 - failure behavior;
 - persistence semantics;
 - test seam;
 - exact acceptance gate.
 
-### 6.3 Tickets as tracer bullets
+### Tracer bullets
 
-Each ticket proves one user-visible or architecture-critical vertical behavior end-to-end.
+Each ticket proves one vertical behavior.
 
-Bad ticket:
+Bad:
 
-> “Build Rack engine.”
+> “Build Rack GUI.”
 
-Good ticket:
+Good:
 
-> “Two deterministic Gain plugins process in serial through the separate Rack helper; Gain A then Gain B produces the expected output, total latency is reported, and killing the Rack helper causes bounded dry output in OBS.”
+> “The isolated helper-only Rack editor shell renders three snapshot-driven dummy slots, drag reorder emits a command without mutating the model directly, repeated open/close teardown is clean, and the OBS module PE dependencies remain unchanged.”
 
-Every ticket states `Blocked by:` dependencies.
+### Fresh context
 
-### 6.4 Fresh context per implementation ticket
+One unblocked ticket per thread. Stop after acceptance/evidence is recorded.
 
-Do not carry one enormous conversation through R0–R5.
+### Test-driven implementation
 
-A new implementation thread reads the repository source of truth, takes **one unblocked ticket**, establishes a fresh exact fixed point and finishes only that ticket.
-
-This prevents:
-
-- stale assumptions;
-- accidental scope expansion;
-- old failed experiments influencing architecture;
-- “while we are here” refactors.
-
-### 6.5 Test-driven implementation
-
-For every behavior where a deterministic seam exists:
+Where a deterministic seam exists:
 
 ```text
-write failing test
--> implement minimum production change
--> make focused test green
--> run surrounding regressions
--> refactor only while green
+failing test
+-> minimum implementation
+-> focused green
+-> surrounding regressions
+-> refactor while green
 ```
 
-The first Rack audio tests should use deterministic test processors/plugins, not commercial plugins.
+Commercial VST3s remain qualification evidence, not the first correctness oracle.
 
-Commercial plugins are qualification evidence after deterministic engine behavior is proven.
-
-### 6.6 Fixed-point code review
-
-Review from the ticket's declared base SHA to the exact candidate head.
+### Fixed-point review
 
 Review two dimensions separately:
 
-**Standards review**
-- safety invariants;
-- realtime discipline;
-- ownership/threading;
-- protocol separation;
-- lifecycle correctness;
-- persistence atomicity;
-- OBS Properties ownership;
-- compatibility floor.
+**Standards** — safety, realtime, ownership, protocol, persistence, compatibility.
 
-**Spec review**
-- did this ticket implement exactly the promised behavior?
-- were all acceptance tests actually executed?
-- did implementation accidentally add out-of-scope features?
+**Spec** — exact promised behavior, acceptance and non-goals.
 
-If the head changes after review, old final qualification is no longer authorization for the new head.
+A changed source head invalidates final qualification tied to an older head.
 
 ---
 
-## 7. Competitive synthesis
+## 10. Competitive synthesis
 
-| Topic | Element | Cantabile | Gig Performer | Carla | OBS Safe VST3 v2 decision |
-|---|---|---|---|---|---|
-| Core topology | graph | racks + routes | rackspaces + wiring | rack/patchbay | **serial chain** |
-| Runtime abstraction | strong processor/node model | product-oriented | product-oriented | host/bridge oriented | **protocol-neutral HostedPlugin** |
-| Render planning | graph sequence | internal | internal | internal | **immutable serial chain generation** |
-| Buffer strategy | shared/reused | internal | internal | internal | **preallocated ping-pong** |
-| Latency | graph-aware | live host aware | live host aware | host aware | **sum active serial slots** |
-| Reuse | session/model | rack/song states | rackspace/favorites | projects | **Session Snapshot + Rack Preset** |
-| Live UX | graph/editor rich | simple rack first | performance-oriented | technical | **vertical signal lane** |
-| Advanced routing | yes | yes | yes | yes | **defer post-v2** |
-| MIDI/instruments | yes | yes | yes | yes | **defer post-v2** |
-| Isolation priority | not OBS-specific | live stability | live stability | bridges available | **OBS/helper isolation is core product law** |
-
----
-
-## 8. Primary strategic conclusion
-
-The fastest path to a professional Rack is **not** to build more features at once.
-
-It is to freeze the v2 problem to this:
-
-> Build the smallest serial Rack that can host multiple real VST3 effects, preserve all state, survive a bad slot without losing OBS or the user's chain, and let the chain be reused as a named preset.
-
-Everything else—routing, sidechain, MIDI, instruments, graph UI, nested racks—becomes easier after that runtime and document model are stable.
+| Topic | atkAudio PluginHost2 | Element | Cantabile/Gig Performer | OBS Safe VST3 v2 decision |
+|---|---|---|---|---|
+| OBS entry surface | thin Open Filter Graph | standalone host | standalone live host | **thin Open Rack/status** |
+| Primary UI | dedicated graphical host window | dedicated host/graph UI | rack/live views | **helper-owned graphical serial Rack** |
+| Runtime topology | graph + device/MIDI breadth | graph | routes/rackspaces | **serial chain v2** |
+| OBS process isolation | runtime is in OBS plug-in context | N/A | N/A | **Rack/VST3/editor outside obs64.exe** |
+| Runtime abstraction | JUCE graph/processors | strong processor/node model | product-oriented | **protocol-neutral HostedPlugin** |
+| Render planning | graph | graph sequence | internal | **immutable serial generation** |
+| Buffer strategy | graph buffers | shared/reused | internal | **preallocated ping-pong** |
+| Reuse | graph state/files | sessions | rack/song/rackspace state | **Session Snapshot + Rack Preset** |
+| Plug-in browser | dedicated host UI | dedicated host UI | dedicated host UI | **Rack Editor browser/search** |
+| Vendor UI | own windows | WindowManager | host windows | **floating helper-owned native HWND** |
+| Advanced routing | yes | yes | yes | **post-v2** |
+| MIDI/instruments | yes | yes | yes | **post-v2** |
+| Isolation priority | not our process model | not OBS-specific | live stability | **OBS/helper isolation is product law** |
 
 ---
 
-## 9. Sources reviewed
+## 11. Primary strategic conclusion
+
+The fastest path to a professional product is now:
+
+> **Build the smallest serial Rack runtime with the strongest isolation contract, then expose it through a purpose-built graphical helper-owned Rack Editor instead of stretching OBS Properties beyond its role.**
+
+This keeps v2 simple enough to prove while giving the product a UI foundation that can later grow into sidechain/routing/MIDI/instrument workflows without another architectural rewrite.
+
+---
+
+## 12. Sources reviewed
 
 Primary public references:
 
+- atkAudio PluginForObsRelease: `https://github.com/atkAudio/PluginForObsRelease`
 - Kushview Element: `https://github.com/kushview/element`
-- Element `GraphNode`: `src/engine/graphnode.hpp`
-- Element `GraphBuilder`: `src/engine/graphbuilder.hpp`
-- Element `Processor`: `include/element/processor.hpp`
-- Element engineering guidance: `CLAUDE.md`
 - Cantabile guides: `https://www.cantabilesoftware.com/guides/`
 - Gig Performer documentation: `https://gigperformer.com/docs/`
 - Carla project: `https://github.com/falkTX/Carla`
+- Dear ImGui: `https://github.com/ocornut/imgui`
+- JUCE licensing/reference: `https://juce.com/`
 
-The external projects are references for architecture/product patterns only. Their source is not copied into this repository.
+External projects are references for architecture/product patterns only. Their source is not copied into this repository.
