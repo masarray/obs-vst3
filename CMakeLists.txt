@@ -132,14 +132,16 @@ if(WIN32)
     if(SAFEVST3_BUILD_OBS_PLUGIN)
         find_package(libobs CONFIG QUIET)
         if(libobs_FOUND)
+            find_package(Qt6 REQUIRED COMPONENTS Widgets)
             add_library(obs-safe-vst3 MODULE
                 src/obs-plugin/plugin.cpp
                 src/obs-plugin/parameter_controls.cpp
                 src/obs-plugin/state_store.cpp
+                src/obs-plugin/properties_ux.cpp
             )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(obs-safe-vst3 PRIVATE
-                OBS::libobs safevst3_win_ipc safevst3_source_selection)
+                OBS::libobs safevst3_win_ipc safevst3_source_selection Qt6::Widgets)
             target_compile_definitions(obs-safe-vst3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
             if(MSVC)
                 # Force the OBS compatibility floor header before obs-module.h
