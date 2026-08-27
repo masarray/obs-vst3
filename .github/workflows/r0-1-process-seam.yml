@@ -1,0 +1,32 @@
+name: R0-1 Process Seam Characterization
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r0-1-process-seam.yml'
+      - 'tests/r0_1/**'
+      - 'src/host/vst3_engine.cpp'
+      - 'src/host/vst3_engine.hpp'
+      - 'src/common/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r0-1-process-seam-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-vst3-engine-process:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure deterministic real-VST3 characterization
+        run: cmake -S tests/r0_1 -B build/r0-1 -A x64
+      - name: Build fixture and engine characterization
+        run: cmake --build build/r0-1 --config Release --target r0-1-vst3-engine-process-test --parallel
+      - name: Run unchanged Single AudioSlot characterization
+        run: ctest --test-dir build/r0-1 -C Release --output-on-failure
