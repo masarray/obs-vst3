@@ -9,6 +9,10 @@ if(NOT WIN32)
     message(FATAL_ERROR "R0-1 real-VST3 characterization is Windows-only")
 endif()
 
+# The repository deliberately builds its Steinberg hosting/runtime targets with
+# the static MSVC runtime. Keep the standalone fixture/test targets on the same
+# runtime so the characterization is about VST3 behavior, not CRT mixing.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(SAFEVST3_BUILD_OBS_PLUGIN OFF CACHE BOOL "" FORCE)
 set(SAFEVST3_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SAFEVST3_STATIC_MSVC_RUNTIME ON CACHE BOOL "" FORCE)
