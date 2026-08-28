@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/r0-1-process-seam.yml'
       - 'tests/r0_1/**'
+      - 'src/host/hosted_plugin.cpp'
+      - 'src/host/hosted_plugin.hpp'
       - 'src/host/process_block_view.hpp'
       - 'src/host/vst3_engine.cpp'
       - 'src/host/vst3_engine.hpp'
