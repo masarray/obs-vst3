@@ -17,6 +17,15 @@ set(SAFEVST3_BUILD_OBS_PLUGIN OFF CACHE BOOL "" FORCE)
 set(SAFEVST3_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SAFEVST3_STATIC_MSVC_RUNTIME ON CACHE BOOL "" FORCE)
 
+# These are Steinberg-supported build options. The R0-1 fixture exists only to
+# exercise the production engine seam inside CI, so do not run the SDK's own
+# post-build validator/module-info generation or create a per-user VST3 link.
+# Production builds keep the repository defaults; these settings are local to
+# this standalone test project before it includes the repository root.
+set(SMTG_RUN_VST_VALIDATOR OFF CACHE BOOL "" FORCE)
+set(SMTG_CREATE_MODULE_INFO OFF CACHE BOOL "" FORCE)
+set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
+
 get_filename_component(SAFEVST3_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 add_subdirectory("${SAFEVST3_ROOT}" safevst3-root)
 
