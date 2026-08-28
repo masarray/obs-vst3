@@ -1,3 +1,4 @@
+#include "host/process_block_view.hpp"
 #include "host/vst3_engine.hpp"
 
 #include <cmath>
@@ -10,6 +11,7 @@
 namespace {
 
 using safevst3::AudioSlot;
+using safevst3::ProcessBlockView;
 using safevst3::Vst3Engine;
 
 bool close_enough(float actual, float expected) {
@@ -186,6 +188,54 @@ bool characterize_direct_stereo(const char* stereo_path) {
     return ok;
 }
 
+bool characterize_protocol_neutral_view_matches_single(const char* mono_path) {
+    Vst3Engine single_engine;
+    Vst3Engine neutral_engine;
+    if (!open_engine(single_engine, mono_path, 1) ||
+        !open_engine(neutral_engine, mono_path, 1))
+        return false;
+
+    bool ok = true;
+    AudioSlot slot{};
+    slot.sequence = 77;
+    slot.channels = 1;
+    slot.frames = 3;
+    slot.input[0][0] = 0.25f;
+    slot.input[0][1] = 1.25f;
+    slot.input[0][2] = 2.25f;
+    ok &= expect(single_engine.process(slot), "Single adapter comparison block must process");
+
+    float neutral_input[3] = {0.25f, 1.25f, 2.25f};
+    float neutral_output[3] = {};
+    float* neutral_inputs[1] = {neutral_input};
+    float* neutral_outputs[1] = {neutral_output};
+    ProcessBlockView block{
+        neutral_inputs,
+        neutral_outputs,
+        1,
+        3,
+        77,
+    };
+
+    ok &= expect(neutral_engine.process(block),
+                 "protocol-neutral ProcessBlockView must process");
+    for (std::uint32_t frame = 0; frame < block.frames; ++frame) {
+        ok &= expect_sample(neutral_output[frame], slot.output[0][frame],
+                            "ProcessBlockView must match Single AudioSlot adapter");
+    }
+
+    ProcessBlockView invalid{
+        nullptr,
+        neutral_outputs,
+        1,
+        1,
+        78,
+    };
+    ok &= expect(!neutral_engine.process(invalid),
+                 "protocol-neutral view with null input table must be rejected");
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -200,10 +250,11 @@ int main(int argc, char** argv) {
     ok &= characterize_stereo_host_to_mono_plugin(argv[1]);
     ok &= characterize_mono_host_to_stereo_plugin(argv[2]);
     ok &= characterize_direct_stereo(argv[2]);
+    ok &= characterize_protocol_neutral_view_matches_single(argv[1]);
 
     if (!ok)
         return 1;
-    std::cout << "R0-1 current AudioSlot engine seam characterized successfully\n";
+    std::cout << "R0-1 AudioSlot and ProcessBlockView engine seams characterized successfully\n";
     return 0;
 }
 
