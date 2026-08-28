@@ -8,6 +8,7 @@
 #include "common/process_context_policy.hpp"
 #include "common/startup_error.hpp"
 #include "common/state_snapshot.hpp"
+#include "host/hosted_plugin_types.hpp"
 #include "host/process_block_view.hpp"
 #include "host/vst3_processing_compat.hpp"
 
@@ -28,21 +29,6 @@
 #include <vector>
 
 namespace safevst3 {
-
-struct EngineParameter {
-    std::uint32_t id = 0;
-    std::int32_t step_count = 0;
-    std::uint32_t flags = 0;
-    double default_normalized = 0.0;
-    double current_normalized = 0.0;
-    std::string title;
-    std::string units;
-};
-
-struct EngineParameterUpdate {
-    std::uint32_t id = 0;
-    double normalized = 0.0;
-};
 
 class Vst3Engine final : public LatencyRestartTarget, public IoRestartLifecycleTarget {
 public:
