@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/r0-1-process-seam.yml'
       - 'tests/r0_1/**'
+      - 'src/host/process_block_view.hpp'
       - 'src/host/vst3_engine.cpp'
       - 'src/host/vst3_engine.hpp'
       - 'src/common/**'
@@ -28,5 +29,5 @@ jobs:
         run: cmake -S tests/r0_1 -B build/r0-1 -A x64
       - name: Build fixture and engine characterization
         run: cmake --build build/r0-1 --config Release --target r0-1-vst3-engine-process-test --parallel
-      - name: Run unchanged Single AudioSlot characterization
+      - name: Run AudioSlot and ProcessBlockView characterization
         run: ctest --test-dir build/r0-1 -C Release --output-on-failure
