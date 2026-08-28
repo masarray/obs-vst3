@@ -8,6 +8,7 @@
 #include "common/process_context_policy.hpp"
 #include "common/startup_error.hpp"
 #include "common/state_snapshot.hpp"
+#include "host/process_block_view.hpp"
 #include "host/vst3_processing_compat.hpp"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -73,6 +74,7 @@ public:
         return opened;
     }
     void close() noexcept;
+    bool process(const ProcessBlockView& block) noexcept;
     bool process(AudioSlot& slot) noexcept;
 
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
