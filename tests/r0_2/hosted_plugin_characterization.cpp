@@ -1,5 +1,7 @@
 #include "host/hosted_plugin.hpp"
 
+#include "pluginterfaces/vst/ivsteditcontroller.h"
+
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -17,6 +19,47 @@ using safevst3::ProcessBlockView;
 constexpr std::uint32_t kGainId = 7001;
 constexpr std::uint32_t kExpectedLatency = 37;
 
+class TestComponentHandler final : public Steinberg::Vst::IComponentHandler {
+public:
+    Steinberg::tresult PLUGIN_API beginEdit(Steinberg::Vst::ParamID) override
+    {
+        return Steinberg::kResultOk;
+    }
+
+    Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID,
+                                              Steinberg::Vst::ParamValue) override
+    {
+        return Steinberg::kResultOk;
+    }
+
+    Steinberg::tresult PLUGIN_API endEdit(Steinberg::Vst::ParamID) override
+    {
+        return Steinberg::kResultOk;
+    }
+
+    Steinberg::tresult PLUGIN_API restartComponent(Steinberg::int32) override
+    {
+        return Steinberg::kResultOk;
+    }
+
+    Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID iid, void** obj) override
+    {
+        if (!obj)
+            return Steinberg::kInvalidArgument;
+        *obj = nullptr;
+        if (Steinberg::FUnknownPrivate::iidEqual(iid, Steinberg::Vst::IComponentHandler::iid) ||
+            Steinberg::FUnknownPrivate::iidEqual(iid, Steinberg::FUnknown::iid)) {
+            *obj = static_cast<Steinberg::Vst::IComponentHandler*>(this);
+            addRef();
+            return Steinberg::kResultTrue;
+        }
+        return Steinberg::kNoInterface;
+    }
+
+    Steinberg::uint32 PLUGIN_API addRef() override { return 1000; }
+    Steinberg::uint32 PLUGIN_API release() override { return 1000; }
+};
+
 bool expect(bool condition, const char* message)
 {
     if (!condition)
@@ -33,10 +76,12 @@ bool expect_sample(float actual, float expected, const char* message)
     return false;
 }
 
-bool open_plugin(HostedPlugin& plugin, const char* module_path)
+bool open_plugin(HostedPlugin& plugin,
+                 TestComponentHandler& component_handler,
+                 const char* module_path)
 {
     std::string error;
-    if (plugin.open(module_path, "", 48000, 2, nullptr, error))
+    if (plugin.open(module_path, "", 48000, 2, &component_handler, error))
         return true;
     std::cerr << "FAIL: HostedPlugin open: " << error << '\n';
     return false;
@@ -66,8 +111,9 @@ bool process_stereo(HostedPlugin& plugin,
 
 bool characterize_hosted_plugin(const char* module_path)
 {
+    TestComponentHandler original_handler;
     HostedPlugin original;
-    if (!open_plugin(original, module_path))
+    if (!open_plugin(original, original_handler, module_path))
         return false;
 
     bool ok = true;
@@ -95,8 +141,9 @@ bool characterize_hosted_plugin(const char* module_path)
     ok &= expect(!snapshot.component.empty(), "component state blob must be present");
     ok &= expect(!snapshot.controller.empty(), "controller-private state blob must be present");
 
+    TestComponentHandler restored_handler;
     HostedPlugin restored;
-    if (!open_plugin(restored, module_path))
+    if (!open_plugin(restored, restored_handler, module_path))
         return false;
     ok &= expect(restored.restore_state(snapshot, error),
                  "HostedPlugin complete state restore must succeed");
@@ -138,7 +185,7 @@ bool characterize_hosted_plugin(const char* module_path)
     ok &= expect(!restored.process(after_close),
                  "closed HostedPlugin must reject process calls");
 
-    ok &= expect(open_plugin(restored, module_path),
+    ok &= expect(open_plugin(restored, restored_handler, module_path),
                  "HostedPlugin must support a clean reopen after close");
     restored.close();
     original.close();
