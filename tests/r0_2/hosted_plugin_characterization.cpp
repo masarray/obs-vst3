@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <concepts>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -23,12 +24,18 @@ using safevst3::ProcessBlockView;
 
 constexpr std::uint32_t kGainParameterId = 100;
 
-static_assert(requires(HostedPlugin& plugin, ProcessBlockView& block) {
+template <typename Plugin>
+concept ProcessesBlockView = requires(Plugin& plugin, ProcessBlockView& block) {
     { plugin.process(block) } -> std::same_as<bool>;
-});
-static_assert(!requires(HostedPlugin& plugin, AudioSlot& slot) {
+};
+
+template <typename Plugin>
+concept ProcessesSingleSlot = requires(Plugin& plugin, AudioSlot& slot) {
     plugin.process(slot);
-});
+};
+
+static_assert(ProcessesBlockView<HostedPlugin>);
+static_assert(!ProcessesSingleSlot<HostedPlugin>);
 
 class TestComponentHandler final : public Steinberg::Vst::IComponentHandler {
 public:
