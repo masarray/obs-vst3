@@ -28,7 +28,7 @@ endif()
 
 string(FIND "${SOURCE}" "const auto context_frame = make_process_context_frame(" BLOCK_FRAME_POS)
 string(FIND "${SOURCE}" "processor_->process(process_data_)" PROCESS_POS)
-string(FIND "${SOURCE}" "sample_position_ += slot.frames" ADVANCE_POS)
+string(FIND "${SOURCE}" "sample_position_ += block.frames" ADVANCE_POS)
 if(BLOCK_FRAME_POS LESS 0 OR PROCESS_POS LESS 0 OR ADVANCE_POS LESS 0)
   message(FATAL_ERROR "Could not find deterministic audio-block process-context markers")
 endif()

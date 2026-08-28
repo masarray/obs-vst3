@@ -1130,25 +1130,45 @@ bool Vst3Engine::flush_parameter_changes() noexcept
 
 bool Vst3Engine::process(AudioSlot& slot) noexcept
 {
-    if (!processor_ || slot.frames == 0 || slot.frames > kMaxFrames ||
-        slot.channels != channels_ ||
+    float* input[kMaxChannels] = {slot.input[0], slot.input[1]};
+    float* output[kMaxChannels] = {slot.output[0], slot.output[1]};
+    const ProcessBlockView block{
+        input,
+        output,
+        slot.channels,
+        slot.frames,
+        slot.sequence,
+    };
+    return process(block);
+}
+
+bool Vst3Engine::process(const ProcessBlockView& block) noexcept
+{
+    if (!processor_ || !block.input || !block.output ||
+        block.frames == 0 || block.frames > kMaxFrames ||
+        block.channels != channels_ ||
         (plugin_input_channels_ != 1 && plugin_input_channels_ != 2) ||
         (plugin_output_channels_ != 1 && plugin_output_channels_ != 2))
         return false;
+
+    for (std::uint32_t ch = 0; ch < block.channels; ++ch) {
+        if (!block.input[ch] || !block.output[ch])
+            return false;
+    }
 
     Sample32* in[kMaxChannels]{};
     Sample32* out[kMaxChannels]{};
 
     if (plugin_input_channels_ == channels_) {
         for (std::uint32_t ch = 0; ch < channels_; ++ch)
-            in[ch] = slot.input[ch];
+            in[ch] = block.input[ch];
     } else if (channels_ == 2 && plugin_input_channels_ == 1) {
         average_stereo_to_mono(
-            slot.input[0], slot.input[1], input_adapter_[0].data(), slot.frames);
+            block.input[0], block.input[1], input_adapter_[0].data(), block.frames);
         in[0] = input_adapter_[0].data();
     } else if (channels_ == 1 && plugin_input_channels_ == 2) {
         duplicate_mono_to_stereo(
-            slot.input[0], input_adapter_[0].data(), input_adapter_[1].data(), slot.frames);
+            block.input[0], input_adapter_[0].data(), input_adapter_[1].data(), block.frames);
         in[0] = input_adapter_[0].data();
         in[1] = input_adapter_[1].data();
     } else {
@@ -1158,7 +1178,7 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
     const bool output_direct = plugin_output_channels_ == channels_;
     if (output_direct) {
         for (std::uint32_t ch = 0; ch < channels_; ++ch)
-            out[ch] = slot.output[ch];
+            out[ch] = block.output[ch];
     } else {
         for (std::uint32_t ch = 0; ch < plugin_output_channels_; ++ch)
             out[ch] = output_adapter_[ch].data();
@@ -1170,7 +1190,7 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
             kOutput, main_output_bus_, out, static_cast<int32>(plugin_output_channels_)))
         return false;
 
-    process_data_.numSamples = static_cast<int32>(slot.frames);
+    process_data_.numSamples = static_cast<int32>(block.frames);
     process_data_.inputEvents = nullptr;
     process_data_.outputEvents = nullptr;
     process_data_.outputParameterChanges = &output_parameter_changes_;
@@ -1188,16 +1208,16 @@ bool Vst3Engine::process(AudioSlot& slot) noexcept
     capture_output_parameter_changes();
     if (result != kResultOk)
         return false;
-    sample_position_ += slot.frames;
+    sample_position_ += block.frames;
 
     if (!output_direct) {
         if (channels_ == 2 && plugin_output_channels_ == 1) {
             duplicate_mono_to_stereo(
-                output_adapter_[0].data(), slot.output[0], slot.output[1], slot.frames);
+                output_adapter_[0].data(), block.output[0], block.output[1], block.frames);
         } else if (channels_ == 1 && plugin_output_channels_ == 2) {
             average_stereo_to_mono(
                 output_adapter_[0].data(), output_adapter_[1].data(),
-                slot.output[0], slot.frames);
+                block.output[0], block.frames);
         } else {
             return false;
         }
