@@ -115,6 +115,7 @@ if(WIN32)
     add_executable(obs-safe-vst3-host
         src/host/main.cpp
         src/host/native_editor.cpp
+        src/host/hosted_plugin.cpp
         src/host/vst3_engine.cpp
     )
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
