@@ -9,6 +9,7 @@ It builds a deterministic real VST3 effect with a separated edit controller and 
 - fixed latency exposure and latency-restart transaction;
 - component + controller state capture/restore with observable audio state;
 - helper-facing edit-controller accessor lifetime;
-- public-header source contract rejecting Single transport types/layout includes.
+- deep header/source contract rejecting Single transport types/layout includes and `Vst3Engine` dependency;
+- focused target links `HostedPlugin` without the Single `vst3_engine.cpp` adapter.
 
 The fixture is a correctness oracle only. It does not implement Rack transport, Rack helper, multi-plugin processing, graphical Rack UI, scanner changes or any R1 behavior.

@@ -49,6 +49,7 @@ target_compile_definitions(r0-1-fixture-stereo PRIVATE
 
 add_executable(r0-1-vst3-engine-process-test
     "${CMAKE_CURRENT_LIST_DIR}/vst3_engine_process_characterization.cpp"
+    "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
     "${SAFEVST3_ROOT}/src/host/vst3_engine.cpp"
 )
 target_include_directories(r0-1-vst3-engine-process-test PRIVATE

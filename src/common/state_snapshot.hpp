@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/protocol.hpp"
+#include "common/vst3_host_contract.hpp"
 
 #include <cstddef>
 #include <cstdint>

@@ -29,7 +29,6 @@ target_compile_definitions(r0-2-hosted-plugin-fixture PRIVATE WIN32_LEAN_AND_MEA
 add_executable(r0-2-hosted-plugin-characterization
     "${CMAKE_CURRENT_LIST_DIR}/hosted_plugin_characterization.cpp"
     "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
-    "${SAFEVST3_ROOT}/src/host/vst3_engine.cpp"
 )
 target_include_directories(r0-2-hosted-plugin-characterization PRIVATE "${SAFEVST3_ROOT}/src")
 target_link_libraries(r0-2-hosted-plugin-characterization PRIVATE
@@ -55,5 +54,6 @@ add_test(
     NAME r0-2-hosted-plugin-protocol-neutral-contract
     COMMAND ${CMAKE_COMMAND}
         -DHEADER=${SAFEVST3_ROOT}/src/host/hosted_plugin.hpp
+        -DSOURCE=${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp
         -P ${CMAKE_CURRENT_LIST_DIR}/hosted_plugin_protocol_neutral.cmake
 )
