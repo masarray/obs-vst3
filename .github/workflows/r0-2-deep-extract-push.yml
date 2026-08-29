@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   deep-extract:
-    if: github.event.head_commit.message == 'ci(r0-2): trigger deep extraction'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
