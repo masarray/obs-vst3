@@ -1,0 +1,30 @@
+name: R0-2 Deep Extraction Push Bootstrap
+
+on:
+  push:
+    branches: [r0-2-hosted-plugin]
+
+permissions:
+  contents: write
+
+jobs:
+  deep-extract:
+    if: github.event.head_commit.message == 'ci(r0-2): trigger deep extraction'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: r0-2-hosted-plugin
+          fetch-depth: 0
+      - name: Transform exact audited source
+        run: python3 scripts/r0_2_deep_extract.py
+      - name: Commit corrected deep seam
+        shell: bash
+        run: |
+          git config user.name "Ari Sulistiono"
+          git config user.email "ari.sulistiono@gmail.com"
+          git add -A
+          git diff --cached --stat
+          git diff --cached --check
+          git commit -m "refactor(r0-2): make HostedPlugin the deep lifecycle owner"
+          git push origin HEAD:r0-2-hosted-plugin
