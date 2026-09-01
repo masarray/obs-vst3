@@ -7,7 +7,7 @@ file(READ "${SOURCE_FILE}" SOURCE)
 string(REGEX MATCHALL "getProcessContextRequirements\\(" REQUIREMENT_CALLS "${SOURCE}")
 list(LENGTH REQUIREMENT_CALLS REQUIREMENT_CALL_COUNT)
 if(NOT REQUIREMENT_CALL_COUNT EQUAL 1)
-  message(FATAL_ERROR "VST3 host must query getProcessContextRequirements exactly once in Vst3Engine::open; found ${REQUIREMENT_CALL_COUNT}")
+  message(FATAL_ERROR "VST3 host must query getProcessContextRequirements exactly once in HostedPlugin::open; found ${REQUIREMENT_CALL_COUNT}")
 endif()
 
 string(FIND "${SOURCE}" "processor_->setupProcessing(process_setup_)" SETUP_POS)
@@ -36,8 +36,8 @@ if(NOT (BLOCK_FRAME_POS LESS PROCESS_POS AND PROCESS_POS LESS ADVANCE_POS))
   message(FATAL_ERROR "Audio-block context must be prepared before process() and sample position advanced only after successful process()")
 endif()
 
-string(FIND "${SOURCE}" "bool Vst3Engine::flush_parameter_changes() noexcept" FLUSH_BEGIN)
-string(FIND "${SOURCE}" "bool Vst3Engine::process(AudioSlot& slot) noexcept" PROCESS_BEGIN)
+string(FIND "${SOURCE}" "bool HostedPlugin::flush_parameter_changes() noexcept" FLUSH_BEGIN)
+string(FIND "${SOURCE}" "bool HostedPlugin::process(const ProcessBlockView& block) noexcept" PROCESS_BEGIN)
 if(FLUSH_BEGIN LESS 0 OR PROCESS_BEGIN LESS 0 OR NOT FLUSH_BEGIN LESS PROCESS_BEGIN)
   message(FATAL_ERROR "Could not isolate zero-sample parameter flush implementation")
 endif()
@@ -48,7 +48,7 @@ if(NOT FLUSH_SAMPLE_POSITION EQUAL -1)
   message(FATAL_ERROR "Zero-sample parameter flush must never advance or rewrite project/continuous sample time")
 endif()
 
-# S1.6 full reload must recreate through Vst3Engine::open(), because open() is
+# S1.6 full reload must recreate through HostedPlugin::open(), because open() is
 # the lifecycle frontier that performs the one-per-instance requirements query.
 get_filename_component(HOST_DIR "${SOURCE_FILE}" DIRECTORY)
 set(HOST_MAIN_FILE "${HOST_DIR}/main.cpp")
@@ -66,7 +66,7 @@ string(SUBSTRING "${HOST_MAIN_SOURCE}" ${RELOAD_BEGIN} ${RELOAD_LENGTH} RELOAD_S
 string(FIND "${RELOAD_SOURCE}" "engine_.close();" RELOAD_CLOSE_POS)
 string(FIND "${RELOAD_SOURCE}" "engine_.open(" RELOAD_OPEN_POS)
 if(RELOAD_CLOSE_POS LESS 0 OR RELOAD_OPEN_POS LESS 0 OR NOT RELOAD_CLOSE_POS LESS RELOAD_OPEN_POS)
-  message(FATAL_ERROR "Full kReloadComponent recreation must close then reopen through Vst3Engine::open so requirements are freshly queried")
+  message(FATAL_ERROR "Full kReloadComponent recreation must close then reopen through HostedPlugin::open so requirements are freshly queried")
 endif()
 
 message(STATUS "VST3 process-context source contract ok")

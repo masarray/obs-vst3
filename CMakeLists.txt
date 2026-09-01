@@ -115,6 +115,7 @@ if(WIN32)
     add_executable(obs-safe-vst3-host
         src/host/main.cpp
         src/host/native_editor.cpp
+        src/host/hosted_plugin.cpp
         src/host/vst3_engine.cpp
     )
     target_include_directories(obs-safe-vst3-host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -206,14 +207,14 @@ if(SAFEVST3_BUILD_TESTS)
     add_test(
         NAME process-context-source-contract
         COMMAND ${CMAKE_COMMAND}
-            -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/vst3_engine.cpp
+            -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/hosted_plugin.cpp
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/process_context_source_contract.cmake
     )
 
     add_test(
         NAME strict-lifecycle-source-contract
         COMMAND ${CMAKE_COMMAND}
-            -DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/vst3_engine.cpp
+            -DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/hosted_plugin.cpp
             -DMAIN_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/host/main.cpp
             -DWIN_IPC_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/win_ipc.cpp
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/strict_lifecycle_source_contract.cmake

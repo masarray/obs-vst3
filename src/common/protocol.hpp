@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/vst3_host_contract.hpp"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -9,14 +11,10 @@ inline constexpr std::uint32_t kProtocolMagic = 0x3356534Fu; // "OSV3"
 inline constexpr std::uint32_t kProtocolVersion = 8;
 inline constexpr std::uint32_t kStateTransferMagic = 0x3154534Fu; // "OST1"
 inline constexpr std::uint32_t kStateTransferVersion = 1;
-inline constexpr std::uint32_t kMaxChannels = 2;
-inline constexpr std::uint32_t kMaxFrames = 2048;
 inline constexpr std::uint32_t kSlotCount = 4;
-inline constexpr std::uint32_t kMaxParameters = 256;
 inline constexpr std::size_t kParameterTitleBytes = 64;
 inline constexpr std::size_t kParameterUnitsBytes = 32;
 inline constexpr std::size_t kPluginNameBytes = 128;
-inline constexpr std::size_t kMaxStateBytes = 16u * 1024u * 1024u;
 
 enum class SlotState : long {
     Free = 0,
@@ -65,15 +63,6 @@ enum class StateStatus : long {
     TooLarge = 2,
     Invalid = 3,
     VstError = 4,
-};
-
-enum ParameterFlags : std::uint32_t {
-    ParameterCanAutomate = 1u << 0,
-    ParameterReadOnly = 1u << 1,
-    ParameterHidden = 1u << 2,
-    ParameterList = 1u << 3,
-    ParameterProgramChange = 1u << 4,
-    ParameterBypass = 1u << 5,
 };
 
 struct alignas(64) ParameterDescriptor {

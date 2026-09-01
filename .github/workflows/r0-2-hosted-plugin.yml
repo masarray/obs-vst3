@@ -1,0 +1,36 @@
+name: R0-2 HostedPlugin Characterization
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r0-2-hosted-plugin.yml'
+      - 'tests/r0_2/**'
+      - 'src/host/hosted_plugin.cpp'
+      - 'src/host/hosted_plugin.hpp'
+      - 'src/host/process_block_view.hpp'
+      - 'src/host/vst3_engine.cpp'
+      - 'src/host/vst3_engine.hpp'
+      - 'src/common/**'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r0-2-hosted-plugin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-vst3-hosted-plugin:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure deterministic HostedPlugin characterization
+        run: cmake -S tests/r0_2 -B build/r0-2 -A x64
+      - name: Build fixture and HostedPlugin characterization
+        run: cmake --build build/r0-2 --config Release --target r0-2-hosted-plugin-characterization --parallel
+      - name: Run HostedPlugin characterization
+        run: ctest --test-dir build/r0-2 -C Release --output-on-failure
