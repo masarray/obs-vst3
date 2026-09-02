@@ -5,9 +5,11 @@
 #include "platform/windows/win_rack_bridge.hpp"
 
 #include <obs.h>
+#include <media-io/audio-io.h>
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <mutex>
