@@ -21,6 +21,7 @@
 namespace safevst3::obsrack {
 namespace {
 
+constexpr char kRackSummary[] = "rack_summary";
 constexpr char kRackStatus[] = "rack_status";
 constexpr char kRackOpen[] = "rack_open";
 constexpr unsigned kDestroyDrainAttempts = 100;
@@ -206,6 +207,8 @@ obs_properties_t* rack_properties(void* data)
 {
     auto* filter = static_cast<RackFilter*>(data);
     obs_properties_t* props = obs_properties_create();
+    obs_properties_add_text(
+        props, kRackSummary, obs_module_text("RackWorkingSummary"), OBS_TEXT_INFO);
     const std::string status = rack_status_text(filter);
     obs_properties_add_text(props, kRackStatus, status.c_str(), OBS_TEXT_INFO);
     obs_properties_add_button2(props, kRackOpen, obs_module_text("RackOpen"), open_rack_button, filter);
