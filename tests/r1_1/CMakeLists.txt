@@ -20,9 +20,26 @@ set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
 get_filename_component(SAFEVST3_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 add_subdirectory("${SAFEVST3_ROOT}" safevst3-root)
 
-if(NOT TARGET obs-safe-vst3-rack-host)
-    message(FATAL_ERROR "R1-1 requires the separate obs-safe-vst3-rack-host target")
-endif()
+# R1-1 production seam: a dedicated Rack executable built from the new Rack
+# entry point and the protocol-neutral HostedPlugin implementation. Keeping the
+# target here during the tracer prevents any OBS package/launcher work from
+# leaking into R1-1; promotion into the shipping root/package is a later gate.
+add_executable(obs-safe-vst3-rack-host
+    "${SAFEVST3_ROOT}/src/rack/main.cpp"
+    "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
+)
+target_include_directories(obs-safe-vst3-rack-host PRIVATE "${SAFEVST3_ROOT}/src")
+target_link_libraries(obs-safe-vst3-rack-host PRIVATE
+    safevst3_vst3_hosting_runtime
+    safevst3_lifecycle_policy
+    safevst3_state_restore_policy
+    safevst3_latency_restart_transaction
+    safevst3_parameter_refresh_transaction
+    safevst3_io_restart_transaction
+    safevst3_reload_component_transaction
+    safevst3_process_context_policy
+)
+target_compile_definitions(obs-safe-vst3-rack-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 smtg_add_vst3plugin(r1-1-gain-a-fixture
     "${CMAKE_CURRENT_LIST_DIR}/vst3_gain_a_fixture.cpp"
