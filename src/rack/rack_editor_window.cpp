@@ -147,10 +147,8 @@ LRESULT CALLBACK rack_editor_window_proc(HWND hwnd, UINT message, WPARAM wparam,
         DestroyWindow(hwnd);
         return 0;
     }
-    if (message == WM_DESTROY) {
-        PostQuitMessage(0);
+    if (message == WM_DESTROY)
         return 0;
-    }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
@@ -213,32 +211,27 @@ struct RackEditorWindow::Impl {
         }
 
         std::unique_lock lifecycle_lock(lifecycle_mutex);
-        if (thread_running) {
-            const bool stopped_or_visible = lifecycle_cv.wait_for(
-                lifecycle_lock, std::chrono::seconds(5), [&] {
-                    const HWND current = hwnd.load(std::memory_order_acquire);
-                    return !thread_running || (current && IsWindow(current));
-                });
-            if (!stopped_or_visible)
+        if (!thread_running) {
+            stop_requested.store(false, std::memory_order_release);
+            open_requested = true;
+            creation_attempted = false;
+            creation_succeeded = false;
+            thread_running = true;
+            try {
+                window_thread = std::thread([this] { window_main(); });
+            } catch (...) {
+                thread_running = false;
+                open_requested = false;
+                creation_attempted = true;
+                creation_succeeded = false;
                 return false;
-            if (HWND current = hwnd.load(std::memory_order_acquire);
-                current && IsWindow(current)) {
-                PostMessageW(current, kForegroundMessage, 0, 0);
-                return true;
             }
+        } else {
+            creation_attempted = false;
+            creation_succeeded = false;
+            open_requested = true;
+            lifecycle_cv.notify_all();
         }
-
-        if (window_thread.joinable()) {
-            lifecycle_lock.unlock();
-            window_thread.join();
-            lifecycle_lock.lock();
-        }
-
-        stop_requested.store(false, std::memory_order_release);
-        creation_attempted = false;
-        creation_succeeded = false;
-        thread_running = true;
-        window_thread = std::thread([this] { window_main(); });
 
         const bool ready = lifecycle_cv.wait_for(
             lifecycle_lock, std::chrono::seconds(5), [&] {
@@ -250,6 +243,12 @@ struct RackEditorWindow::Impl {
     void shutdown() noexcept
     {
         stop_requested.store(true, std::memory_order_release);
+        {
+            std::lock_guard lock(lifecycle_mutex);
+            open_requested = false;
+            lifecycle_cv.notify_all();
+        }
+
         if (HWND current = hwnd.load(std::memory_order_acquire);
             current && IsWindow(current))
             PostMessageW(current, WM_CLOSE, 0, 0);
@@ -259,6 +258,7 @@ struct RackEditorWindow::Impl {
 
         std::lock_guard lock(lifecycle_mutex);
         thread_running = false;
+        open_requested = false;
         creation_attempted = true;
         creation_succeeded = false;
         hwnd.store(nullptr, std::memory_order_release);
@@ -374,58 +374,40 @@ struct RackEditorWindow::Impl {
         lifecycle_cv.notify_all();
     }
 
-    void window_main() noexcept
+    bool run_window_session() noexcept
     {
-        HINSTANCE instance = GetModuleHandleW(nullptr);
-        WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
-        wc.style = CS_CLASSDC;
-        wc.lpfnWndProc = rack_editor_window_proc;
-        wc.hInstance = instance;
-        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
-        wc.lpszClassName = kRackEditorWindowClassName;
-        if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-            mark_creation(false);
-            mark_stopped();
-            return;
-        }
-
         WindowRuntime runtime{};
+        HINSTANCE instance = GetModuleHandleW(nullptr);
         HWND window = CreateWindowExW(
             0, kRackEditorWindowClassName, L"OBS Safe VST3 Rack",
             WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 820, 620,
             nullptr, nullptr, instance, &runtime);
         if (!window) {
-            UnregisterClassW(kRackEditorWindowClassName, instance);
             mark_creation(false);
-            mark_stopped();
-            return;
+            return false;
         }
 
         if (!create_d3d(window, runtime.d3d, D3D_DRIVER_TYPE_HARDWARE) &&
             !create_d3d(window, runtime.d3d, D3D_DRIVER_TYPE_WARP)) {
             DestroyWindow(window);
-            UnregisterClassW(kRackEditorWindowClassName, instance);
             mark_creation(false);
-            mark_stopped();
-            return;
+            return false;
         }
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGui::StyleColorsDark();
-        bool imgui_win32 = ImGui_ImplWin32_Init(window);
-        bool imgui_dx11 = imgui_win32 && ImGui_ImplDX11_Init(runtime.d3d.device, runtime.d3d.context);
+        const bool imgui_win32 = ImGui_ImplWin32_Init(window);
+        const bool imgui_dx11 = imgui_win32 &&
+                                ImGui_ImplDX11_Init(runtime.d3d.device, runtime.d3d.context);
         if (!imgui_dx11) {
             if (imgui_win32)
                 ImGui_ImplWin32_Shutdown();
             ImGui::DestroyContext();
             release_d3d(runtime.d3d);
             DestroyWindow(window);
-            UnregisterClassW(kRackEditorWindowClassName, instance);
             mark_creation(false);
-            mark_stopped();
-            return;
+            return false;
         }
 
         hwnd.store(window, std::memory_order_release);
@@ -440,6 +422,7 @@ struct RackEditorWindow::Impl {
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                 if (msg.message == WM_QUIT) {
                     running = false;
+                    stop_requested.store(true, std::memory_order_release);
                     break;
                 }
                 TranslateMessage(&msg);
@@ -476,6 +459,40 @@ struct RackEditorWindow::Impl {
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
         release_d3d(runtime.d3d);
+        return true;
+    }
+
+    void window_main() noexcept
+    {
+        HINSTANCE instance = GetModuleHandleW(nullptr);
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.style = CS_CLASSDC;
+        wc.lpfnWndProc = rack_editor_window_proc;
+        wc.hInstance = instance;
+        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        wc.lpszClassName = kRackEditorWindowClassName;
+        if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+            mark_creation(false);
+            mark_stopped();
+            return;
+        }
+
+        for (;;) {
+            {
+                std::unique_lock lifecycle_lock(lifecycle_mutex);
+                lifecycle_cv.wait(lifecycle_lock, [&] {
+                    return stop_requested.load(std::memory_order_acquire) || open_requested;
+                });
+                if (stop_requested.load(std::memory_order_acquire))
+                    break;
+                open_requested = false;
+            }
+
+            run_window_session();
+        }
+
+        hwnd.store(nullptr, std::memory_order_release);
         UnregisterClassW(kRackEditorWindowClassName, instance);
         mark_stopped();
     }
@@ -490,6 +507,7 @@ struct RackEditorWindow::Impl {
     std::atomic<HWND> hwnd{nullptr};
     std::atomic<bool> stop_requested{false};
     bool thread_running = false;
+    bool open_requested = false;
     bool creation_attempted = false;
     bool creation_succeeded = false;
 };
