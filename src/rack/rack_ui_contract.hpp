@@ -148,6 +148,7 @@ public:
         command.slot_id = slot_id;
         command.target_index = target_index;
         pending_.command = command;
+        pending_.requested_from_generation = snapshot_.generation;
         pending_.accepted_generation = 0;
         return command;
     }
@@ -163,7 +164,8 @@ public:
             pending_ = {};
             return true;
         case RackUiCommandResult::Accepted:
-            if (ack.committed_generation == 0)
+            if (ack.committed_generation == 0 ||
+                ack.committed_generation <= pending_.requested_from_generation)
                 return false;
             if (has_snapshot_ && snapshot_.generation >= ack.committed_generation)
                 pending_ = {};
@@ -179,6 +181,7 @@ public:
 private:
     struct PendingState {
         RackUiCommand command{};
+        std::uint64_t requested_from_generation = 0;
         std::uint64_t accepted_generation = 0;
     };
 
