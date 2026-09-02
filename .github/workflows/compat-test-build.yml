@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/compat-test-build.yml'
       - 'CMakeLists.txt'
+      - 'src/rack/**'
       - 'src/obs-plugin/obs_compat_floor.hpp'
       - 'src/obs-plugin/plugin.cpp'
       - 'src/host/native_editor.cpp'
