@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/r1-1-rack-serial.yml'
+      - '.github/workflows/compat-test-build.yml'
       - 'tests/r1_1/**'
       - 'src/rack/**'
       - 'src/host/hosted_plugin.cpp'
