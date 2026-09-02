@@ -1,0 +1,41 @@
+name: R3-1 OBS Rack Launcher
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r3-1-obs-rack-launcher.yml'
+      - 'CMakeLists.txt'
+      - 'src/obs-plugin/**'
+      - 'src/platform/windows/win_rack_bridge.*'
+      - 'src/rack/**'
+      - 'installer/windows/**'
+      - 'data/locale/**'
+      - 'tests/r3_1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3-1-obs-rack-launcher-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-launcher-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure deterministic R3-1 Rack launcher integration
+        shell: pwsh
+        run: cmake -S tests/r3_1 -B build/r3-1 -A x64
+
+      - name: Build parent-side Rack bridge and real helper
+        shell: pwsh
+        run: cmake --build build/r3-1 --config Release --target r3-1-rack-obs-bridge --parallel
+
+      - name: Run empty Rack bridge + OBS source/package contracts
+        shell: pwsh
+        run: ctest --test-dir build/r3-1 -C Release --output-on-failure
