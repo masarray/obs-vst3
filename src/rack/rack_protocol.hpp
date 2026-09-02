@@ -9,10 +9,15 @@ namespace safevst3::rack {
 // Independent Rack transport contract. Deliberately does not include or extend
 // common/protocol.hpp, whose bytes/version remain the Single Host contract.
 inline constexpr std::uint32_t kRackProtocolMagic = 0x33565352u; // "RSV3"
-inline constexpr std::uint32_t kRackProtocolVersion = 1;
+inline constexpr std::uint32_t kRackProtocolVersion = 2;
 
-// R1-1 is the two-plugin tracer only. Topology commands/generations arrive in
-// later tickets; this protocol carries one bounded audio transaction at a time.
+// R1-2 still owns exactly the two fixed tracer slots. Dynamic topology belongs
+// to R1-3; these bits only describe whether the fixed A/B processors are skipped
+// for the current bounded block transaction.
+inline constexpr long kRackBypassSlotA = 1L << 0;
+inline constexpr long kRackBypassSlotB = 1L << 1;
+inline constexpr long kRackKnownBypassMask = kRackBypassSlotA | kRackBypassSlotB;
+
 enum class RackHostStatus : long {
     Booting = 0,
     Ready = 1,
@@ -40,10 +45,12 @@ struct alignas(64) RackSharedAudioRegion {
     volatile long request_generation = 0;
     volatile long response_generation = 0;
     volatile long process_result = static_cast<long>(RackProcessResult::Ok);
+    volatile long bypass_mask = 0;
+    volatile long total_latency_samples = 0;
     std::uint32_t sequence = 0;
     std::uint32_t frames = 0;
     std::uint32_t block_channels = 0;
-    std::uint32_t reserved1[8]{};
+    std::uint32_t reserved1[6]{};
 
     alignas(64) float input[kMaxChannels][kMaxFrames]{};
     alignas(64) float output[kMaxChannels][kMaxFrames]{};
