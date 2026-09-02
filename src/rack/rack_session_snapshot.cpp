@@ -344,16 +344,20 @@ bool encode_rack_session_snapshot(const RackSessionSnapshot& snapshot,
         return false;
     }
 
-    destination.reserve(kRackSessionHeaderBytes + body.size());
+    std::vector<std::uint8_t> protected_payload;
+    protected_payload.reserve(32u + body.size());
+    protected_payload.insert(protected_payload.end(), snapshot.rack_id.begin(), snapshot.rack_id.end());
+    append_u64(protected_payload, snapshot.generation);
+    append_u32(protected_payload, static_cast<std::uint32_t>(snapshot.slots.size()));
+    append_u32(protected_payload, 0u);
+    protected_payload.insert(protected_payload.end(), body.begin(), body.end());
+
+    destination.reserve(16u + protected_payload.size());
     append_u32(destination, kRackSessionMagic);
     append_u32(destination, kRackSessionFormatVersion);
     append_u32(destination, static_cast<std::uint32_t>(body.size()));
-    append_u32(destination, state_detail::crc32(body));
-    destination.insert(destination.end(), snapshot.rack_id.begin(), snapshot.rack_id.end());
-    append_u64(destination, snapshot.generation);
-    append_u32(destination, static_cast<std::uint32_t>(snapshot.slots.size()));
-    append_u32(destination, 0u);
-    destination.insert(destination.end(), body.begin(), body.end());
+    append_u32(destination, state_detail::crc32(protected_payload));
+    destination.insert(destination.end(), protected_payload.begin(), protected_payload.end());
     return true;
 }
 
@@ -392,6 +396,12 @@ bool decode_rack_session_snapshot(const std::vector<std::uint8_t>& bytes,
         return false;
     }
 
+    const auto checksum_payload = all.subspan(16);
+    if (state_detail::crc32(checksum_payload) != expected_crc) {
+        error = "Rack Session Snapshot checksum failed";
+        return false;
+    }
+
     RackSessionSnapshot candidate{};
     std::copy_n(bytes.begin() + 16, candidate.rack_id.size(), candidate.rack_id.begin());
     if (!rack_id_is_nonzero(candidate.rack_id)) {
@@ -401,11 +411,6 @@ bool decode_rack_session_snapshot(const std::vector<std::uint8_t>& bytes,
     candidate.generation = generation;
 
     const auto body = all.subspan(kRackSessionHeaderBytes, body_size);
-    if (state_detail::crc32(body) != expected_crc) {
-        error = "Rack Session Snapshot checksum failed";
-        return false;
-    }
-
     std::size_t offset = 0;
     candidate.slots.reserve(slot_count);
     for (std::uint32_t index = 0; index < slot_count; ++index) {
