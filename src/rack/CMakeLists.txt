@@ -2,11 +2,13 @@ if(NOT WIN32)
     return()
 endif()
 
+get_filename_component(SAFEVST3_RACK_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+
 add_executable(obs-safe-vst3-rack-host
-    main.cpp
-    ${PROJECT_SOURCE_DIR}/src/host/hosted_plugin.cpp
+    "${CMAKE_CURRENT_LIST_DIR}/main.cpp"
+    "${SAFEVST3_RACK_ROOT}/src/host/hosted_plugin.cpp"
 )
-target_include_directories(obs-safe-vst3-rack-host PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(obs-safe-vst3-rack-host PRIVATE "${SAFEVST3_RACK_ROOT}/src")
 target_link_libraries(obs-safe-vst3-rack-host PRIVATE
     safevst3_vst3_hosting_runtime
     safevst3_lifecycle_policy
