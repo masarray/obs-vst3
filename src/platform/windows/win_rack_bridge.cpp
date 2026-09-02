@@ -3,6 +3,7 @@
 #include "platform/windows/win_rack_bridge.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
 #include <sstream>
 
@@ -281,11 +282,11 @@ bool WinRackBridge::process(float* const* channels,
     }
 
     const std::uint32_t sequence = next_sequence_++;
-    long request_generation = next_request_generation_++;
-    if (request_generation <= 0) {
-        next_request_generation_ = 2;
-        request_generation = 1;
-    }
+    const long request_generation = next_request_generation_;
+    if (next_request_generation_ >= LONG_MAX)
+        next_request_generation_ = 1;
+    else
+        ++next_request_generation_;
 
     region_->frames = frames;
     region_->block_channels = channel_count;
