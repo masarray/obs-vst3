@@ -1,0 +1,39 @@
+name: R1-3 Rack Topology Tracer
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r1-3-rack-topology.yml'
+      - '.github/workflows/compat-test-build.yml'
+      - 'tests/r1_1/**'
+      - 'tests/r1_2/**'
+      - 'tests/r1_3/**'
+      - 'src/rack/**'
+      - 'src/host/hosted_plugin.cpp'
+      - 'src/host/hosted_plugin.hpp'
+      - 'src/host/process_block_view.hpp'
+      - 'src/common/vst3_host_contract.hpp'
+      - 'src/common/protocol.hpp'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r1-3-rack-topology-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-rack-topology:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure deterministic R1-3 integration
+        run: cmake -S tests/r1_3 -B build/r1-3 -A x64
+      - name: Build Rack helper and deterministic topology fixtures
+        run: cmake --build build/r1-3 --config Release --target r1-3-rack-topology-integration --parallel
+      - name: Run real immutable Rack topology tracer
+        run: ctest --test-dir build/r1-3 -C Release --output-on-failure
