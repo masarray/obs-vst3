@@ -124,6 +124,27 @@ void publish_result(RackSharedAudioRegion& region, HANDLE response, long generat
     SetEvent(response);
 }
 
+void copy_original_dry(RackSharedAudioRegion& region,
+                       std::uint32_t channels,
+                       std::uint32_t frames) noexcept
+{
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        for (std::uint32_t frame = 0; frame < frames; ++frame)
+            region.output[ch][frame] = region.input[ch][frame];
+    }
+}
+
+void copy_current_output(RackSharedAudioRegion& region,
+                         float* const* current,
+                         std::uint32_t channels,
+                         std::uint32_t frames) noexcept
+{
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        for (std::uint32_t frame = 0; frame < frames; ++frame)
+            region.output[ch][frame] = current[ch][frame];
+    }
+}
+
 void dsp_loop(Endpoint& endpoint, HostedPlugin& plugin_a, HostedPlugin& plugin_b) noexcept
 {
     RackBuffers buffers;
@@ -148,28 +169,52 @@ void dsp_loop(Endpoint& endpoint, HostedPlugin& plugin_a, HostedPlugin& plugin_b
         const std::uint32_t frames = endpoint.region->frames;
         const std::uint32_t channels = endpoint.region->block_channels;
         const std::uint64_t sequence = endpoint.region->sequence;
+        const long bypass_mask = InterlockedCompareExchange(&endpoint.region->bypass_mask, 0, 0);
         if (frames == 0 || frames > kMaxFrames || channels == 0 || channels > kMaxChannels ||
-            channels != endpoint.region->channels) {
+            channels != endpoint.region->channels ||
+            (bypass_mask & ~safevst3::rack::kRackKnownBypassMask) != 0) {
+            InterlockedExchange(&endpoint.region->total_latency_samples, 0);
             publish_result(*endpoint.region, endpoint.response, generation, RackProcessResult::InvalidBlock);
             continue;
         }
 
-        ProcessBlockView block_a{rack_input, ping, channels, frames, sequence};
-        if (!plugin_a.process(block_a)) {
-            publish_result(*endpoint.region, endpoint.response, generation, RackProcessResult::PluginAError);
-            continue;
+        const bool bypass_a = (bypass_mask & safevst3::rack::kRackBypassSlotA) != 0;
+        const bool bypass_b = (bypass_mask & safevst3::rack::kRackBypassSlotB) != 0;
+        const std::uint32_t total_latency =
+            (bypass_a ? 0u : plugin_a.latency_samples()) +
+            (bypass_b ? 0u : plugin_b.latency_samples());
+        InterlockedExchange(&endpoint.region->total_latency_samples,
+                            static_cast<long>(total_latency));
+
+        float** current = rack_input;
+
+        if (!bypass_a) {
+            ProcessBlockView block_a{current, ping, channels, frames, sequence};
+            if (!plugin_a.process(block_a)) {
+                for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                    for (std::uint32_t frame = 0; frame < frames; ++frame)
+                        endpoint.region->output[ch][frame] = endpoint.region->input[ch][frame];
+                }
+                publish_result(*endpoint.region, endpoint.response, generation,
+                               RackProcessResult::PluginAError);
+                continue;
+            }
+            current = ping;
         }
 
-        ProcessBlockView block_b{ping, pong, channels, frames, sequence};
-        if (!plugin_b.process(block_b)) {
-            publish_result(*endpoint.region, endpoint.response, generation, RackProcessResult::PluginBError);
-            continue;
+        if (!bypass_b) {
+            float** b_output = current == ping ? pong : ping;
+            ProcessBlockView block_b{current, b_output, channels, frames, sequence};
+            if (!plugin_b.process(block_b)) {
+                copy_original_dry(*endpoint.region, channels, frames);
+                publish_result(*endpoint.region, endpoint.response, generation,
+                               RackProcessResult::PluginBError);
+                continue;
+            }
+            current = b_output;
         }
 
-        for (std::uint32_t ch = 0; ch < channels; ++ch) {
-            for (std::uint32_t frame = 0; frame < frames; ++frame)
-                endpoint.region->output[ch][frame] = buffers.pong[ch][frame];
-        }
+        copy_current_output(*endpoint.region, current, channels, frames);
         publish_result(*endpoint.region, endpoint.response, generation, RackProcessResult::Ok);
     }
 }
@@ -178,7 +223,7 @@ int run(const Options& options)
 {
     Endpoint endpoint;
     if (!endpoint.open(options)) {
-        std::cerr << "R1-1 Rack helper could not open transport\n";
+        std::cerr << "R1-2 Rack helper could not open transport\n";
         return 3;
     }
     if (endpoint.region->magic != safevst3::rack::kRackProtocolMagic ||
