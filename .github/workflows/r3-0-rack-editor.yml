@@ -1,0 +1,32 @@
+name: R3-0 Rack Editor Bridge
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r3-0-rack-editor.yml'
+      - 'src/rack/**'
+      - 'tests/r3_0/**'
+      - 'scripts/r3-0-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3-0-rack-editor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-editor-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure deterministic R3-0 editor bridge contract
+        shell: pwsh
+        run: cmake -S tests/r3_0 -B build/r3-0 -A x64
+      - name: Build production-contract tracer
+        shell: pwsh
+        run: cmake --build build/r3-0 --config Release --target r3-0-rack-editor-contract --parallel
+      - name: Run immutable snapshot/command contract
+        shell: pwsh
+        run: ctest --test-dir build/r3-0 -C Release --output-on-failure
