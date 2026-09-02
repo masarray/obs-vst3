@@ -452,8 +452,19 @@ void dsp_loop(Endpoint& endpoint, GenerationStore& store) noexcept
         }
 
         write_shared_generation(endpoint.region->processed_chain_generation, generation->number);
-        float** current = rack_input;
+
+        // Latency metadata is a property of the complete active immutable
+        // generation for this block, not of how far processing happened to get
+        // before a vendor failure. Calculate it first in one bounded pre-pass.
         std::uint32_t total_latency = 0;
+        for (std::uint32_t slot_index = 0; slot_index < generation->slot_count; ++slot_index) {
+            const RackGenerationSlot& slot = generation->slots[slot_index];
+            if (!slot_bypassed(slot.id, bypass_mask))
+                total_latency += slot.latency_samples;
+        }
+        endpoint.region->total_latency_samples = total_latency;
+
+        float** current = rack_input;
         bool block_ok = true;
         RackProcessResult block_result = RackProcessResult::Ok;
 
@@ -462,7 +473,6 @@ void dsp_loop(Endpoint& endpoint, GenerationStore& store) noexcept
             if (slot_bypassed(slot.id, bypass_mask))
                 continue;
 
-            total_latency += slot.latency_samples;
             float** next_output = current == ping ? pong : ping;
             ProcessBlockView block{current, next_output, channels, frames, sequence};
             if (!slot.plugin->process(block)) {
@@ -473,7 +483,6 @@ void dsp_loop(Endpoint& endpoint, GenerationStore& store) noexcept
             current = next_output;
         }
 
-        endpoint.region->total_latency_samples = total_latency;
         if (!block_ok) {
             copy_original_dry(*endpoint.region, channels, frames);
             release_generation(store, generation_index);
