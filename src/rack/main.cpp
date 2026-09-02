@@ -173,7 +173,7 @@ void dsp_loop(Endpoint& endpoint, HostedPlugin& plugin_a, HostedPlugin& plugin_b
         if (frames == 0 || frames > kMaxFrames || channels == 0 || channels > kMaxChannels ||
             channels != endpoint.region->channels ||
             (bypass_mask & ~safevst3::rack::kRackKnownBypassMask) != 0) {
-            InterlockedExchange(&endpoint.region->total_latency_samples, 0);
+            endpoint.region->total_latency_samples = 0;
             publish_result(*endpoint.region, endpoint.response, generation, RackProcessResult::InvalidBlock);
             continue;
         }
@@ -183,18 +183,14 @@ void dsp_loop(Endpoint& endpoint, HostedPlugin& plugin_a, HostedPlugin& plugin_b
         const std::uint32_t total_latency =
             (bypass_a ? 0u : plugin_a.latency_samples()) +
             (bypass_b ? 0u : plugin_b.latency_samples());
-        InterlockedExchange(&endpoint.region->total_latency_samples,
-                            static_cast<long>(total_latency));
+        endpoint.region->total_latency_samples = total_latency;
 
         float** current = rack_input;
 
         if (!bypass_a) {
             ProcessBlockView block_a{current, ping, channels, frames, sequence};
             if (!plugin_a.process(block_a)) {
-                for (std::uint32_t ch = 0; ch < channels; ++ch) {
-                    for (std::uint32_t frame = 0; frame < frames; ++frame)
-                        endpoint.region->output[ch][frame] = endpoint.region->input[ch][frame];
-                }
+                copy_original_dry(*endpoint.region, channels, frames);
                 publish_result(*endpoint.region, endpoint.response, generation,
                                RackProcessResult::PluginAError);
                 continue;
