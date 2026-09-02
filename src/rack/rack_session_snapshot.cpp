@@ -22,6 +22,7 @@ constexpr std::uint32_t kRackSessionBypassFlag = 1u << 0;
 enum class FileReadStatus {
     Ok,
     Missing,
+    Invalid,
     Error,
 };
 
@@ -91,11 +92,13 @@ bool validate_slot_identity(const RackSessionSlotSnapshot& slot, std::string& er
         error = "Rack Session Snapshot slot ID is invalid";
         return false;
     }
-    if (slot.plugin_path.empty() || slot.plugin_path.size() > kRackSessionMaxPluginPathBytes) {
+    if (slot.plugin_path.empty() || slot.plugin_path.size() > kRackSessionMaxPluginPathBytes ||
+        slot.plugin_path.find('\0') != std::string::npos) {
         error = "Rack Session Snapshot plug-in path is invalid or oversized";
         return false;
     }
-    if (slot.class_id.empty() || slot.class_id.size() > kRackSessionMaxClassIdBytes) {
+    if (slot.class_id.empty() || slot.class_id.size() > kRackSessionMaxClassIdBytes ||
+        slot.class_id.find('\0') != std::string::npos) {
         error = "Rack Session Snapshot class identity is invalid or oversized";
         return false;
     }
@@ -172,11 +175,15 @@ FileReadStatus read_file_bytes(const std::filesystem::path& path,
     }
 
     LARGE_INTEGER size{};
-    if (!GetFileSizeEx(file, &size) || size.QuadPart < 0 ||
-        static_cast<std::uint64_t>(size.QuadPart) > kRackSessionMaxSnapshotBytes) {
-        error = "Rack Session Snapshot file size is invalid or oversized";
+    if (!GetFileSizeEx(file, &size)) {
+        error = win32_error("GetFileSizeEx(Rack Session Snapshot)");
         CloseHandle(file);
         return FileReadStatus::Error;
+    }
+    if (size.QuadPart < 0 || static_cast<std::uint64_t>(size.QuadPart) > kRackSessionMaxSnapshotBytes) {
+        error = "Rack Session Snapshot file size is invalid or oversized";
+        CloseHandle(file);
+        return FileReadStatus::Invalid;
     }
 
     bytes.resize(static_cast<std::size_t>(size.QuadPart));
@@ -218,8 +225,10 @@ bool read_and_decode(const std::filesystem::path& path,
     status = read_file_bytes(path, bytes, error);
     if (status != FileReadStatus::Ok)
         return false;
-    if (!decode_rack_session_snapshot(bytes, snapshot, error))
+    if (!decode_rack_session_snapshot(bytes, snapshot, error)) {
+        status = FileReadStatus::Invalid;
         return false;
+    }
     if (raw)
         *raw = std::move(bytes);
     return true;
@@ -311,8 +320,8 @@ bool encode_rack_session_snapshot(const RackSessionSnapshot& snapshot,
 
         const std::size_t required = kRackSessionSlotHeaderBytes + slot.plugin_path.size() +
                                      slot.class_id.size() + state_blob.size();
-        if (required > kRackSessionMaxSnapshotBytes ||
-            body.size() > kRackSessionMaxSnapshotBytes - required - kRackSessionHeaderBytes) {
+        const std::size_t max_body_bytes = kRackSessionMaxSnapshotBytes - kRackSessionHeaderBytes;
+        if (required > max_body_bytes || body.size() > max_body_bytes - required) {
             error = "Rack Session Snapshot exceeds the maximum encoded size";
             return false;
         }
@@ -330,7 +339,7 @@ bool encode_rack_session_snapshot(const RackSessionSnapshot& snapshot,
     }
 
     if (body.size() > std::numeric_limits<std::uint32_t>::max() ||
-        kRackSessionHeaderBytes + body.size() > kRackSessionMaxSnapshotBytes) {
+        body.size() > kRackSessionMaxSnapshotBytes - kRackSessionHeaderBytes) {
         error = "Rack Session Snapshot body exceeds the supported file size";
         return false;
     }
@@ -365,9 +374,11 @@ bool decode_rack_session_snapshot(const std::vector<std::uint8_t>& bytes,
     std::uint32_t expected_crc = 0;
     std::uint64_t generation = 0;
     std::uint32_t slot_count = 0;
+    std::uint32_t header_reserved = 0;
     if (!read_u32(all, 0, magic) || !read_u32(all, 4, version) ||
         !read_u32(all, 8, body_size) || !read_u32(all, 12, expected_crc) ||
-        !read_u64(all, 32, generation) || !read_u32(all, 40, slot_count)) {
+        !read_u64(all, 32, generation) || !read_u32(all, 40, slot_count) ||
+        !read_u32(all, 44, header_reserved)) {
         error = "Rack Session Snapshot header is invalid";
         return false;
     }
@@ -375,7 +386,7 @@ bool decode_rack_session_snapshot(const std::vector<std::uint8_t>& bytes,
         error = "Rack Session Snapshot format is unsupported";
         return false;
     }
-    if (generation == 0 || slot_count > kRackMaxSlots ||
+    if (generation == 0 || slot_count > kRackMaxSlots || header_reserved != 0 ||
         body_size != bytes.size() - kRackSessionHeaderBytes) {
         error = "Rack Session Snapshot header metadata is invalid";
         return false;
@@ -409,12 +420,14 @@ bool decode_rack_session_snapshot(const std::vector<std::uint8_t>& bytes,
         std::uint32_t path_size = 0;
         std::uint32_t class_size = 0;
         std::uint32_t state_size = 0;
+        std::uint32_t slot_reserved = 0;
         if (!read_u64(body, offset, slot_id) ||
             !read_u32(body, offset + 8, flags) ||
             !read_u32(body, offset + 12, health_value) ||
             !read_u32(body, offset + 16, path_size) ||
             !read_u32(body, offset + 20, class_size) ||
-            !read_u32(body, offset + 24, state_size)) {
+            !read_u32(body, offset + 24, state_size) ||
+            !read_u32(body, offset + 28, slot_reserved)) {
             error = "Rack Session Snapshot slot header is invalid";
             return false;
         }
@@ -422,7 +435,7 @@ bool decode_rack_session_snapshot(const std::vector<std::uint8_t>& bytes,
 
         const auto health = static_cast<RackPersistedSlotHealth>(health_value);
         if (slot_id == 0 || !slot_id_is_unique(candidate.slots, slot_id) ||
-            (flags & ~kRackSessionBypassFlag) != 0 || !health_is_valid(health) ||
+            (flags & ~kRackSessionBypassFlag) != 0 || !health_is_valid(health) || slot_reserved != 0 ||
             path_size == 0 || path_size > kRackSessionMaxPluginPathBytes ||
             class_size == 0 || class_size > kRackSessionMaxClassIdBytes ||
             state_size < kStateBlobHeaderBytes ||
@@ -445,6 +458,11 @@ bool decode_rack_session_snapshot(const std::vector<std::uint8_t>& bytes,
         offset += path_size;
         slot.class_id.assign(reinterpret_cast<const char*>(body.data() + offset), class_size);
         offset += class_size;
+        if (slot.plugin_path.find('\0') != std::string::npos ||
+            slot.class_id.find('\0') != std::string::npos) {
+            error = "Rack Session Snapshot plug-in identity contains embedded NUL data";
+            return false;
+        }
 
         PluginStateSnapshot state;
         if (!decode_state_blob(body.subspan(offset, state_size), state, error))
@@ -502,11 +520,7 @@ bool write_rack_session_snapshot_atomic(const std::filesystem::path& path,
     FileReadStatus current_status = FileReadStatus::Missing;
     const bool current_valid = read_and_decode(path, current_snapshot, &current_bytes,
                                                current_error, current_status);
-    if (!current_valid && current_status == FileReadStatus::Error && current_bytes.empty() &&
-        current_error.find("checksum") == std::string::npos &&
-        current_error.find("format") == std::string::npos &&
-        current_error.find("truncated") == std::string::npos &&
-        current_error.find("invalid") == std::string::npos) {
+    if (!current_valid && current_status == FileReadStatus::Error) {
         error = current_error;
         return false;
     }
@@ -524,8 +538,12 @@ bool write_rack_session_snapshot_atomic(const std::filesystem::path& path,
         return false;
 
     RackSessionSnapshot temp_validation;
+    std::vector<std::uint8_t> temp_bytes;
     FileReadStatus temp_status = FileReadStatus::Missing;
-    if (!read_and_decode(temp_path, temp_validation, nullptr, error, temp_status)) {
+    if (!read_and_decode(temp_path, temp_validation, &temp_bytes, error, temp_status) ||
+        temp_bytes != candidate_bytes) {
+        if (error.empty())
+            error = "Rack Session Snapshot temp read-back did not match the candidate bytes";
         DeleteFileW(temp_path.c_str());
         return false;
     }
@@ -536,9 +554,14 @@ bool write_rack_session_snapshot_atomic(const std::filesystem::path& path,
     }
 
     RackSessionSnapshot readback;
+    std::vector<std::uint8_t> readback_bytes;
     FileReadStatus readback_status = FileReadStatus::Missing;
-    if (!read_and_decode(path, readback, nullptr, error, readback_status))
+    if (!read_and_decode(path, readback, &readback_bytes, error, readback_status) ||
+        readback_bytes != candidate_bytes) {
+        if (error.empty())
+            error = "Rack Session Snapshot atomic read-back did not match the candidate bytes";
         return false;
+    }
     return true;
 }
 
@@ -572,7 +595,8 @@ bool load_rack_session_snapshot_lkg(const std::filesystem::path& path,
     if (current_status == FileReadStatus::Missing && previous_status == FileReadStatus::Missing)
         error = "Rack Session Snapshot and previous LKG do not exist";
     else if (!current_error.empty() && !previous_error.empty())
-        error = "Rack Session Snapshot current invalid (" + current_error + "); previous LKG invalid (" + previous_error + ")";
+        error = "Rack Session Snapshot current invalid/unreadable (" + current_error +
+                "); previous LKG invalid/unreadable (" + previous_error + ")";
     else if (!current_error.empty())
         error = current_error;
     else
