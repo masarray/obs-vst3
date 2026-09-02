@@ -6,6 +6,7 @@ get_filename_component(SAFEVST3_RACK_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSO
 
 add_executable(obs-safe-vst3-rack-host
     "${CMAKE_CURRENT_LIST_DIR}/main.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/rack_session_snapshot.cpp"
     "${SAFEVST3_RACK_ROOT}/src/host/hosted_plugin.cpp"
 )
 target_include_directories(obs-safe-vst3-rack-host PRIVATE "${SAFEVST3_RACK_ROOT}/src")
