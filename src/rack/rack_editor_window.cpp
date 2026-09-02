@@ -214,18 +214,18 @@ struct RackEditorWindow::Impl {
 
         std::unique_lock lifecycle_lock(lifecycle_mutex);
         if (thread_running) {
-            const bool ready = lifecycle_cv.wait_for(
+            const bool stopped_or_visible = lifecycle_cv.wait_for(
                 lifecycle_lock, std::chrono::seconds(5), [&] {
-                    return creation_attempted || !thread_running;
+                    const HWND current = hwnd.load(std::memory_order_acquire);
+                    return !thread_running || (current && IsWindow(current));
                 });
-            if (!ready)
+            if (!stopped_or_visible)
                 return false;
-            const HWND current = hwnd.load(std::memory_order_acquire);
-            if (current && IsWindow(current)) {
+            if (HWND current = hwnd.load(std::memory_order_acquire);
+                current && IsWindow(current)) {
                 PostMessageW(current, kForegroundMessage, 0, 0);
                 return true;
             }
-            return false;
         }
 
         if (window_thread.joinable()) {
