@@ -32,6 +32,7 @@ target_compile_definitions(r2-1-stateful-b-fixture PRIVATE WIN32_LEAN_AND_MEAN N
 
 add_executable(r2-1-rack-session-snapshot-integration
     "${CMAKE_CURRENT_LIST_DIR}/rack_session_snapshot_integration.cpp"
+    "${SAFEVST3_ROOT}/src/rack/rack_session_snapshot.cpp"
     "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
 )
 target_include_directories(r2-1-rack-session-snapshot-integration PRIVATE "${SAFEVST3_ROOT}/src")
