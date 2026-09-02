@@ -46,7 +46,7 @@ struct alignas(64) RackSharedAudioRegion {
     volatile long response_generation = 0;
     volatile long process_result = static_cast<long>(RackProcessResult::Ok);
     volatile long bypass_mask = 0;
-    volatile long total_latency_samples = 0;
+    std::uint32_t total_latency_samples = 0;
     std::uint32_t sequence = 0;
     std::uint32_t frames = 0;
     std::uint32_t block_channels = 0;
