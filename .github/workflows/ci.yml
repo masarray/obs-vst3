@@ -56,7 +56,7 @@ jobs:
         run: |
           $Payload = 'installer\windows\payload'
           New-Item -ItemType Directory -Force -Path $Payload, 'dist' | Out-Null
-          foreach ($Name in @('obs-safe-vst3.dll', 'obs-safe-vst3-host.exe', 'obs-safe-vst3-scanner.exe', 'en-US.ini')) {
+          foreach ($Name in @('obs-safe-vst3.dll', 'obs-safe-vst3-host.exe', 'obs-safe-vst3-rack-host.exe', 'obs-safe-vst3-scanner.exe', 'en-US.ini')) {
             Set-Content -Path (Join-Path $Payload $Name) -Value 'CI installer syntax payload' -Encoding ASCII
           }
       - name: Ensure Inno Setup 6
@@ -175,7 +175,7 @@ jobs:
 
       - name: Build OBS module and runtime companions
         shell: pwsh
-        run: cmake --build build/module --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-scanner protocol-layout-test --parallel
+        run: cmake --build build/module --config Release --target obs-safe-vst3 obs-safe-vst3-host obs-safe-vst3-rack-host obs-safe-vst3-scanner protocol-layout-test --parallel
 
       - name: Test module build
         shell: pwsh
