@@ -16,10 +16,7 @@ else()
         GIT_TAG ${SAFEVST3_IMGUI_COMMIT}
         GIT_SHALLOW FALSE
     )
-    FetchContent_GetProperties(safevst3_rack_imgui_source)
-    if(NOT safevst3_rack_imgui_source_POPULATED)
-        FetchContent_Populate(safevst3_rack_imgui_source)
-    endif()
+    FetchContent_MakeAvailable(safevst3_rack_imgui_source)
     set(_safevst3_imgui_source "${safevst3_rack_imgui_source_SOURCE_DIR}")
 endif()
 
