@@ -12,17 +12,23 @@ if(NOT protocol MATCHES "kRackProtocolVersion = [1-9][0-9]*")
     message(FATAL_ERROR "Rack protocol must have its own explicit nonzero version")
 endif()
 
-# R1-1's enduring contract is strict A -> B serial processing through the
-# protocol-neutral HostedPlugin seam, not a frozen v1 transport layout. R1-2
-# may add bypass/fail-dry control while the active A/B path stays ordered.
-if(NOT source MATCHES "ProcessBlockView block_a\\{current, ping")
-    message(FATAL_ERROR "Rack DSP active slot A must process current input into ping")
+# R1-1's enduring contract is ordered serial HostedPlugin processing. Later
+# tickets may replace fixed A/B statements with an immutable ordered generation,
+# but every active slot must consume current and publish the next serial buffer.
+if(NOT source MATCHES "initial.slots\\[0\\].*kRackSlotIdA")
+    message(FATAL_ERROR "initial Rack generation must begin with stable slot A")
 endif()
-if(NOT source MATCHES "current = ping")
-    message(FATAL_ERROR "Rack DSP must publish slot A output as the next serial input")
+if(NOT source MATCHES "initial.slots\\[1\\].*kRackSlotIdB")
+    message(FATAL_ERROR "initial Rack generation must preserve A then B order")
 endif()
-if(NOT source MATCHES "ProcessBlockView block_b\\{current, b_output")
-    message(FATAL_ERROR "Rack DSP active slot B must consume the serial current input")
+if(NOT source MATCHES "ProcessBlockView block\\{current, next_output")
+    message(FATAL_ERROR "Rack DSP must process each active generation slot from current into next output")
+endif()
+if(NOT source MATCHES "slot.plugin->process\\(block\\)")
+    message(FATAL_ERROR "Rack DSP must invoke HostedPlugin through the protocol-neutral block seam")
+endif()
+if(NOT source MATCHES "current = next_output")
+    message(FATAL_ERROR "Rack DSP must feed each successful slot output into the next serial slot")
 endif()
 if(NOT source MATCHES "std::array<std::array<float, kMaxFrames>, kMaxChannels> ping")
     message(FATAL_ERROR "Rack DSP must own preallocated ping storage")
@@ -31,9 +37,6 @@ if(NOT source MATCHES "std::array<std::array<float, kMaxFrames>, kMaxChannels> p
     message(FATAL_ERROR "Rack DSP must own preallocated pong storage")
 endif()
 
-# Guard the small Rack source against project-owned heap APIs. Startup's
-# std::string/std::thread runtime internals are not project-owned DSP
-# allocations and are outside the normal block loop.
 foreach(forbidden IN ITEMS "std::vector" "push_back" "resize(" "new " "malloc(" "calloc(" "realloc(" "make_unique" "make_shared")
     string(FIND "${source}" "${forbidden}" found)
     if(NOT found EQUAL -1)
