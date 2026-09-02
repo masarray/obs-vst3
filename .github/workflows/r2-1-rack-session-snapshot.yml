@@ -1,0 +1,41 @@
+name: R2-1 Rack Session Snapshot
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r2-1-rack-session-snapshot.yml'
+      - '.github/workflows/compat-test-build.yml'
+      - 'tests/r0_2/**'
+      - 'tests/r1_1/**'
+      - 'tests/r1_2/**'
+      - 'tests/r1_3/**'
+      - 'tests/r1_4/**'
+      - 'tests/r2_1/**'
+      - 'src/rack/**'
+      - 'src/host/hosted_plugin.cpp'
+      - 'src/host/hosted_plugin.hpp'
+      - 'src/common/state_snapshot.hpp'
+      - 'src/common/vst3_host_contract.hpp'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r2-1-rack-session-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-rack-session-snapshot:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure deterministic R2-1 persistence integration
+        run: cmake -S tests/r2_1 -B build/r2-1 -A x64
+      - name: Build stateful VST3 fixtures and snapshot integration
+        run: cmake --build build/r2-1 --config Release --target r2-1-rack-session-snapshot-integration --parallel
+      - name: Run Rack Session Snapshot round-trip and LKG recovery
+        run: ctest --test-dir build/r2-1 -C Release --output-on-failure
