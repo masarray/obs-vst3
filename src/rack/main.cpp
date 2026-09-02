@@ -18,6 +18,7 @@ using safevst3::HostedPlugin;
 using safevst3::ProcessBlockView;
 using safevst3::kMaxChannels;
 using safevst3::kMaxFrames;
+using safevst3::rack::RackBreadcrumbPhase;
 using safevst3::rack::RackHostStatus;
 using safevst3::rack::RackProcessResult;
 using safevst3::rack::RackSharedAudioRegion;
@@ -173,6 +174,42 @@ struct GenerationStore {
 void write_shared_generation(volatile std::int64_t& destination, std::uint64_t value) noexcept
 {
     InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&destination), static_cast<LONG64>(value));
+}
+
+void publish_process_breadcrumb(RackSharedAudioRegion& region,
+                                std::uint64_t chain_generation,
+                                std::uint64_t sequence,
+                                RackSlotId slot_id,
+                                std::uint64_t dsp_progress) noexcept
+{
+    InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(&region.breadcrumb_epoch));
+    region.breadcrumb_chain_generation = static_cast<std::int64_t>(chain_generation);
+    region.breadcrumb_audio_sequence = static_cast<std::int64_t>(sequence);
+    region.breadcrumb_slot_id = slot_id;
+    InterlockedExchange(&region.breadcrumb_phase, static_cast<long>(RackBreadcrumbPhase::Process));
+    region.breadcrumb_dsp_progress = static_cast<std::int64_t>(dsp_progress);
+    MemoryBarrier();
+    InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(&region.breadcrumb_epoch));
+    MemoryBarrier();
+}
+
+void clear_rack_breadcrumb(RackSharedAudioRegion& region) noexcept
+{
+    InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(&region.breadcrumb_epoch));
+    region.breadcrumb_chain_generation = 0;
+    region.breadcrumb_audio_sequence = 0;
+    region.breadcrumb_slot_id = 0;
+    InterlockedExchange(&region.breadcrumb_phase, static_cast<long>(RackBreadcrumbPhase::None));
+    region.breadcrumb_dsp_progress = 0;
+    MemoryBarrier();
+    InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(&region.breadcrumb_epoch));
+    MemoryBarrier();
+}
+
+std::uint64_t advance_dsp_progress(RackSharedAudioRegion& region) noexcept
+{
+    return static_cast<std::uint64_t>(InterlockedIncrement64(
+        reinterpret_cast<volatile LONG64*>(&region.dsp_progress_generation)));
 }
 
 void publish_result(RackSharedAudioRegion& region, HANDLE response, long request_generation,
@@ -475,7 +512,12 @@ void dsp_loop(Endpoint& endpoint, GenerationStore& store) noexcept
 
             float** next_output = current == ping ? pong : ping;
             ProcessBlockView block{current, next_output, channels, frames, sequence};
-            if (!slot.plugin->process(block)) {
+            const std::uint64_t dsp_progress = advance_dsp_progress(*endpoint.region);
+            publish_process_breadcrumb(*endpoint.region, generation->number, sequence,
+                                       slot.id, dsp_progress);
+            const bool slot_ok = slot.plugin->process(block);
+            clear_rack_breadcrumb(*endpoint.region);
+            if (!slot_ok) {
                 block_ok = false;
                 block_result = process_error_for_slot(slot.id);
                 break;
@@ -490,6 +532,7 @@ void dsp_loop(Endpoint& endpoint, GenerationStore& store) noexcept
             continue;
         }
 
+        clear_rack_breadcrumb(*endpoint.region);
         copy_current_output(*endpoint.region, current, channels, frames);
         release_generation(store, generation_index);
         publish_result(*endpoint.region, endpoint.response, request_generation, RackProcessResult::Ok);
@@ -510,7 +553,7 @@ int run(const Options& options)
 {
     Endpoint endpoint;
     if (!endpoint.open(options)) {
-        std::cerr << "R1-3 Rack helper could not open transport\n";
+        std::cerr << "R1-4 Rack helper could not open transport\n";
         return 3;
     }
     if (endpoint.region->magic != safevst3::rack::kRackProtocolMagic ||
@@ -521,6 +564,8 @@ int run(const Options& options)
         SetEvent(endpoint.ready);
         return 4;
     }
+
+    clear_rack_breadcrumb(*endpoint.region);
 
     HostedPlugin plugin_a;
     HostedPlugin plugin_b;
