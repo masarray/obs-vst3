@@ -29,8 +29,10 @@ if(PLUGIN MATCHES "obs_safe_vst3_rack_filter")
     message(FATAL_ERROR "R3-1 must not inject Rack identity into the proven Single implementation")
 endif()
 if(NOT SINGLE_WRAPPER MATCHES "single_obs_module_load" OR
+   NOT SINGLE_WRAPPER MATCHES "extern \"C\" bool single_obs_module_load" OR
+   NOT SINGLE_WRAPPER MATCHES "extern \"C\" void single_obs_module_unload" OR
    NOT SINGLE_WRAPPER MATCHES "#include \"plugin.cpp\"")
-    message(FATAL_ERROR "R3-1 must compose the unchanged Single implementation through the dedicated wrapper")
+    message(FATAL_ERROR "R3-1 must compose unchanged Single code with explicit internal entrypoint linkage")
 endif()
 if(NOT RACK_FILTER MATCHES "obs_safe_vst3_rack_filter")
     message(FATAL_ERROR "R3-1 must freeze a distinct Rack internal filter ID")
@@ -44,8 +46,14 @@ if(NOT RACK_FILTER MATCHES "OBS_SOURCE_TYPE_FILTER" OR NOT RACK_FILTER MATCHES "
 endif()
 if(NOT RACK_FILTER MATCHES "obs_properties_create" OR
    NOT RACK_FILTER MATCHES "obs_properties_add_button2" OR
-   NOT RACK_FILTER MATCHES "RackOpen")
-    message(FATAL_ERROR "R3-1 Rack Properties must be a public thin Open Rack launcher/status surface")
+   NOT RACK_FILTER MATCHES "RackOpen" OR
+   NOT RACK_FILTER MATCHES "RackSummary")
+    message(FATAL_ERROR "R3-1 Rack Properties must expose summary/status plus the public Open Rack launcher")
+endif()
+if(NOT RACK_FILTER MATCHES "RackAudioReadGuard" OR
+   NOT RACK_FILTER MATCHES "audio_readers" OR
+   NOT RACK_FILTER MATCHES "bridge_mutex")
+    message(FATAL_ERROR "R3-1 Rack adapter must protect helper lifetime across realtime audio and non-RT Properties teardown")
 endif()
 foreach(FORBIDDEN IN ITEMS "QWidget" "QObject" "Qt6::" "ImGui" "D3D11" "InstalledVST3" "RescanVST3" "CustomVST3Path")
     if(RACK_FILTER MATCHES "${FORBIDDEN}")
@@ -67,9 +75,10 @@ if(NOT INSTALLER_TEXT MATCHES "obs-safe-vst3-rack-host.exe")
     message(FATAL_ERROR "Windows installer must install/clean the Rack helper")
 endif()
 if(NOT LOCALE_TEXT MATCHES "SafeVST3RackFilter" OR
+   NOT LOCALE_TEXT MATCHES "RackSummary" OR
    NOT LOCALE_TEXT MATCHES "RackOpen" OR
    NOT LOCALE_TEXT MATCHES "RackStatus")
-    message(FATAL_ERROR "R3-1 must provide normal-user Rack filter/launcher/status strings")
+    message(FATAL_ERROR "R3-1 must provide normal-user Rack summary/status/launcher strings")
 endif()
 
 message(STATUS "R3-1 separate OBS Rack launcher/status source contract passed")
