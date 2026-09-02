@@ -17,15 +17,20 @@ endif()
 if(NOT source MATCHES "ProcessBlockView block_b\\{ping, pong")
     message(FATAL_ERROR "Rack DSP must process slot B from ping into pong")
 endif()
-
-string(REGEX MATCH "void dsp_loop[\\s\\S]*int run" dsp_section "${source}")
-if(dsp_section STREQUAL "")
-    message(FATAL_ERROR "Could not isolate Rack DSP loop for allocation contract")
+if(NOT source MATCHES "std::array<std::array<float, kMaxFrames>, kMaxChannels> ping")
+    message(FATAL_ERROR "Rack DSP must own preallocated ping storage")
 endif()
+if(NOT source MATCHES "std::array<std::array<float, kMaxFrames>, kMaxChannels> pong")
+    message(FATAL_ERROR "Rack DSP must own preallocated pong storage")
+endif()
+
+# R1-1's Rack source is intentionally small. Guard the whole file against
+# project-owned heap APIs; startup's std::string/std::thread runtime internals
+# are not project-owned DSP allocations and are outside the block loop.
 foreach(forbidden IN ITEMS "std::vector" "push_back" "resize(" "new " "malloc(" "calloc(" "realloc(" "make_unique" "make_shared")
-    string(FIND "${dsp_section}" "${forbidden}" found)
+    string(FIND "${source}" "${forbidden}" found)
     if(NOT found EQUAL -1)
-        message(FATAL_ERROR "Normal Rack DSP loop contains allocation-capable token: ${forbidden}")
+        message(FATAL_ERROR "Rack source contains allocation-capable token: ${forbidden}")
     endif()
 endforeach()
 
