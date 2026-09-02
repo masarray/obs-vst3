@@ -140,6 +140,12 @@ void cleanup_snapshot_files(const std::filesystem::path& path)
     std::filesystem::remove(path.string() + ".previous.tmp", ignored);
 }
 
+void corrupt_current_file(const std::filesystem::path& path, const char* marker)
+{
+    std::ofstream corrupt(path, std::ios::binary | std::ios::trunc);
+    corrupt << marker;
+}
+
 bool test_codec_negatives(const RackSessionSnapshot& good)
 {
     std::string error;
@@ -159,12 +165,24 @@ bool test_codec_negatives(const RackSessionSnapshot& good)
     ok &= expect(sentinel.generation == 999,
                  "failed decode must not mutate caller's known-good snapshot");
 
-    auto corrupt = encoded;
-    corrupt.back() ^= 0x5a;
-    ok &= expect(!safevst3::rack::decode_rack_session_snapshot(corrupt, sentinel, error),
-                 "checksum-corrupt snapshot must be rejected");
+    auto corrupt_body = encoded;
+    corrupt_body.back() ^= 0x5a;
+    ok &= expect(!safevst3::rack::decode_rack_session_snapshot(corrupt_body, sentinel, error),
+                 "checksum-corrupt slot payload must be rejected");
     ok &= expect(sentinel.generation == 999,
-                 "checksum failure must not mutate known-good snapshot");
+                 "payload checksum failure must not mutate known-good snapshot");
+
+    auto corrupt_identity = encoded;
+    corrupt_identity[16] ^= 0x01;
+    ok &= expect(!safevst3::rack::decode_rack_session_snapshot(corrupt_identity, sentinel, error),
+                 "checksum must protect stable Rack identity metadata");
+    ok &= expect(sentinel.generation == 999,
+                 "header checksum failure must not mutate known-good snapshot");
+
+    auto corrupt_generation = encoded;
+    corrupt_generation[32] ^= 0x01;
+    ok &= expect(!safevst3::rack::decode_rack_session_snapshot(corrupt_generation, sentinel, error),
+                 "checksum must protect Rack generation metadata");
 
     RackSessionSnapshot too_many = good;
     while (too_many.slots.size() <= safevst3::rack::kRackMaxSlots)
@@ -203,8 +221,8 @@ bool run_round_trip(const char* module_a, const char* module_b)
                  "slot A state capture must succeed");
     ok &= expect(safevst3::rack::capture_rack_session_slot(
                      plugin_b, safevst3::rack::kRackSlotIdB, module_b, true,
-                     RackPersistedSlotHealth::Ready, slot_b, error),
-                 "slot B state capture must succeed");
+                     RackPersistedSlotHealth::Suspect, slot_b, error),
+                 "slot B state capture must preserve non-default health placeholder metadata");
     ok &= expect(!slot_a.class_id.empty() && !slot_b.class_id.empty(),
                  "logical class identity must come from the opened plugin");
     ok &= expect(slot_a.plugin_path != slot_b.plugin_path,
@@ -223,7 +241,7 @@ bool run_round_trip(const char* module_a, const char* module_b)
     ok &= expect(safevst3::rack::decode_rack_session_snapshot(bytes, decoded, error),
                  "encoded Rack snapshot must decode");
     ok &= expect(same_snapshot(first, decoded),
-                 "encode/decode must preserve Rack ID, generation, order, stable IDs, identity, bypass and state");
+                 "encode/decode must preserve Rack ID, generation, order, stable IDs, identity, bypass, health and state");
     ok &= test_codec_negatives(first);
 
     const auto path = test_snapshot_path();
@@ -277,16 +295,25 @@ bool run_round_trip(const char* module_a, const char* module_b)
     ok &= expect(source == RackSessionLoadSource::Current && same_snapshot(second, current),
                  "second coherent snapshot must become current");
 
-    {
-        std::ofstream corrupt(path, std::ios::binary | std::ios::trunc);
-        corrupt << "corrupt-current";
-    }
+    corrupt_current_file(path, "corrupt-current");
     RackSessionSnapshot recovered{};
     source = RackSessionLoadSource::None;
     ok &= expect(safevst3::rack::load_rack_session_snapshot_lkg(path, recovered, source, error),
                  "corrupt current snapshot must recover from previous LKG");
     ok &= expect(source == RackSessionLoadSource::Previous && same_snapshot(first, recovered),
                  "previous coherent LKG must survive corrupt current replacement");
+
+    RackSessionSnapshot third = second;
+    third.generation = 44;
+    ok &= expect(safevst3::rack::write_rack_session_snapshot_atomic(path, third, error),
+                 "new coherent save must replace corrupt current without rotating corruption over previous LKG");
+    corrupt_current_file(path, "corrupt-third");
+    RackSessionSnapshot recovered_again{};
+    source = RackSessionLoadSource::None;
+    ok &= expect(safevst3::rack::load_rack_session_snapshot_lkg(path, recovered_again, source, error),
+                 "LKG must remain recoverable after saving over a corrupt current file");
+    ok &= expect(source == RackSessionLoadSource::Previous && same_snapshot(first, recovered_again),
+                 "corrupt current must never poison the previous coherent LKG");
 
     cleanup_snapshot_files(path);
     return ok;
