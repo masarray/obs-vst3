@@ -94,6 +94,18 @@ bool run_contract()
 
     const RackUiCommand accepted_move = model.request_move(0xB002, 0);
     ok &= expect(accepted_move.command_id != 0, "second MoveSlot command must have correlation ID");
+
+    RackUiCommandAck non_advancing{};
+    non_advancing.command_id = accepted_move.command_id;
+    non_advancing.result = RackUiCommandResult::Accepted;
+    non_advancing.committed_generation = 7;
+    ok &= expect(!model.apply_ack(non_advancing),
+                 "Accepted ack must prove a generation newer than the command's authoritative base");
+    ok &= expect(model.pending_command(),
+                 "non-advancing Accepted ack must not clear Pending state");
+    ok &= expect(model.snapshot().generation == 7 && model.snapshot().slots[0].slot_id == 0xA001,
+                 "non-advancing Accepted ack must preserve authoritative snapshot");
+
     RackUiCommandAck accepted{};
     accepted.command_id = accepted_move.command_id;
     accepted.result = RackUiCommandResult::Accepted;
