@@ -112,6 +112,13 @@ if(WIN32)
     target_link_libraries(safevst3_win_ipc PUBLIC safevst3_protocol)
     target_compile_definitions(safevst3_win_ipc PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+    add_library(safevst3_win_rack_bridge STATIC
+        src/platform/windows/win_rack_bridge.cpp
+    )
+    target_include_directories(safevst3_win_rack_bridge PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(safevst3_win_rack_bridge PUBLIC safevst3_protocol)
+    target_compile_definitions(safevst3_win_rack_bridge PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
     add_executable(obs-safe-vst3-host
         src/host/main.cpp
         src/host/native_editor.cpp
@@ -133,15 +140,26 @@ if(WIN32)
     if(SAFEVST3_BUILD_OBS_PLUGIN)
         find_package(libobs CONFIG QUIET)
         if(libobs_FOUND)
+            # The graphical Rack dependency remains a separate helper-only
+            # target. Focused Rack tests add this subdirectory themselves with
+            # SAFEVST3_BUILD_OBS_PLUGIN=OFF, so only the shipping OBS build owns
+            # this production inclusion path.
+            if(NOT TARGET obs-safe-vst3-rack-host)
+                add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/src/rack" rack-runtime)
+            endif()
+
             add_library(obs-safe-vst3 MODULE
-                src/obs-plugin/plugin.cpp
+                src/obs-plugin/plugin_single_wrapper.cpp
+                src/obs-plugin/module_entry.cpp
+                src/obs-plugin/rack_filter.cpp
                 src/obs-plugin/parameter_controls.cpp
                 src/obs-plugin/state_store.cpp
             )
             target_include_directories(obs-safe-vst3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
             target_link_libraries(obs-safe-vst3 PRIVATE
-                OBS::libobs safevst3_win_ipc safevst3_source_selection)
+                OBS::libobs safevst3_win_ipc safevst3_win_rack_bridge safevst3_source_selection)
             target_compile_definitions(obs-safe-vst3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+            add_dependencies(obs-safe-vst3 obs-safe-vst3-rack-host)
             if(MSVC)
                 # Force the OBS compatibility floor header before obs-module.h
                 # in every translation unit. OBS_DECLARE_MODULE() therefore
@@ -154,6 +172,9 @@ if(WIN32)
             add_custom_command(TARGET obs-safe-vst3 POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     $<TARGET_FILE:obs-safe-vst3-host>
+                    $<TARGET_FILE_DIR:obs-safe-vst3>
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:obs-safe-vst3-rack-host>
                     $<TARGET_FILE_DIR:obs-safe-vst3>
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     $<TARGET_FILE:obs-safe-vst3-scanner>
