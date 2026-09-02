@@ -1,1 +1,0 @@
-Expected RED symbols: RackBreadcrumbPhase, read_rack_breadcrumb, RackFailureConfidence, classify_rack_helper_death, RackRecoveryPolicy.
