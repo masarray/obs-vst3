@@ -9,7 +9,7 @@ namespace safevst3::rack {
 // Independent Rack transport contract. Deliberately does not include or extend
 // common/protocol.hpp, whose bytes/version remain the Single Host contract.
 inline constexpr std::uint32_t kRackProtocolMagic = 0x33565352u; // "RSV3"
-inline constexpr std::uint32_t kRackProtocolVersion = 3;
+inline constexpr std::uint32_t kRackProtocolVersion = 4;
 
 using RackSlotId = std::uint64_t;
 inline constexpr std::uint32_t kRackMaxSlots = 8;
@@ -50,6 +50,18 @@ enum class RackTopologyResult : long {
     GenerationBusy = 4,
 };
 
+enum class RackBreadcrumbPhase : long {
+    None = 0,
+    Load = 1,
+    RestoreState = 2,
+    Process = 3,
+    CaptureState = 4,
+    OpenEditor = 5,
+    CloseEditor = 6,
+    LifecycleRestart = 7,
+    RackUiControl = 8,
+};
+
 struct alignas(64) RackSharedAudioRegion {
     std::uint32_t magic = kRackProtocolMagic;
     std::uint32_t version = kRackProtocolVersion;
@@ -87,6 +99,20 @@ struct alignas(64) RackSharedAudioRegion {
     std::uint32_t committed_slot_count = 0;
     std::uint32_t reserved2 = 0;
     RackSlotId committed_slot_ids[kRackMaxSlots]{};
+
+    // R1-4 diagnostic breadcrumb. breadcrumb_epoch is a tiny seqlock: odd
+    // means a writer is mutating the fields, even means a coherent snapshot.
+    // A process crash after the even publication leaves the parent enough
+    // evidence to identify the work that was active without claiming proof of
+    // plug-in guilt. The active breadcrumb is cleared after vendor work returns.
+    volatile std::int64_t breadcrumb_epoch = 0;
+    volatile std::int64_t breadcrumb_chain_generation = 0;
+    volatile std::int64_t breadcrumb_audio_sequence = 0;
+    RackSlotId breadcrumb_slot_id = 0;
+    volatile long breadcrumb_phase = static_cast<long>(RackBreadcrumbPhase::None);
+    std::uint32_t reserved3 = 0;
+    volatile std::int64_t breadcrumb_dsp_progress = 0;
+    volatile std::int64_t dsp_progress_generation = 0;
 
     alignas(64) float input[kMaxChannels][kMaxFrames]{};
     alignas(64) float output[kMaxChannels][kMaxFrames]{};

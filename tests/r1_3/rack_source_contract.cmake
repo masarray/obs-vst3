@@ -5,8 +5,11 @@ string(FIND "${PROTOCOL_TEXT}" "#include \"common/protocol.hpp\"" SINGLE_PROTOCO
 if(NOT SINGLE_PROTOCOL_INCLUDE EQUAL -1)
     message(FATAL_ERROR "Rack protocol must remain independent from Single common/protocol.hpp")
 endif()
-if(NOT PROTOCOL_TEXT MATCHES "kRackProtocolVersion = 3")
-    message(FATAL_ERROR "R1-3 changed Rack topology transport must have protocol version 3")
+# R1-3 introduced the independently versioned immutable-topology contract at
+# v3. Later Rack tickets may extend that binary layout; the enduring R1-3
+# invariant is therefore v3-or-newer, not a forever-frozen literal v3.
+if(NOT PROTOCOL_TEXT MATCHES "kRackProtocolVersion = ([3-9]|[1-9][0-9]+)")
+    message(FATAL_ERROR "R1-3 topology transport requires independent Rack protocol v3 or newer")
 endif()
 if(NOT PROTOCOL_TEXT MATCHES "using RackSlotId = std::uint64_t")
     message(FATAL_ERROR "R1-3 requires stable slot identity independent of order")
