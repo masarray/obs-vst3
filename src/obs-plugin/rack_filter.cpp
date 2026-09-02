@@ -120,7 +120,8 @@ void* rack_create(obs_data_t*, obs_source_t* context)
         filter->channels = static_cast<std::uint32_t>(get_audio_channels(audio_info.speakers));
     }
 
-    if (filter->sample_rate == 0 || filter->channels == 0 || filter->channels > rack::kMaxChannels) {
+    if (filter->sample_rate == 0 || filter->channels == 0 ||
+        filter->channels > safevst3::kMaxChannels) {
         filter->startup_error = "Unsupported OBS audio layout";
     } else {
         (void)start_rack_bridge(*filter);
@@ -229,11 +230,11 @@ obs_audio_data* rack_filter_audio(void* data, obs_audio_data* audio)
     if (!bridge || !bridge->running())
         return audio;
 
-    if (audio->frames == 0 || audio->frames > rack::kMaxFrames ||
-        filter->channels == 0 || filter->channels > rack::kMaxChannels)
+    if (audio->frames == 0 || audio->frames > safevst3::kMaxFrames ||
+        filter->channels == 0 || filter->channels > safevst3::kMaxChannels)
         return audio;
 
-    float* planes[rack::kMaxChannels]{};
+    float* planes[safevst3::kMaxChannels]{};
     for (std::uint32_t ch = 0; ch < filter->channels; ++ch) {
         if (!audio->data[ch])
             return audio;
