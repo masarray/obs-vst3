@@ -87,7 +87,7 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
         error = "Rack helper executable not found";
         return false;
     }
-    if (sample_rate == 0 || channels == 0 || channels > rack::kMaxChannels) {
+    if (sample_rate == 0 || channels == 0 || channels > kMaxChannels) {
         error = "Rack supports mono/stereo audio only";
         return false;
     }
@@ -114,7 +114,7 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
     region_->version = rack::kRackProtocolVersion;
     region_->sample_rate = sample_rate;
     region_->channels = channels;
-    region_->max_frames = rack::kMaxFrames;
+    region_->max_frames = kMaxFrames;
     region_->host_status = static_cast<long>(rack::RackHostStatus::Booting);
     region_->process_result = static_cast<long>(rack::RackProcessResult::Ok);
 
@@ -264,7 +264,7 @@ bool WinRackBridge::process(float* const* channels,
                             double deadline_fraction) noexcept
 {
     if (!running() || !channels || channel_count == 0 ||
-        channel_count > rack::kMaxChannels || frames == 0 || frames > rack::kMaxFrames ||
+        channel_count > kMaxChannels || frames == 0 || frames > kMaxFrames ||
         channel_count != region_->channels)
         return false;
 
