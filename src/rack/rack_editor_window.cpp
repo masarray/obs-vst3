@@ -382,7 +382,7 @@ struct RackEditorWindow::Impl {
         wc.style = CS_CLASSDC;
         wc.lpfnWndProc = rack_editor_window_proc;
         wc.hInstance = instance;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         wc.lpszClassName = kRackEditorWindowClassName;
         if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
             mark_creation(false);
