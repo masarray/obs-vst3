@@ -8,12 +8,14 @@
 #include <media-io/audio-io.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace safevst3::obsrack {
@@ -21,14 +23,45 @@ namespace {
 
 constexpr char kRackStatus[] = "rack_status";
 constexpr char kRackOpen[] = "rack_open";
+constexpr unsigned kDestroyDrainAttempts = 100;
 
 struct RackFilter {
     obs_source_t* context = nullptr;
     std::unique_ptr<WinRackBridge> bridge;
+    std::mutex bridge_mutex;
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
     std::atomic<bool> shutting_down{false};
+    std::atomic<std::uint32_t> audio_readers{0};
     std::string startup_error;
+};
+
+class RackAudioReadGuard {
+public:
+    explicit RackAudioReadGuard(RackFilter* filter) noexcept : filter_(filter)
+    {
+        if (!filter_)
+            return;
+        filter_->audio_readers.fetch_add(1, std::memory_order_acq_rel);
+        if (filter_->shutting_down.load(std::memory_order_acquire)) {
+            filter_->audio_readers.fetch_sub(1, std::memory_order_release);
+            filter_ = nullptr;
+        }
+    }
+
+    RackAudioReadGuard(const RackAudioReadGuard&) = delete;
+    RackAudioReadGuard& operator=(const RackAudioReadGuard&) = delete;
+
+    ~RackAudioReadGuard()
+    {
+        if (filter_)
+            filter_->audio_readers.fetch_sub(1, std::memory_order_release);
+    }
+
+    bool active() const noexcept { return filter_ != nullptr; }
+
+private:
+    RackFilter* filter_ = nullptr;
 };
 
 std::mutex retired_filters_mutex;
@@ -101,13 +134,35 @@ void rack_destroy(void* data)
     if (!filter)
         return;
 
+    // Publish the shutdown gate before waiting for in-flight realtime readers.
+    // New callbacks may still enter with OBS's stale pointer while destruction
+    // is being serialized, but they observe this flag after taking a reader and
+    // return without touching the bridge.
     filter->shutting_down.store(true, std::memory_order_release);
-    if (filter->bridge)
-        filter->bridge->stop();
+
+    bool drained = false;
+    for (unsigned attempt = 0; attempt < kDestroyDrainAttempts; ++attempt) {
+        if (filter->audio_readers.load(std::memory_order_acquire) == 0) {
+            drained = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    if (drained) {
+        // Properties/control callbacks use this mutex and are non-realtime.
+        // Once the realtime reader frontier is empty, serialize against any
+        // callback already in progress before stopping/unmapping the helper.
+        std::lock_guard lock(filter->bridge_mutex);
+        if (filter->bridge)
+            filter->bridge->stop();
+    }
 
     // OBS owns Properties objects. Keep callback data alive until module unload
     // so removing a Rack while Properties is closing cannot leave a dangling
-    // callback pointer. No async code rebuilds the Properties tree.
+    // callback pointer. If a pathological realtime reader failed to drain in
+    // the bounded window, retaining the live bridge is safer than racing stop;
+    // module unload releases it after OBS has stopped module callbacks.
     std::lock_guard lock(retired_filters_mutex);
     retired_filters.push_back(std::move(filter));
 }
@@ -115,16 +170,23 @@ void rack_destroy(void* data)
 bool open_rack_button(obs_properties_t*, obs_property_t*, void* data)
 {
     auto* filter = static_cast<RackFilter*>(data);
-    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+    if (!filter)
         return false;
-    if (!filter->bridge || !filter->bridge->running())
+
+    std::lock_guard lock(filter->bridge_mutex);
+    if (filter->shutting_down.load(std::memory_order_acquire) ||
+        !filter->bridge || !filter->bridge->running())
         return false;
     return filter->bridge->open_editor();
 }
 
-std::string rack_status_text(const RackFilter* filter)
+std::string rack_status_text(RackFilter* filter)
 {
-    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+    if (!filter)
+        return "Rack unavailable — dry audio remains active";
+
+    std::lock_guard lock(filter->bridge_mutex);
+    if (filter->shutting_down.load(std::memory_order_acquire))
         return "Rack unavailable — dry audio remains active";
 
     if (!filter->bridge || !filter->bridge->running()) {
@@ -153,8 +215,15 @@ obs_properties_t* rack_properties(void* data)
 obs_audio_data* rack_filter_audio(void* data, obs_audio_data* audio)
 {
     auto* filter = static_cast<RackFilter*>(data);
-    if (!filter || !audio || filter->shutting_down.load(std::memory_order_relaxed) ||
-        !filter->bridge || !filter->bridge->running())
+    if (!filter || !audio)
+        return audio;
+
+    RackAudioReadGuard read(filter);
+    if (!read.active())
+        return audio;
+
+    WinRackBridge* bridge = filter->bridge.get();
+    if (!bridge || !bridge->running())
         return audio;
 
     if (audio->frames == 0 || audio->frames > rack::kMaxFrames ||
@@ -168,7 +237,7 @@ obs_audio_data* rack_filter_audio(void* data, obs_audio_data* audio)
         planes[ch] = reinterpret_cast<float*>(audio->data[ch]);
     }
 
-    (void)filter->bridge->process(planes, filter->channels, audio->frames, 0.70);
+    (void)bridge->process(planes, filter->channels, audio->frames, 0.70);
     return audio;
 }
 
