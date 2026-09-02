@@ -5,7 +5,7 @@ endif()
 file(READ "${RACK_PROTOCOL}" protocol)
 file(READ "${RACK_SOURCE}" source)
 
-if(protocol MATCHES "common/protocol\\.hpp")
+if(protocol MATCHES "#include[ \t]+\"common/protocol\\.hpp\"")
     message(FATAL_ERROR "Rack protocol must not depend on the Single protocol")
 endif()
 if(NOT protocol MATCHES "kRackProtocolVersion = 1")
