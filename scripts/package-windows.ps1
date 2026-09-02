@@ -35,6 +35,7 @@ function Find-BuildFile {
 
 $PluginDll = Find-BuildFile 'obs-safe-vst3.dll'
 $HostExe = Find-BuildFile 'obs-safe-vst3-host.exe'
+$RackHostExe = Find-BuildFile 'obs-safe-vst3-rack-host.exe'
 $ScannerExe = Find-BuildFile 'obs-safe-vst3-scanner.exe'
 $LocaleFile = Join-Path $RepoRoot 'data\locale\en-US.ini'
 if (-not (Test-Path $LocaleFile)) {
@@ -51,17 +52,19 @@ New-Item -ItemType Directory -Force -Path $PortableBin, $PortableLocale, $Instal
 
 Copy-Item $PluginDll (Join-Path $PortableBin 'obs-safe-vst3.dll')
 Copy-Item $HostExe (Join-Path $PortableBin 'obs-safe-vst3-host.exe')
+Copy-Item $RackHostExe (Join-Path $PortableBin 'obs-safe-vst3-rack-host.exe')
 Copy-Item $ScannerExe (Join-Path $PortableBin 'obs-safe-vst3-scanner.exe')
 Copy-Item $LocaleFile (Join-Path $PortableLocale 'en-US.ini')
 
 Copy-Item $PluginDll (Join-Path $InstallerPayload 'obs-safe-vst3.dll')
 Copy-Item $HostExe (Join-Path $InstallerPayload 'obs-safe-vst3-host.exe')
+Copy-Item $RackHostExe (Join-Path $InstallerPayload 'obs-safe-vst3-rack-host.exe')
 Copy-Item $ScannerExe (Join-Path $InstallerPayload 'obs-safe-vst3-scanner.exe')
 Copy-Item $LocaleFile (Join-Path $InstallerPayload 'en-US.ini')
 
 $Readme = @"
-OBS Safe VST3 Host v$Version - Phase S Stable
-==============================================
+OBS Safe VST3 Host v$Version
+============================
 
 QUICK INSTALL
 1. Close OBS Studio completely.
@@ -69,41 +72,27 @@ QUICK INSTALL
 3. Verify these files exist:
    obs-plugins\64bit\obs-safe-vst3.dll
    obs-plugins\64bit\obs-safe-vst3-host.exe
+   obs-plugins\64bit\obs-safe-vst3-rack-host.exe
    obs-plugins\64bit\obs-safe-vst3-scanner.exe
    data\obs-plugins\obs-safe-vst3\locale\en-US.ini
-4. Start OBS Studio and add: VST 3.x Plug-in (Safe Host).
-5. Click Rescan Installed Plug-ins.
-6. Select an effect from Installed VST 3 Plug-in, or select Browse / Custom VST3...
-   and browse to a development/non-standard bundle.
-7. Confirm the status becomes:
-   <plug-in name> - Ready - <N> samples latency
-8. Click Open Plug-in Interface to open the vendor's real VST3 editor.
+4. Start OBS Studio.
+5. Add `VST 3.x Plug-in` for the proven one-effect Safe Host, or add `VST3 Rack`
+   for the isolated serial Rack surface.
+6. In VST3 Rack Properties, use Open Rack to show the helper-owned graphical editor.
 
-PHASE S STABLE FEATURES
-- Installed VST3 discovery and isolated per-candidate scanner probing.
-- Native vendor VST3 editor hosted by obs-safe-vst3-host.exe, not obs64.exe.
-- Generic parameter controls as fallback when native editor is unavailable.
-- Full opaque VST3 component + controller state persistence with CRC validation.
-- Last-known-good state checkpoint used for helper recreation.
-- Dedicated MMCSS Pro Audio DSP worker separated from vendor UI/control work.
-- Protocol v6 with separate control and DSP heartbeats.
-- Watchdog recovery for exited or live-but-hung DSP helpers.
-- Bounded exponential restart backoff and stable-run reset.
-- Fixed-capacity control/DSP queues and audio-first bounded command servicing.
-- Fail-closed recovery on processor-delivery/flush/process contract failures.
-- Dry fail-open audio when no valid wet result is available in time.
+CURRENT PRODUCT SHAPE
+- Single VST3 filter keeps the existing isolated helper/scanner/state/recovery workflow.
+- VST3 Rack is a separate OBS filter with a separate helper executable and Rack protocol.
+- Rack Editor is owned by obs-safe-vst3-rack-host.exe, never obs64.exe.
+- A newly created Rack starts as a coherent empty serial Rack and remains dry/pass-through.
+- Graphical add/replace/remove/bypass/browser workflow is delivered by later Rack tickets.
+- Dry fail-open audio remains active whenever a valid isolated wet result is unavailable in time.
 
 CURRENT SCOPE / LIMITATIONS
 - Windows x64 only.
 - Mono/stereo float32 audio effects only.
-- Complete restartComponent() I/O reconfiguration is partial.
-- Sidechain/multiple audio buses are not fully supported.
-- VST3 instruments/MIDI and arbitrary multichannel are not supported.
-- Safe VST3 Rack is a later phase; this release remains one effect per OBS filter.
-- Phase S stable does not guarantee compatibility with every third-party VST3.
-
-The scanner and VST3 DSP run outside OBS. Crash isolation is not a malware sandbox;
-only load plug-ins you trust.
+- Rack v2 remains a serial effects lane; graph routing, sidechain, MIDI/instruments and arbitrary multichannel are out of scope.
+- Third-party compatibility varies; only load plug-ins you trust.
 
 For a normal OBS Studio installation, use the Smart Installer from GitHub Releases.
 To uninstall this manual package, close OBS and run UNINSTALL-MANUAL.cmd from the OBS root.
@@ -123,6 +112,7 @@ if not errorlevel 1 (
 )
 del /Q "obs-plugins\64bit\obs-safe-vst3.dll" 2>NUL
 del /Q "obs-plugins\64bit\obs-safe-vst3-host.exe" 2>NUL
+del /Q "obs-plugins\64bit\obs-safe-vst3-rack-host.exe" 2>NUL
 del /Q "obs-plugins\64bit\obs-safe-vst3-scanner.exe" 2>NUL
 rmdir /S /Q "data\obs-plugins\obs-safe-vst3" 2>NUL
 echo OBS Safe VST3 Host manual files removed.
