@@ -112,7 +112,7 @@ public:
     {
         if (!validate_rack_ui_snapshot(candidate))
             return false;
-        if (has_snapshot_ && candidate.generation < snapshot_.generation)
+        if (has_snapshot_ && candidate.generation <= snapshot_.generation)
             return false;
 
         snapshot_ = candidate;
