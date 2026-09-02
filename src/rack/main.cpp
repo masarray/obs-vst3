@@ -2,10 +2,13 @@
 
 #include "host/hosted_plugin.hpp"
 #include "host/process_block_view.hpp"
+#include "rack/rack_editor_window.hpp"
 #include "rack/rack_protocol.hpp"
+#include "rack/rack_ui_contract.hpp"
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -24,6 +27,12 @@ using safevst3::rack::RackProcessResult;
 using safevst3::rack::RackSharedAudioRegion;
 using safevst3::rack::RackSlotId;
 using safevst3::rack::RackTopologyResult;
+using safevst3::rack::ui::RackEditorWindow;
+using safevst3::rack::ui::RackUiCommand;
+using safevst3::rack::ui::RackUiCommandAck;
+using safevst3::rack::ui::RackUiCommandResult;
+using safevst3::rack::ui::RackUiSlotHealth;
+using safevst3::rack::ui::RackUiSnapshot;
 
 struct Options {
     std::wstring mapping;
@@ -32,10 +41,12 @@ struct Options {
     std::wstring ready_event;
     std::wstring topology_request_event;
     std::wstring topology_response_event;
+    std::wstring ui_open_event;
     std::string plugin_a;
     std::string plugin_b;
     std::string plugin_c;
     bool topology_enabled = false;
+    bool ui_enabled = false;
 };
 
 std::string narrow(const std::wstring& value)
@@ -76,6 +87,8 @@ bool parse_options(int argc, wchar_t** argv, Options& options)
             if (!take(i, options.topology_request_event)) return false;
         } else if (arg == L"--topology-response-event") {
             if (!take(i, options.topology_response_event)) return false;
+        } else if (arg == L"--ui-open-event") {
+            if (!take(i, options.ui_open_event)) return false;
         } else if (arg == L"--plugin-a") {
             if (!take(i, plugin_a)) return false;
         } else if (arg == L"--plugin-b") {
@@ -102,6 +115,7 @@ bool parse_options(int argc, wchar_t** argv, Options& options)
     options.plugin_b = narrow(plugin_b);
     options.plugin_c = narrow(plugin_c);
     options.topology_enabled = all_topology;
+    options.ui_enabled = !options.ui_open_event.empty();
     return true;
 }
 
@@ -112,11 +126,13 @@ struct Endpoint {
     HANDLE ready = nullptr;
     HANDLE topology_request = nullptr;
     HANDLE topology_response = nullptr;
+    HANDLE ui_open = nullptr;
     RackSharedAudioRegion* region = nullptr;
 
     ~Endpoint()
     {
         if (region) UnmapViewOfFile(region);
+        if (ui_open) CloseHandle(ui_open);
         if (topology_response) CloseHandle(topology_response);
         if (topology_request) CloseHandle(topology_request);
         if (ready) CloseHandle(ready);
@@ -142,6 +158,11 @@ struct Endpoint {
             topology_response = OpenEventW(EVENT_MODIFY_STATE, FALSE,
                                            options.topology_response_event.c_str());
             if (!topology_request || !topology_response)
+                return false;
+        }
+        if (options.ui_enabled) {
+            ui_open = OpenEventW(SYNCHRONIZE, FALSE, options.ui_open_event.c_str());
+            if (!ui_open)
                 return false;
         }
         return true;
@@ -324,6 +345,48 @@ void publish_committed_projection(RackSharedAudioRegion& region,
     MemoryBarrier();
 }
 
+template <std::size_t N>
+void copy_ui_text(std::array<char, N>& destination, const std::string& source) noexcept
+{
+    destination.fill('\0');
+    if constexpr (N > 1) {
+        const std::size_t count = std::min<std::size_t>(source.size(), N - 1);
+        std::copy_n(source.data(), count, destination.data());
+    }
+}
+
+RackUiSnapshot build_ui_snapshot(const RackChainGeneration& generation,
+                                 long bypass_mask) noexcept
+{
+    RackUiSnapshot snapshot{};
+    snapshot.generation = generation.number;
+    snapshot.slot_count = generation.slot_count;
+    copy_ui_text(snapshot.rack_name, "VST3 Rack");
+    for (std::uint32_t i = 0; i < generation.slot_count; ++i) {
+        const RackGenerationSlot& source = generation.slots[i];
+        auto& destination = snapshot.slots[i];
+        destination.slot_id = source.id;
+        destination.latency_samples = source.latency_samples;
+        destination.bypass = slot_bypassed(source.id, bypass_mask);
+        destination.health = destination.bypass ? RackUiSlotHealth::Bypassed : RackUiSlotHealth::Ready;
+        if (!destination.bypass)
+            snapshot.total_latency_samples += source.latency_samples;
+        if (source.plugin)
+            copy_ui_text(destination.plugin_name, source.plugin->plugin_name());
+    }
+    return snapshot;
+}
+
+void publish_editor_snapshot(RackEditorWindow* editor,
+                             const RackChainGeneration& generation,
+                             RackSharedAudioRegion& region) noexcept
+{
+    if (!editor)
+        return;
+    const long bypass_mask = InterlockedCompareExchange(&region.bypass_mask, 0, 0);
+    editor->publish_snapshot(build_ui_snapshot(generation, bypass_mask));
+}
+
 bool wait_until_generation_unreachable(GenerationStore& store, std::uint32_t index,
                                        RackSharedAudioRegion& region) noexcept
 {
@@ -362,7 +425,7 @@ void release_generation(GenerationStore& store, std::uint32_t index) noexcept
 
 void control_loop(Endpoint& endpoint, const Options& options, GenerationStore& store,
                   HostedPlugin& plugin_a, HostedPlugin& plugin_b, HostedPlugin& plugin_c,
-                  bool& plugin_c_loaded) noexcept
+                  bool& plugin_c_loaded, RackEditorWindow* editor) noexcept
 {
     std::uint64_t next_chain_generation = 2;
     for (;;) {
@@ -434,8 +497,20 @@ void control_loop(Endpoint& endpoint, const Options& options, GenerationStore& s
 
         store.published_index.store(next_index, std::memory_order_release);
         publish_committed_projection(*endpoint.region, next);
+        publish_editor_snapshot(editor, next, *endpoint.region);
         publish_topology_result(*endpoint.region, endpoint.topology_response, request_generation,
                                 RackTopologyResult::Ok);
+    }
+}
+
+void ui_open_loop(Endpoint& endpoint, RackEditorWindow& editor) noexcept
+{
+    for (;;) {
+        const DWORD wait = WaitForSingleObject(endpoint.ui_open, 100);
+        if (InterlockedCompareExchange(&endpoint.region->shutdown_requested, 0, 0) != 0)
+            break;
+        if (wait == WAIT_OBJECT_0)
+            editor.open_or_foreground();
     }
 }
 
@@ -553,7 +628,7 @@ int run(const Options& options)
 {
     Endpoint endpoint;
     if (!endpoint.open(options)) {
-        std::cerr << "R1-4 Rack helper could not open transport\n";
+        std::cerr << "R3-0 Rack helper could not open transport\n";
         return 3;
     }
     if (endpoint.region->magic != safevst3::rack::kRackProtocolMagic ||
@@ -587,6 +662,19 @@ int run(const Options& options)
     initialize_generation_store(store, plugin_a, plugin_b);
     publish_committed_projection(*endpoint.region, store.generations[0]);
 
+    RackEditorWindow editor([&](const RackUiCommand& command) {
+        RackUiCommandAck ack{};
+        ack.command_id = command.command_id;
+        // R3-0 proves command correlation only. Topology mutation from graphical
+        // MoveSlot belongs to R3-2, so the real helper rejects it without
+        // changing the authoritative generation.
+        ack.result = RackUiCommandResult::Rejected;
+        ack.committed_generation = static_cast<std::uint64_t>(InterlockedCompareExchange64(
+            reinterpret_cast<volatile LONG64*>(&endpoint.region->committed_chain_generation), 0, 0));
+        return ack;
+    });
+    publish_editor_snapshot(&editor, store.generations[0], *endpoint.region);
+
     InterlockedExchange(&endpoint.region->host_status, static_cast<long>(RackHostStatus::Ready));
     MemoryBarrier();
     SetEvent(endpoint.ready);
@@ -595,15 +683,22 @@ int run(const Options& options)
     std::thread control;
     if (options.topology_enabled) {
         control = std::thread([&] {
-            control_loop(endpoint, options, store, plugin_a, plugin_b, plugin_c, plugin_c_loaded);
+            control_loop(endpoint, options, store, plugin_a, plugin_b, plugin_c, plugin_c_loaded,
+                         &editor);
         });
     }
+    std::thread ui_control;
+    if (options.ui_enabled)
+        ui_control = std::thread([&] { ui_open_loop(endpoint, editor); });
 
     dsp.join();
     if (control.joinable())
         control.join();
+    if (ui_control.joinable())
+        ui_control.join();
 
     InterlockedExchange(&endpoint.region->host_status, static_cast<long>(RackHostStatus::ShuttingDown));
+    editor.shutdown();
     if (plugin_c_loaded)
         plugin_c.close();
     plugin_b.close();
@@ -618,7 +713,8 @@ int wmain(int argc, wchar_t** argv)
     if (!parse_options(argc, argv, options)) {
         std::cerr << "usage: obs-safe-vst3-rack-host --mapping <name> --request-event <name> "
                      "--response-event <name> --ready-event <name> --plugin-a <vst3> --plugin-b <vst3> "
-                     "[--topology-request-event <name> --topology-response-event <name> --plugin-c <vst3>]\n";
+                     "[--topology-request-event <name> --topology-response-event <name> --plugin-c <vst3>] "
+                     "[--ui-open-event <name>]\n";
         return 2;
     }
     return run(options);

@@ -1,0 +1,61 @@
+name: R3-0 Rack Editor Bridge
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r3-0-rack-editor.yml'
+      - 'src/rack/**'
+      - 'tests/r3_0/**'
+      - 'scripts/r3-0-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3-0-rack-editor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-editor-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure deterministic R3-0 editor bridge integration
+        shell: pwsh
+        run: cmake -S tests/r3_0 -B build/r3-0 -A x64
+
+      - name: Build real Rack helper and editor lifecycle tracer
+        shell: pwsh
+        run: cmake --build build/r3-0 --config Release --target r3-0-rack-editor-lifecycle r3-0-rack-editor-contract --parallel
+
+      - name: Run immutable command contract and real helper editor lifecycle
+        shell: pwsh
+        run: ctest --test-dir build/r3-0 -C Release --output-on-failure
+
+      - name: Verify helper-only GUI boundary and exact UI-0 pin
+        shell: pwsh
+        run: |
+          $Cmake = Get-Content 'src\rack\CMakeLists.txt' -Raw
+          $EditorHeader = Get-Content 'src\rack\rack_editor_window.hpp' -Raw
+          $EditorSource = Get-Content 'src\rack\rack_editor_window.cpp' -Raw
+          $SessionHeader = Get-Content 'src\rack\rack_session_snapshot.hpp' -Raw
+          $SessionSource = Get-Content 'src\rack\rack_session_snapshot.cpp' -Raw
+          if (-not $Cmake.Contains('01380c579715e62fb9a8d6ec0502c4ea83bfde6e')) {
+            throw 'R3-0 does not use the accepted UI-0 Dear ImGui commit pin'
+          }
+          foreach ($Forbidden in @('obs-module.h', 'OBS::libobs', '<QWidget', '<QObject', 'Qt6::')) {
+            if ($EditorHeader.Contains($Forbidden) -or $EditorSource.Contains($Forbidden)) {
+              throw "Rack editor leaked forbidden OBS/Qt dependency: $Forbidden"
+            }
+          }
+          if ($SessionHeader.Contains('ui_open') -or $SessionSource.Contains('ui_open') -or
+              $SessionHeader.Contains('editor_open') -or $SessionSource.Contains('editor_open')) {
+            throw 'Transient Rack editor-open state leaked into Session Snapshot persistence'
+          }
+          if ($EditorSource -notmatch 'ImGui_ImplWin32' -or $EditorSource -notmatch 'ImGui_ImplDX11') {
+            throw 'Production Rack editor is not using the accepted Win32 + D3D11 backend pair'
+          }
