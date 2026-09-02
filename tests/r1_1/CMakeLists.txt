@@ -52,3 +52,10 @@ add_test(
         $<TARGET_FILE:r1-1-gain-a-fixture>
         $<TARGET_FILE:r1-1-gain-b-fixture>
 )
+add_test(
+    NAME r1-1-rack-source-contract
+    COMMAND ${CMAKE_COMMAND}
+        -DRACK_PROTOCOL=${SAFEVST3_ROOT}/src/rack/rack_protocol.hpp
+        -DRACK_SOURCE=${SAFEVST3_ROOT}/src/rack/main.cpp
+        -P ${CMAKE_CURRENT_LIST_DIR}/rack_source_contract.cmake
+)
