@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/r1-2-rack-safety.yml'
       - '.github/workflows/compat-test-build.yml'
+      - 'tests/r1_1/**'
       - 'tests/r1_2/**'
       - 'src/rack/**'
       - 'src/host/hosted_plugin.cpp'
