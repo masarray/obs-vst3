@@ -49,6 +49,8 @@ bool run_contract()
                  model.snapshot().slots[1].slot_id == 0xB002 &&
                  model.snapshot().slots[2].slot_id == 0xC003,
                  "slot card order must follow immutable snapshot order using stable IDs");
+    ok &= expect(!model.publish_snapshot(initial),
+                 "equal generation must not replace an already authoritative immutable snapshot");
 
     const RackUiCommand move = model.request_move(0xC003, 0);
     ok &= expect(move.command_id != 0, "MoveSlot command must have correlation ID");
@@ -90,13 +92,27 @@ bool run_contract()
     RackUiSnapshot stale = make_snapshot(6);
     ok &= expect(!model.publish_snapshot(stale), "older snapshot generation must be rejected");
 
+    const RackUiCommand accepted_move = model.request_move(0xB002, 0);
+    ok &= expect(accepted_move.command_id != 0, "second MoveSlot command must have correlation ID");
+    RackUiCommandAck accepted{};
+    accepted.command_id = accepted_move.command_id;
+    accepted.result = RackUiCommandResult::Accepted;
+    accepted.committed_generation = 8;
+    ok &= expect(model.apply_ack(accepted), "correlated accepted acknowledgement must be consumed");
+    ok &= expect(model.pending_command(),
+                 "accepted command must remain Pending until its committed snapshot frontier arrives");
+    ok &= expect(model.snapshot().slots[0].slot_id == 0xA001,
+                 "accepted ack alone must not optimistically reorder authoritative cards");
+
     RackUiSnapshot committed = make_snapshot(8);
-    committed.slots[0] = initial.slots[2];
+    committed.slots[0] = initial.slots[1];
     committed.slots[1] = initial.slots[0];
-    committed.slots[2] = initial.slots[1];
-    ok &= expect(model.publish_snapshot(committed), "new authoritative snapshot must publish");
-    ok &= expect(model.snapshot().slots[0].slot_id == 0xC003,
-                 "authoritative committed snapshot may change visible order");
+    committed.slots[2] = initial.slots[2];
+    ok &= expect(model.publish_snapshot(committed), "new authoritative committed snapshot must publish");
+    ok &= expect(!model.pending_command(),
+                 "committed snapshot frontier must clear the correlated Pending state");
+    ok &= expect(model.snapshot().slots[0].slot_id == 0xB002,
+                 "only authoritative committed snapshot may change visible order");
 
     return ok;
 }
