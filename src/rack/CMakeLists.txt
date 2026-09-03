@@ -42,7 +42,7 @@ target_compile_definitions(safevst3_rack_imgui PRIVATE
 target_link_libraries(safevst3_rack_imgui PUBLIC d3d11 dxgi dwmapi)
 
 add_executable(obs-safe-vst3-rack-host
-    "${CMAKE_CURRENT_LIST_DIR}/main_r3_2.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/main_r3_2_hosted.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_plugin_catalog.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_session_snapshot.cpp"
