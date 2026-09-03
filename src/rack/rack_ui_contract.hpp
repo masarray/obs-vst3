@@ -254,6 +254,14 @@ public:
             pending_ = {};
             return true;
         case RackUiCommandResult::Accepted:
+            if (pending_.command.type == RackUiCommandType::RefreshCatalog) {
+                // Refresh acceptance means the isolated scanner request was
+                // queued. Catalog progress/results arrive on their own immutable
+                // catalog-generation stream and must not manufacture a Rack DSP
+                // generation merely to clear a UI command.
+                pending_ = {};
+                return true;
+            }
             if (ack.committed_generation == 0 ||
                 ack.committed_generation <= pending_.requested_from_generation)
                 return false;
