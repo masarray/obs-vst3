@@ -194,6 +194,13 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
         return false;
     }
 
+    // Rack protocol v4 historically publishes Ready immediately before the
+    // helper creates/enters its DSP request worker. Yield one Windows scheduler
+    // interval once at startup so the very first tiny OBS block does not race
+    // that worker creation and consume its sub-millisecond realtime budget.
+    // This does not relax any per-block processing deadline.
+    Sleep(1);
+
     next_sequence_ = 1;
     next_request_generation_ = 1;
     pending_request_generation_ = 0;

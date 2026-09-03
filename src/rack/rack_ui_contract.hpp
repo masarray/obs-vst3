@@ -13,6 +13,7 @@ inline constexpr std::size_t kRackUiVendorBytes = 64;
 
 using RackUiSlotId = std::uint64_t;
 using RackUiCommandId = std::uint64_t;
+using RackUiCatalogEntryId = std::uint64_t;
 
 enum class RackUiSlotHealth : std::uint32_t {
     Ready = 0,
@@ -28,6 +29,11 @@ enum class RackUiCommandType : std::uint32_t {
     None = 0,
     OpenRack = 1,
     MoveSlot = 2,
+    AddSlot = 3,
+    ReplaceSlot = 4,
+    RemoveSlot = 5,
+    SetBypass = 6,
+    RefreshCatalog = 7,
 };
 
 enum class RackUiCommandResult : std::uint32_t {
@@ -60,6 +66,9 @@ struct RackUiCommand {
     RackUiCommandType type = RackUiCommandType::None;
     RackUiSlotId slot_id = 0;
     std::uint32_t target_index = 0;
+    std::uint64_t catalog_generation = 0;
+    RackUiCatalogEntryId catalog_entry_id = 0;
+    bool bypass = false;
 };
 
 struct RackUiCommandAck {
@@ -81,6 +90,24 @@ inline bool rack_ui_health_valid(RackUiSlotHealth health) noexcept
         return true;
     }
     return false;
+}
+
+inline bool rack_ui_can_replace(RackUiSlotHealth health) noexcept
+{
+    return rack_ui_health_valid(health) && health != RackUiSlotHealth::Loading &&
+           health != RackUiSlotHealth::Recovering;
+}
+
+inline bool rack_ui_can_remove(RackUiSlotHealth health) noexcept
+{
+    return rack_ui_health_valid(health) && health != RackUiSlotHealth::Loading &&
+           health != RackUiSlotHealth::Recovering;
+}
+
+inline bool rack_ui_can_bypass(RackUiSlotHealth health) noexcept
+{
+    return health == RackUiSlotHealth::Ready || health == RackUiSlotHealth::Bypassed ||
+           health == RackUiSlotHealth::NeedsAttention;
 }
 
 inline bool validate_rack_ui_snapshot(const RackUiSnapshot& snapshot) noexcept
@@ -130,27 +157,90 @@ public:
             target_index >= snapshot_.slot_count)
             return {};
 
-        std::uint32_t current_index = snapshot_.slot_count;
-        for (std::uint32_t i = 0; i < snapshot_.slot_count; ++i) {
-            if (snapshot_.slots[i].slot_id == slot_id) {
-                current_index = i;
-                break;
-            }
-        }
+        const std::uint32_t current_index = find_slot(slot_id);
         if (current_index == snapshot_.slot_count || current_index == target_index)
             return {};
 
         RackUiCommand command{};
-        command.command_id = next_command_id_++;
-        if (command.command_id == 0)
-            command.command_id = next_command_id_++;
         command.type = RackUiCommandType::MoveSlot;
         command.slot_id = slot_id;
         command.target_index = target_index;
-        pending_.command = command;
-        pending_.requested_from_generation = snapshot_.generation;
-        pending_.accepted_generation = 0;
-        return command;
+        return begin_command(command);
+    }
+
+    RackUiCommand request_add(std::uint64_t catalog_generation,
+                              RackUiCatalogEntryId catalog_entry_id,
+                              std::uint32_t target_index) noexcept
+    {
+        if (!has_snapshot_ || pending_command() || catalog_generation == 0 ||
+            catalog_entry_id == 0 || snapshot_.slot_count >= kRackUiMaxSlots ||
+            target_index > snapshot_.slot_count)
+            return {};
+
+        RackUiCommand command{};
+        command.type = RackUiCommandType::AddSlot;
+        command.target_index = target_index;
+        command.catalog_generation = catalog_generation;
+        command.catalog_entry_id = catalog_entry_id;
+        return begin_command(command);
+    }
+
+    RackUiCommand request_replace(RackUiSlotId slot_id,
+                                  std::uint64_t catalog_generation,
+                                  RackUiCatalogEntryId catalog_entry_id) noexcept
+    {
+        const std::uint32_t index = has_snapshot_ ? find_slot(slot_id) : 0;
+        if (!has_snapshot_ || pending_command() || slot_id == 0 ||
+            catalog_generation == 0 || catalog_entry_id == 0 ||
+            index >= snapshot_.slot_count ||
+            !rack_ui_can_replace(snapshot_.slots[index].health))
+            return {};
+
+        RackUiCommand command{};
+        command.type = RackUiCommandType::ReplaceSlot;
+        command.slot_id = slot_id;
+        command.catalog_generation = catalog_generation;
+        command.catalog_entry_id = catalog_entry_id;
+        return begin_command(command);
+    }
+
+    RackUiCommand request_remove(RackUiSlotId slot_id) noexcept
+    {
+        const std::uint32_t index = has_snapshot_ ? find_slot(slot_id) : 0;
+        if (!has_snapshot_ || pending_command() || slot_id == 0 ||
+            index >= snapshot_.slot_count ||
+            !rack_ui_can_remove(snapshot_.slots[index].health))
+            return {};
+
+        RackUiCommand command{};
+        command.type = RackUiCommandType::RemoveSlot;
+        command.slot_id = slot_id;
+        return begin_command(command);
+    }
+
+    RackUiCommand request_bypass(RackUiSlotId slot_id, bool bypass) noexcept
+    {
+        const std::uint32_t index = has_snapshot_ ? find_slot(slot_id) : 0;
+        if (!has_snapshot_ || pending_command() || slot_id == 0 ||
+            index >= snapshot_.slot_count ||
+            !rack_ui_can_bypass(snapshot_.slots[index].health) ||
+            snapshot_.slots[index].bypass == bypass)
+            return {};
+
+        RackUiCommand command{};
+        command.type = RackUiCommandType::SetBypass;
+        command.slot_id = slot_id;
+        command.bypass = bypass;
+        return begin_command(command);
+    }
+
+    RackUiCommand request_refresh_catalog() noexcept
+    {
+        if (!has_snapshot_ || pending_command())
+            return {};
+        RackUiCommand command{};
+        command.type = RackUiCommandType::RefreshCatalog;
+        return begin_command(command);
     }
 
     bool apply_ack(const RackUiCommandAck& ack) noexcept
@@ -164,6 +254,14 @@ public:
             pending_ = {};
             return true;
         case RackUiCommandResult::Accepted:
+            if (pending_.command.type == RackUiCommandType::RefreshCatalog) {
+                // Refresh acceptance means the isolated scanner request was
+                // queued. Catalog progress/results arrive on their own immutable
+                // catalog-generation stream and must not manufacture a Rack DSP
+                // generation merely to clear a UI command.
+                pending_ = {};
+                return true;
+            }
             if (ack.committed_generation == 0 ||
                 ack.committed_generation <= pending_.requested_from_generation)
                 return false;
@@ -184,6 +282,28 @@ private:
         std::uint64_t requested_from_generation = 0;
         std::uint64_t accepted_generation = 0;
     };
+
+    std::uint32_t find_slot(RackUiSlotId slot_id) const noexcept
+    {
+        for (std::uint32_t i = 0; i < snapshot_.slot_count; ++i) {
+            if (snapshot_.slots[i].slot_id == slot_id)
+                return i;
+        }
+        return snapshot_.slot_count;
+    }
+
+    RackUiCommand begin_command(RackUiCommand command) noexcept
+    {
+        command.command_id = next_command_id_++;
+        if (command.command_id == 0)
+            command.command_id = next_command_id_++;
+        if (command.command_id == 0)
+            return {};
+        pending_.command = command;
+        pending_.requested_from_generation = snapshot_.generation;
+        pending_.accepted_generation = 0;
+        return command;
+    }
 
     RackUiSnapshot snapshot_{};
     PendingState pending_{};

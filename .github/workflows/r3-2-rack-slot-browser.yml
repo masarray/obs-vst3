@@ -1,0 +1,37 @@
+name: R3-2 Rack Slot Browser
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r3-2-rack-slot-browser.yml'
+      - 'src/rack/**'
+      - 'src/scanner/**'
+      - 'tests/r3_2/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3-2-rack-slot-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-slot-browser-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure R3-2 deterministic contracts
+        shell: pwsh
+        run: cmake -S tests/r3_2 -B build/r3-2 -A x64
+
+      - name: Build R3-2 deterministic contracts
+        shell: pwsh
+        run: cmake --build build/r3-2 --config Release --parallel
+
+      - name: Run R3-2 deterministic contracts
+        shell: pwsh
+        run: ctest --test-dir build/r3-2 -C Release --output-on-failure
