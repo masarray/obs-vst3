@@ -28,6 +28,13 @@ target_include_directories(r3-2-rack-slot-workflow PRIVATE "${SAFEVST3_ROOT}/src
 target_compile_definitions(r3-2-rack-slot-workflow PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_dependencies(r3-2-rack-slot-workflow obs-safe-vst3-rack-host obs-safe-vst3-scanner)
 
+add_executable(r3-2-rack-catalog-contract
+    "${CMAKE_CURRENT_LIST_DIR}/rack_catalog_contract.cpp"
+    "${SAFEVST3_ROOT}/src/rack/rack_plugin_catalog.cpp"
+)
+target_include_directories(r3-2-rack-catalog-contract PRIVATE "${SAFEVST3_ROOT}/src")
+target_compile_definitions(r3-2-rack-catalog-contract PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 # Two independently packaged real VST3 bundles reuse the proven R0-2 stateful
 # processor. Their distinct bundle paths provide deterministic catalog/Replace
 # identity while keeping the DSP oracle fixed at gain=0.5, latency=64 samples.
@@ -77,6 +84,7 @@ add_dependencies(r3-2-rack-product-integration
 
 enable_testing()
 add_test(NAME r3-2-rack-slot-workflow COMMAND $<TARGET_FILE:r3-2-rack-slot-workflow>)
+add_test(NAME r3-2-rack-catalog-contract COMMAND $<TARGET_FILE:r3-2-rack-catalog-contract>)
 add_test(
     NAME r3-2-rack-product-integration
     COMMAND $<TARGET_FILE:r3-2-rack-product-integration>
