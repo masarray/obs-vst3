@@ -9,10 +9,11 @@
 #include <d3d11.h>
 #include <windows.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdio>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -177,6 +178,12 @@ std::string bounded_text(const char* data, std::size_t capacity)
 } // namespace
 
 struct RackEditorWindow::Impl {
+    enum class BrowserMode {
+        None,
+        Add,
+        Replace,
+    };
+
     explicit Impl(RackUiCommandHandler handler)
         : command_handler(std::move(handler))
     {
@@ -188,6 +195,18 @@ struct RackEditorWindow::Impl {
     {
         std::lock_guard lock(model_mutex);
         return model.publish_snapshot(snapshot);
+    }
+
+    bool publish_catalog(const PluginCatalogSnapshot& snapshot) noexcept
+    {
+        if (!validate_plugin_catalog_snapshot(snapshot))
+            return false;
+        std::lock_guard lock(model_mutex);
+        if (has_catalog && snapshot.generation <= catalog.generation)
+            return false;
+        catalog = snapshot;
+        has_catalog = true;
+        return true;
     }
 
     bool apply_ack(const RackUiCommandAck& ack) noexcept
@@ -271,10 +290,25 @@ struct RackEditorWindow::Impl {
         return model.has_snapshot() ? model.snapshot() : RackUiSnapshot{};
     }
 
+    PluginCatalogSnapshot catalog_copy() const noexcept
+    {
+        std::lock_guard lock(model_mutex);
+        return has_catalog ? catalog : PluginCatalogSnapshot{};
+    }
+
     bool pending_copy() const noexcept
     {
         std::lock_guard lock(model_mutex);
         return model.pending_command();
+    }
+
+    void dispatch(RackUiCommand command) noexcept
+    {
+        if (command.command_id == 0 || !command_handler)
+            return;
+        const RackUiCommandAck ack = command_handler(command);
+        if (ack.command_id != 0)
+            apply_ack(ack);
     }
 
     void emit_move(RackUiSlotId slot_id, std::uint32_t target_index) noexcept
@@ -284,17 +318,126 @@ struct RackEditorWindow::Impl {
             std::lock_guard lock(model_mutex);
             command = model.request_move(slot_id, target_index);
         }
-        if (command.command_id == 0 || !command_handler)
+        dispatch(command);
+    }
+
+    void emit_bypass(RackUiSlotId slot_id, bool bypass) noexcept
+    {
+        RackUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = model.request_bypass(slot_id, bypass);
+        }
+        dispatch(command);
+    }
+
+    void emit_remove(RackUiSlotId slot_id) noexcept
+    {
+        RackUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = model.request_remove(slot_id);
+        }
+        dispatch(command);
+    }
+
+    void emit_catalog_action(RackCatalogEntryId entry_id) noexcept
+    {
+        const PluginCatalogSnapshot current_catalog = catalog_copy();
+        RackUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            if (browser_mode == BrowserMode::Replace)
+                command = model.request_replace(browser_slot_id, current_catalog.generation, entry_id);
+            else
+                command = model.request_add(current_catalog.generation, entry_id,
+                                            browser_target_index);
+        }
+        if (command.command_id != 0) {
+            browser_mode = BrowserMode::None;
+            browser_slot_id = 0;
+            ImGui::CloseCurrentPopup();
+        }
+        dispatch(command);
+    }
+
+    void emit_refresh() noexcept
+    {
+        RackUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = model.request_refresh_catalog();
+        }
+        dispatch(command);
+    }
+
+    void open_add_browser(std::uint32_t target_index) noexcept
+    {
+        browser_mode = BrowserMode::Add;
+        browser_target_index = target_index;
+        browser_slot_id = 0;
+        browser_open_requested = true;
+    }
+
+    void open_replace_browser(RackUiSlotId slot_id) noexcept
+    {
+        browser_mode = BrowserMode::Replace;
+        browser_slot_id = slot_id;
+        browser_target_index = 0;
+        browser_open_requested = true;
+    }
+
+    void render_browser(const PluginCatalogSnapshot& current_catalog, bool pending)
+    {
+        if (browser_open_requested) {
+            ImGui::OpenPopup("plug-in-browser");
+            browser_open_requested = false;
+        }
+
+        if (!ImGui::BeginPopup("plug-in-browser"))
             return;
 
-        const RackUiCommandAck ack = command_handler(command);
-        if (ack.command_id != 0)
-            apply_ack(ack);
+        ImGui::TextUnformatted(browser_mode == BrowserMode::Replace ? "Replace Effect" : "Add Effect");
+        ImGui::Separator();
+        ImGui::InputTextWithHint("##browser-search", "Search plug-ins...",
+                                 search.data(), search.size());
+
+        if (current_catalog.generation == 0) {
+            ImGui::TextDisabled("No installed plug-in catalog yet.");
+        } else {
+            std::array<std::uint32_t, kRackCatalogMaxEntries> matches{};
+            const std::uint32_t match_count = filter_plugin_catalog(
+                current_catalog, std::string_view(search.data()), matches);
+            if (current_catalog.scanning)
+                ImGui::TextDisabled("Refreshing catalog... existing results remain available");
+            if (match_count == 0)
+                ImGui::TextDisabled("No matching VST3 effects");
+            for (std::uint32_t match = 0; match < match_count; ++match) {
+                const auto& entry = current_catalog.entries[matches[match]];
+                const std::string name = bounded_text(entry.name.data(), entry.name.size());
+                const std::string vendor = bounded_text(entry.vendor.data(), entry.vendor.size());
+                const std::string category = bounded_text(entry.category.data(), entry.category.size());
+                ImGui::PushID(reinterpret_cast<void*>(static_cast<std::uintptr_t>(entry.entry_id)));
+                ImGui::BeginDisabled(pending);
+                if (ImGui::Selectable(name.empty() ? "VST3 Effect" : name.c_str()))
+                    emit_catalog_action(entry.entry_id);
+                ImGui::EndDisabled();
+                if (!vendor.empty() || !category.empty()) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s%s%s", vendor.c_str(),
+                                        (!vendor.empty() && !category.empty()) ? " · " : "",
+                                        category.c_str());
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndPopup();
     }
 
     void render_ui()
     {
         const RackUiSnapshot snapshot = snapshot_copy();
+        const PluginCatalogSnapshot current_catalog = catalog_copy();
         const bool pending = pending_copy();
 
         ImGuiIO& io = ImGui::GetIO();
@@ -318,11 +461,28 @@ struct RackEditorWindow::Impl {
         }
         ImGui::Separator();
 
+        ImGui::SetNextItemWidth(-210.0f);
+        ImGui::InputTextWithHint("##rack-search", "Search plug-ins...", search.data(), search.size());
+        ImGui::SameLine();
+        ImGui::BeginDisabled(pending || snapshot.slot_count >= kRackUiMaxSlots || current_catalog.generation == 0);
+        if (ImGui::Button("Add Effect"))
+            open_add_browser(snapshot.slot_count);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(pending || current_catalog.scanning);
+        if (ImGui::Button("Refresh"))
+            emit_refresh();
+        ImGui::EndDisabled();
+        if (current_catalog.scanning) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("Scanning...");
+        }
+
         ImGui::TextUnformatted("INPUT");
         for (std::uint32_t index = 0; index < snapshot.slot_count; ++index) {
             const RackUiSlotSnapshot& slot = snapshot.slots[index];
             ImGui::PushID(reinterpret_cast<void*>(static_cast<std::uintptr_t>(slot.slot_id)));
-            ImGui::BeginChild("rack-slot-card", ImVec2(0.0f, 94.0f), ImGuiChildFlags_Borders);
+            ImGui::BeginChild("rack-slot-card", ImVec2(0.0f, 126.0f), ImGuiChildFlags_Borders);
 
             const std::string plugin_name = bounded_text(slot.plugin_name.data(), slot.plugin_name.size());
             const std::string vendor = bounded_text(slot.vendor.data(), slot.vendor.size());
@@ -334,6 +494,44 @@ struct RackEditorWindow::Impl {
             }
             ImGui::Text("%s · %u samples%s", health_text(slot.health), slot.latency_samples,
                         slot.bypass ? " · Bypassed" : "");
+
+            ImGui::BeginDisabled(pending || !rack_ui_can_bypass(slot.health));
+            if (ImGui::Button(slot.bypass ? "Enable" : "Bypass"))
+                emit_bypass(slot.slot_id, !slot.bypass);
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(true);
+            ImGui::Button("Open UI"); // R3-3 owns vendor editor orchestration.
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("..."))
+                ImGui::OpenPopup("slot-actions");
+            if (ImGui::BeginPopup("slot-actions")) {
+                ImGui::BeginDisabled(pending || index == 0);
+                if (ImGui::MenuItem("Move Up"))
+                    emit_move(slot.slot_id, index - 1);
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(pending || index + 1 >= snapshot.slot_count);
+                if (ImGui::MenuItem("Move Down"))
+                    emit_move(slot.slot_id, index + 1);
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                ImGui::BeginDisabled(pending || !rack_ui_can_replace(slot.health) || current_catalog.generation == 0);
+                if (ImGui::MenuItem("Replace"))
+                    open_replace_browser(slot.slot_id);
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(pending || snapshot.slot_count >= kRackUiMaxSlots || current_catalog.generation == 0);
+                if (ImGui::MenuItem("Insert Before"))
+                    open_add_browser(index);
+                if (ImGui::MenuItem("Insert After"))
+                    open_add_browser(index + 1);
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(pending || !rack_ui_can_remove(slot.health));
+                if (ImGui::MenuItem("Remove"))
+                    emit_remove(slot.slot_id);
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+            }
 
             if (!pending && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
                 const RackUiSlotId payload = slot.slot_id;
@@ -355,7 +553,11 @@ struct RackEditorWindow::Impl {
             ImGui::EndChild();
             ImGui::PopID();
         }
+        if (snapshot.slot_count == 0)
+            ImGui::TextDisabled("Rack is empty. Search plug-ins and choose Add Effect.");
         ImGui::TextUnformatted("OUTPUT TO OBS");
+
+        render_browser(current_catalog, pending);
         ImGui::End();
     }
 
@@ -380,7 +582,7 @@ struct RackEditorWindow::Impl {
         HINSTANCE instance = GetModuleHandleW(nullptr);
         HWND window = CreateWindowExW(
             0, kRackEditorWindowClassName, L"OBS Safe VST3 Rack",
-            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 820, 620,
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 900, 700,
             nullptr, nullptr, instance, &runtime);
         if (!window) {
             mark_creation(false);
@@ -488,7 +690,6 @@ struct RackEditorWindow::Impl {
                     break;
                 open_requested = false;
             }
-
             run_window_session();
         }
 
@@ -500,6 +701,14 @@ struct RackEditorWindow::Impl {
     RackUiCommandHandler command_handler;
     mutable std::mutex model_mutex;
     RackEditorModel model;
+    PluginCatalogSnapshot catalog{};
+    bool has_catalog = false;
+
+    std::array<char, 160> search{};
+    BrowserMode browser_mode = BrowserMode::None;
+    RackUiSlotId browser_slot_id = 0;
+    std::uint32_t browser_target_index = 0;
+    bool browser_open_requested = false;
 
     std::mutex lifecycle_mutex;
     std::condition_variable lifecycle_cv;
@@ -522,6 +731,11 @@ RackEditorWindow::~RackEditorWindow() = default;
 bool RackEditorWindow::publish_snapshot(const RackUiSnapshot& snapshot) noexcept
 {
     return impl_->publish_snapshot(snapshot);
+}
+
+bool RackEditorWindow::publish_catalog(const PluginCatalogSnapshot& snapshot) noexcept
+{
+    return impl_->publish_catalog(snapshot);
 }
 
 bool RackEditorWindow::apply_ack(const RackUiCommandAck& ack) noexcept
