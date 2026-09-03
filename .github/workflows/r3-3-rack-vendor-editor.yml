@@ -1,0 +1,37 @@
+name: R3-3 Rack Vendor Editor
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r3-3-rack-vendor-editor.yml'
+      - 'src/host/native_editor.*'
+      - 'src/rack/**'
+      - 'tests/r3_3/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3-3-rack-vendor-editor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-vendor-editor-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure R3-3 deterministic contracts
+        shell: pwsh
+        run: cmake -S tests/r3_3 -B build/r3-3 -A x64
+
+      - name: Build R3-3 deterministic contracts
+        shell: pwsh
+        run: cmake --build build/r3-3 --config Release --parallel
+
+      - name: Run R3-3 deterministic contracts
+        shell: pwsh
+        run: ctest --test-dir build/r3-3 -C Release --output-on-failure
