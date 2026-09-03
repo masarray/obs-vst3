@@ -341,6 +341,16 @@ struct RackEditorWindow::Impl {
         dispatch(command);
     }
 
+    void emit_open_vendor_editor(RackUiSlotId slot_id) noexcept
+    {
+        RackUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = model.request_open_vendor_editor(slot_id);
+        }
+        dispatch(command);
+    }
+
     void emit_catalog_action(RackCatalogEntryId entry_id) noexcept
     {
         const PluginCatalogSnapshot current_catalog = catalog_copy();
@@ -500,8 +510,9 @@ struct RackEditorWindow::Impl {
                 emit_bypass(slot.slot_id, !slot.bypass);
             ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::BeginDisabled(true);
-            ImGui::Button("Open UI"); // R3-3 owns vendor editor orchestration.
+            ImGui::BeginDisabled(pending || !rack_ui_can_open_vendor_editor(slot));
+            if (ImGui::Button("Open UI"))
+                emit_open_vendor_editor(slot.slot_id);
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("..."))
