@@ -43,6 +43,13 @@ smtg_add_vst3plugin(r3-2-browser-b-fixture
 target_link_libraries(r3-2-browser-b-fixture PRIVATE sdk)
 target_compile_definitions(r3-2-browser-b-fixture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
+# The integration translation unit includes main_r3_2.cpp directly so it can
+# drive the exact internal command executor and generation store. Force the same
+# Rack-only HostedPlugin wrapper used by the shipping helper before that include.
+set_source_files_properties(
+    "${CMAKE_CURRENT_LIST_DIR}/rack_product_integration.cpp"
+    PROPERTIES COMPILE_OPTIONS "/FI${SAFEVST3_ROOT}/src/rack/rack_hosted_plugin.hpp")
+
 add_executable(r3-2-rack-product-integration
     "${CMAKE_CURRENT_LIST_DIR}/rack_product_integration.cpp"
     "${SAFEVST3_ROOT}/src/rack/rack_editor_window.cpp"
