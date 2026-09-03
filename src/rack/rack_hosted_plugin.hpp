@@ -92,6 +92,11 @@ private:
 // HostedPlugin implementation and Single helper remain unchanged.
 class RackHostedPlugin : public HostedPlugin {
 public:
+    // Derived members are destroyed before the base-class destructor runs. Close
+    // explicitly here so a controller can release its component handler while
+    // handler_ is still alive; HostedPlugin's later close is then idempotent.
+    ~RackHostedPlugin() { close(); }
+
     bool open(const std::string& path,
               const std::string& class_id,
               std::uint32_t sample_rate,
