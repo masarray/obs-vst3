@@ -16,6 +16,8 @@ namespace {
 constexpr std::uint64_t kFnvOffset = 14695981039346656037ull;
 constexpr std::uint64_t kFnvPrime = 1099511628211ull;
 constexpr ULONGLONG kScannerTimeoutMs = 180000;
+constexpr std::size_t kRackCatalogMaxPathBytes = 4096;
+constexpr std::size_t kRackCatalogMaxClassIdBytes = 256;
 
 std::uint64_t fnv1a_append(std::uint64_t hash, std::string_view text) noexcept
 {
@@ -45,6 +47,11 @@ void copy_text(std::array<char, N>& destination, std::string_view source) noexce
     }
 }
 
+bool has_embedded_nul(const std::string& value) noexcept
+{
+    return value.find('\0') != std::string::npos;
+}
+
 bool split_tsv_line(const std::string& line, std::string& name,
                     std::string& path, std::string& class_id) noexcept
 {
@@ -52,12 +59,17 @@ bool split_tsv_line(const std::string& line, std::string& name,
     const std::size_t second = first == std::string::npos
                                    ? std::string::npos
                                    : line.find('\t', first + 1);
-    if (first == std::string::npos || second == std::string::npos)
+    if (first == std::string::npos || second == std::string::npos ||
+        line.find('\t', second + 1) != std::string::npos)
         return false;
     name = line.substr(0, first);
     path = line.substr(first + 1, second - first - 1);
     class_id = line.substr(second + 1);
-    return !name.empty() && !path.empty();
+    if (name.empty() || path.empty() || has_embedded_nul(name) ||
+        has_embedded_nul(path) || has_embedded_nul(class_id))
+        return false;
+    return path.size() <= kRackCatalogMaxPathBytes &&
+           class_id.size() <= kRackCatalogMaxClassIdBytes;
 }
 
 std::wstring quote(const std::wstring& value)
@@ -106,18 +118,23 @@ bool RackPluginCatalog::load_cache(const std::filesystem::path& cache_path) noex
             candidate.generation = 1;
         candidate.scanning = snapshot_.scanning;
 
+        bool saw_nonempty_line = false;
+        bool saw_malformed_line = false;
         std::string line;
         while (std::getline(in, line)) {
             if (line.empty())
                 continue;
+            saw_nonempty_line = true;
             if (candidate.entry_count >= kRackCatalogMaxEntries)
                 break;
 
             std::string name;
             std::string path;
             std::string class_id;
-            if (!split_tsv_line(line, name, path, class_id))
+            if (!split_tsv_line(line, name, path, class_id)) {
+                saw_malformed_line = true;
                 continue;
+            }
 
             const RackCatalogEntryId id = catalog_entry_id(path, class_id);
             bool duplicate_identity = false;
@@ -130,7 +147,9 @@ bool RackPluginCatalog::load_cache(const std::filesystem::path& cache_path) noex
                 hash_collision = !duplicate_identity;
                 break;
             }
-            if (duplicate_identity || hash_collision)
+            if (hash_collision)
+                return false;
+            if (duplicate_identity)
                 continue;
 
             auto& record = candidate_records[candidate.entry_count];
@@ -148,6 +167,11 @@ bool RackPluginCatalog::load_cache(const std::filesystem::path& cache_path) noex
             ++candidate.entry_count;
         }
 
+        // A genuinely empty scanner cache means no installed effects and is a
+        // valid replacement. A non-empty cache containing only malformed rows
+        // is corruption; keep the last valid immutable catalog instead.
+        if (saw_nonempty_line && saw_malformed_line && candidate.entry_count == 0)
+            return false;
         if (!validate_plugin_catalog_snapshot(candidate))
             return false;
         records_ = std::move(candidate_records);
