@@ -150,7 +150,7 @@ public:
     }
 
 private:
-    ~FixturePlugView() override { removed(); }
+    ~FixturePlugView() { removed(); }
 
     std::atomic<uint32> refs_{1};
     HWND child_ = nullptr;
