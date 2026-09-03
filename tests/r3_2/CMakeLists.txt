@@ -28,8 +28,55 @@ target_include_directories(r3-2-rack-slot-workflow PRIVATE "${SAFEVST3_ROOT}/src
 target_compile_definitions(r3-2-rack-slot-workflow PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_dependencies(r3-2-rack-slot-workflow obs-safe-vst3-rack-host obs-safe-vst3-scanner)
 
+# Two independently packaged real VST3 bundles reuse the proven R0-2 stateful
+# processor. Their distinct bundle paths provide deterministic catalog/Replace
+# identity while keeping the DSP oracle fixed at gain=0.5, latency=64 samples.
+smtg_add_vst3plugin(r3-2-browser-a-fixture
+    "${SAFEVST3_ROOT}/tests/r0_2/vst3_hosted_plugin_fixture.cpp"
+)
+target_link_libraries(r3-2-browser-a-fixture PRIVATE sdk)
+target_compile_definitions(r3-2-browser-a-fixture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+smtg_add_vst3plugin(r3-2-browser-b-fixture
+    "${SAFEVST3_ROOT}/tests/r0_2/vst3_hosted_plugin_fixture.cpp"
+)
+target_link_libraries(r3-2-browser-b-fixture PRIVATE sdk)
+target_compile_definitions(r3-2-browser-b-fixture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+add_executable(r3-2-rack-product-integration
+    "${CMAKE_CURRENT_LIST_DIR}/rack_product_integration.cpp"
+    "${SAFEVST3_ROOT}/src/rack/rack_editor_window.cpp"
+    "${SAFEVST3_ROOT}/src/rack/rack_plugin_catalog.cpp"
+    "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
+)
+target_include_directories(r3-2-rack-product-integration PRIVATE "${SAFEVST3_ROOT}/src")
+target_compile_definitions(r3-2-rack-product-integration PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(r3-2-rack-product-integration PRIVATE
+    safevst3_rack_imgui
+    safevst3_vst3_hosting_runtime
+    safevst3_lifecycle_policy
+    safevst3_state_restore_policy
+    safevst3_latency_restart_transaction
+    safevst3_parameter_refresh_transaction
+    safevst3_io_restart_transaction
+    safevst3_reload_component_transaction
+    safevst3_process_context_policy
+)
+add_dependencies(r3-2-rack-product-integration
+    obs-safe-vst3-scanner
+    r3-2-browser-a-fixture
+    r3-2-browser-b-fixture
+)
+
 enable_testing()
 add_test(NAME r3-2-rack-slot-workflow COMMAND $<TARGET_FILE:r3-2-rack-slot-workflow>)
+add_test(
+    NAME r3-2-rack-product-integration
+    COMMAND $<TARGET_FILE:r3-2-rack-product-integration>
+        $<TARGET_FILE:obs-safe-vst3-scanner>
+        $<TARGET_FILE:r3-2-browser-a-fixture>
+        $<TARGET_FILE:r3-2-browser-b-fixture>
+)
 add_test(
     NAME r3-2-rack-slot-source-contract
     COMMAND ${CMAKE_COMMAND}
