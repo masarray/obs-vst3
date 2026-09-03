@@ -45,6 +45,7 @@ struct Options {
     std::string plugin_a;
     std::string plugin_b;
     std::string plugin_c;
+    bool fixture_plugins_enabled = false;
     bool topology_enabled = false;
     bool ui_enabled = false;
 };
@@ -101,7 +102,12 @@ bool parse_options(int argc, wchar_t** argv, Options& options)
     }
 
     if (options.mapping.empty() || options.request_event.empty() || options.response_event.empty() ||
-        options.ready_event.empty() || plugin_a.empty() || plugin_b.empty())
+        options.ready_event.empty())
+        return false;
+
+    const bool has_plugin_a = !plugin_a.empty();
+    const bool has_plugin_b = !plugin_b.empty();
+    if (has_plugin_a != has_plugin_b)
         return false;
 
     const bool any_topology = !options.topology_request_event.empty() ||
@@ -110,10 +116,13 @@ bool parse_options(int argc, wchar_t** argv, Options& options)
                               !options.topology_response_event.empty() && !plugin_c.empty();
     if (any_topology && !all_topology)
         return false;
+    if (all_topology && !has_plugin_a)
+        return false;
 
     options.plugin_a = narrow(plugin_a);
     options.plugin_b = narrow(plugin_b);
     options.plugin_c = narrow(plugin_c);
+    options.fixture_plugins_enabled = has_plugin_a;
     options.topology_enabled = all_topology;
     options.ui_enabled = !options.ui_open_event.empty();
     return true;
@@ -319,6 +328,18 @@ RackProcessResult process_error_for_slot(RackSlotId id) noexcept
     if (id == safevst3::rack::kRackSlotIdB)
         return RackProcessResult::PluginBError;
     return RackProcessResult::PluginCError;
+}
+
+void initialize_empty_generation_store(GenerationStore& store) noexcept
+{
+    auto& initial = store.generations[0];
+    initial = RackChainGeneration{};
+    initial.number = 1;
+    initial.slot_count = 0;
+    store.generations[1] = RackChainGeneration{};
+    store.readers[0].store(0, std::memory_order_relaxed);
+    store.readers[1].store(0, std::memory_order_relaxed);
+    store.published_index.store(0, std::memory_order_release);
 }
 
 void initialize_generation_store(GenerationStore& store, HostedPlugin& plugin_a,
@@ -628,7 +649,7 @@ int run(const Options& options)
 {
     Endpoint endpoint;
     if (!endpoint.open(options)) {
-        std::cerr << "R3-0 Rack helper could not open transport\n";
+        std::cerr << "R3-1 Rack helper could not open transport\n";
         return 3;
     }
     if (endpoint.region->magic != safevst3::rack::kRackProtocolMagic ||
@@ -646,20 +667,25 @@ int run(const Options& options)
     HostedPlugin plugin_b;
     HostedPlugin plugin_c;
     bool plugin_c_loaded = false;
-    if (!open_required_plugin(plugin_a, options.plugin_a, *endpoint.region, "Gain A")) {
-        InterlockedExchange(&endpoint.region->host_status, static_cast<long>(RackHostStatus::Error));
-        SetEvent(endpoint.ready);
-        return 5;
-    }
-    if (!open_required_plugin(plugin_b, options.plugin_b, *endpoint.region, "Gain B")) {
-        InterlockedExchange(&endpoint.region->host_status, static_cast<long>(RackHostStatus::Error));
-        SetEvent(endpoint.ready);
-        plugin_a.close();
-        return 6;
+    if (options.fixture_plugins_enabled) {
+        if (!open_required_plugin(plugin_a, options.plugin_a, *endpoint.region, "Gain A")) {
+            InterlockedExchange(&endpoint.region->host_status, static_cast<long>(RackHostStatus::Error));
+            SetEvent(endpoint.ready);
+            return 5;
+        }
+        if (!open_required_plugin(plugin_b, options.plugin_b, *endpoint.region, "Gain B")) {
+            InterlockedExchange(&endpoint.region->host_status, static_cast<long>(RackHostStatus::Error));
+            SetEvent(endpoint.ready);
+            plugin_a.close();
+            return 6;
+        }
     }
 
     GenerationStore store;
-    initialize_generation_store(store, plugin_a, plugin_b);
+    if (options.fixture_plugins_enabled)
+        initialize_generation_store(store, plugin_a, plugin_b);
+    else
+        initialize_empty_generation_store(store);
     publish_committed_projection(*endpoint.region, store.generations[0]);
 
     RackEditorWindow editor([&](const RackUiCommand& command) {
@@ -701,8 +727,10 @@ int run(const Options& options)
     editor.shutdown();
     if (plugin_c_loaded)
         plugin_c.close();
-    plugin_b.close();
-    plugin_a.close();
+    if (options.fixture_plugins_enabled) {
+        plugin_b.close();
+        plugin_a.close();
+    }
     return 0;
 }
 } // namespace
@@ -712,7 +740,8 @@ int wmain(int argc, wchar_t** argv)
     Options options;
     if (!parse_options(argc, argv, options)) {
         std::cerr << "usage: obs-safe-vst3-rack-host --mapping <name> --request-event <name> "
-                     "--response-event <name> --ready-event <name> --plugin-a <vst3> --plugin-b <vst3> "
+                     "--response-event <name> --ready-event <name> "
+                     "[--plugin-a <vst3> --plugin-b <vst3>] "
                      "[--topology-request-event <name> --topology-response-event <name> --plugin-c <vst3>] "
                      "[--ui-open-event <name>]\n";
         return 2;

@@ -33,6 +33,7 @@ UsePreviousAppDir=no
 [Files]
 Source: "payload\obs-safe-vst3.dll"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
 Source: "payload\obs-safe-vst3-host.exe"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
+Source: "payload\obs-safe-vst3-rack-host.exe"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
 Source: "payload\obs-safe-vst3-scanner.exe"; DestDir: "{code:GetPluginBinDir}"; Flags: ignoreversion
 Source: "payload\en-US.ini"; DestDir: "{code:GetPluginLocaleDir}"; Flags: ignoreversion
 
@@ -46,12 +47,14 @@ Type: filesandordirs; Name: "{userappdata}\obs-studio\plugins\obs-safe-vst3"
 ; other plug-in files in that installation.
 Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3.dll"
 Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3-host.exe"
+Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3-rack-host.exe"
 Type: files; Name: "{code:GetPluginBinDir}\obs-safe-vst3-scanner.exe"
 Type: filesandordirs; Name: "{code:GetPluginDataDir}"
 ; If an earlier installer remembered a different valid OBS root, remove only
 ; this product from that old root before LastObsRoot is updated to the new one.
 Type: files; Name: "{code:GetPreviousPluginBinDir}\obs-safe-vst3.dll"; Check: ShouldCleanPreviousObsRoot
 Type: files; Name: "{code:GetPreviousPluginBinDir}\obs-safe-vst3-host.exe"; Check: ShouldCleanPreviousObsRoot
+Type: files; Name: "{code:GetPreviousPluginBinDir}\obs-safe-vst3-rack-host.exe"; Check: ShouldCleanPreviousObsRoot
 Type: files; Name: "{code:GetPreviousPluginBinDir}\obs-safe-vst3-scanner.exe"; Check: ShouldCleanPreviousObsRoot
 Type: filesandordirs; Name: "{code:GetPreviousPluginDataDir}"; Check: ShouldCleanPreviousObsRoot
 
