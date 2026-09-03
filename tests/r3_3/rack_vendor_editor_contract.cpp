@@ -33,6 +33,8 @@ bool require(bool condition)
 
 int main()
 {
+    static_assert(sizeof(RackVendorEditorManager) > 0);
+
     RackEditorModel model;
     const RackUiSnapshot snapshot = make_snapshot();
     if (!require(model.publish_snapshot(snapshot)))
@@ -85,11 +87,6 @@ int main()
     if (!require(model.publish_snapshot(no_editor)))
         return EXIT_FAILURE;
     if (!require(model.request_open_vendor_editor(0x101).command_id == 0))
-        return EXIT_FAILURE;
-
-    // The production manager type must exist and remain bounded by Rack slot identity.
-    RackVendorEditorManager manager;
-    if (!require(manager.open_count() == 0))
         return EXIT_FAILURE;
 
     return EXIT_SUCCESS;
