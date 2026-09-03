@@ -3,7 +3,8 @@ if(NOT DEFINED ROOT)
 endif()
 
 file(READ "${ROOT}/src/rack/rack_editor_window.cpp" EDITOR)
-file(READ "${ROOT}/src/rack/main.cpp" MAIN)
+file(READ "${ROOT}/src/rack/main_r3_2.cpp" MAIN)
+file(READ "${ROOT}/src/rack/rack_plugin_catalog.cpp" CATALOG)
 file(READ "${ROOT}/src/rack/CMakeLists.txt" RACK_CMAKE)
 
 foreach(REQUIRED_TEXT
@@ -21,15 +22,26 @@ foreach(REQUIRED_TEXT
 endforeach()
 
 foreach(REQUIRED_MAIN_TEXT
-    "obs-safe-vst3-scanner.exe"
-    "plugins.tsv"
     "RackUiCommandType::AddSlot"
     "RackUiCommandType::ReplaceSlot"
     "RackUiCommandType::RemoveSlot"
-    "RackUiCommandType::SetBypass")
+    "RackUiCommandType::SetBypass"
+    "safevst3_r3_1_legacy_run"
+    "run_r3_2_product")
     string(FIND "${MAIN}" "${REQUIRED_MAIN_TEXT}" POS)
     if(POS EQUAL -1)
         message(FATAL_ERROR "R3-2 helper/control contract missing: ${REQUIRED_MAIN_TEXT}")
+    endif()
+endforeach()
+
+foreach(REQUIRED_CATALOG_TEXT
+    "obs-safe-vst3-scanner.exe"
+    "OBS Safe VST3 Host"
+    "plugins.tsv"
+    "--scan-to")
+    string(FIND "${CATALOG}" "${REQUIRED_CATALOG_TEXT}" POS)
+    if(POS EQUAL -1)
+        message(FATAL_ERROR "R3-2 isolated catalog contract missing: ${REQUIRED_CATALOG_TEXT}")
     endif()
 endforeach()
 
