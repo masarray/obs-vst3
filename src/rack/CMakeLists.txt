@@ -46,6 +46,7 @@ add_executable(obs-safe-vst3-rack-host
     "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_plugin_catalog.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_preset_library.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/rack_preset_management.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_session_snapshot.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_vendor_editor_manager.cpp"
     "${SAFEVST3_RACK_ROOT}/src/host/hosted_plugin.cpp"
