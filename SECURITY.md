@@ -1,14 +1,23 @@
 # Security policy
 
-## The important distinction: crash isolation is not a malware sandbox
+## Crash isolation is not a malware sandbox
 
-OBS Safe VST3 Host is designed so third-party VST3 DSP and vendor GUI code run in the external `obs-safe-vst3-host.exe` helper instead of being deliberately loaded inside `obs64.exe`.
+OBS Safe VST3 Host deliberately keeps third-party VST3 DSP and vendor GUI code outside `obs64.exe`:
 
-That process boundary is intended to contain common plug-in crashes and hangs and to let the OBS filter fail open to dry audio while recovery is attempted.
+- the **Single** `VST 3.x Plug-in` filter uses `obs-safe-vst3-host.exe` for one effect;
+- **VST3 Rack** uses one `obs-safe-vst3-rack-host.exe` process per Rack, containing the Rack Editor and up to eight serial VST3 effects.
 
-It does **not** make an untrusted VST3 safe to run. A VST3 is native code and the helper process still runs with the permissions of the current Windows user. A malicious plug-in could use files, network access, operating-system APIs or other resources available to that account.
+These process boundaries are intended to contain common plug-in crashes/hangs and let the OBS-side filter prefer dry/fail-open behavior instead of waiting indefinitely on vendor code.
+
+Rack isolation is **not** one process per slot. A severe Rack-helper failure is a Rack-level process failure. Finer correlated per-slot repeated-failure quarantine/recovery remains hardening work.
+
+The process boundary also does **not** make an untrusted VST3 safe to run. A VST3 is native code and the helper still runs with the permissions of the current Windows user. A malicious plug-in could use files, network access, operating-system APIs or other resources available to that account.
 
 **Only install VST3 software from vendors you trust.**
+
+## Bounded Rack shutdown
+
+v0.6.0 requests Rack shutdown before waiting, wakes the relevant helper IPC paths, and uses a short bounded graceful-exit budget before forcing a stuck Rack helper to terminate. This is a responsiveness/failure-containment measure; it is not a security sandbox.
 
 ## Windows package signing
 
