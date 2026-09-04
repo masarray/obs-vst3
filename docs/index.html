@@ -3,225 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071019">
-  <title>VST3 for OBS Studio – Modern VST3 Plugins, Crash-Isolated</title>
-  <meta name="description" content="OBS does not support VST3 in its built-in VST filter. Use modern VST3 studio effects in OBS with native workflow, broad compatibility and crash-isolated hosting.">
-  <meta name="keywords" content="VST3 for OBS, OBS VST3 plugin, OBS Studio VST3, native OBS VST3, VST3 host OBS, VST3 effects OBS, mastering plugins OBS, studio plugins OBS, safe VST3 OBS">
-  <meta name="author" content="MasArray">
-  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
-  <link rel="canonical" href="https://masarray.github.io/obs-vst3/">
+  <title>OBS Safe VST3 Host — VST3 and VST3 Rack for OBS Studio</title>
+  <meta name="description" content="Native crash-isolated VST3 hosting for OBS Studio on Windows, including a graphical serial VST3 Rack with native plug-in UIs and named presets.">
   <link rel="stylesheet" href="site.css">
-  <meta property="og:type" content="website">
-  <meta property="og:site_name" content="OBS Safe VST3 Host">
-  <meta property="og:title" content="VST3 for OBS Studio – Modern Studio Plugins, Crash-Isolated">
-  <meta property="og:description" content="OBS's built-in VST filter still does not support VST3. Bring modern studio VST3 effects into OBS through a native filter with isolated hosting and recovery.">
-  <meta property="og:url" content="https://masarray.github.io/obs-vst3/">
-  <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="VST3 for OBS Studio – OBS Safe VST3 Host">
-  <meta name="twitter:description" content="Use modern VST3 studio effects in OBS with a native filter, real vendor GUIs and crash-isolated hosting.">
-  <script type="application/ld+json">
-  {
-    "@context":"https://schema.org",
-    "@type":"SoftwareApplication",
-    "name":"OBS Safe VST3 Host",
-    "alternateName":["VST3 for OBS","OBS VST3 Plugin","OBS VST3 Host"],
-    "applicationCategory":"MultimediaApplication",
-    "operatingSystem":"Windows 10, Windows 11",
-    "softwareVersion":"0.5.0",
-    "description":"A native OBS Studio filter for hosting modern VST3 audio effects in a crash-isolated helper process, with automatic discovery, native vendor editors, state persistence and recovery.",
-    "url":"https://masarray.github.io/obs-vst3/",
-    "downloadUrl":"https://github.com/masarray/obs-vst3/releases/latest",
-    "softwareRequirements":"OBS Studio 29.1 or later; Windows x64",
-    "license":"https://www.gnu.org/licenses/gpl-3.0.html",
-    "isAccessibleForFree":true,
-    "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}
-  }
-  </script>
-  <script type="application/ld+json">
-  {
-    "@context":"https://schema.org",
-    "@type":"FAQPage",
-    "mainEntity":[
-      {"@type":"Question","name":"Does OBS Studio support VST3 plug-ins?","acceptedAnswer":{"@type":"Answer","text":"OBS Studio's official built-in VST filter documentation currently lists VST3.x as unsupported. OBS Safe VST3 Host adds a native OBS filter that hosts compatible Windows VST3 audio effects through an isolated helper process."}},
-      {"@type":"Question","name":"Why use OBS Safe VST3 Host instead of a normal VST host?","acceptedAnswer":{"@type":"Answer","text":"It is designed specifically for OBS. Third-party VST3 DSP and vendor GUI code run outside obs64.exe, scanning is isolated, state can be restored, and the filter can keep dry audio when a valid wet block is unavailable."}},
-      {"@type":"Question","name":"Which VST3 plug-ins work with OBS Safe VST3 Host?","acceptedAnswer":{"@type":"Answer","text":"The current stable host targets Windows VST3 audio effects and has real-machine qualification with popular commercial effects from iZotope, FabFilter, Waves, Klevgrand, Neuro Audio and Process Audio. It is not based on a vendor whitelist."}},
-      {"@type":"Question","name":"Can I use mastering plug-ins in OBS?","acceptedAnswer":{"@type":"Answer","text":"Yes, when the VST3 audio effect is compatible with the current host scope. This lets streamers use modern EQ, dynamics, restoration, saturation, reverb, limiting and mastering-style processors directly in an OBS audio filter workflow."}},
-      {"@type":"Question","name":"Will OBS Safe VST3 Host support VST3 instruments and MIDI?","acceptedAnswer":{"@type":"Answer","text":"VST3 instruments and MIDI are roadmap items. The longer-term plan also includes a VST3 rack, chains, routing, sidechain and a live-performance workflow."}}
-    ]
-  }
-  </script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"OBS Safe VST3 Host","softwareVersion":"0.6.0","operatingSystem":"Windows x64","applicationCategory":"MultimediaApplication"}</script>
 </head>
 <body>
-<header class="nav">
-  <div class="wrap navin">
-    <a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a>
-    <nav class="navlinks" aria-label="Main navigation">
-      <a href="#why">Why VST3</a>
-      <a href="compatibility.html">Compatibility</a>
-      <a href="safety.html">Safety</a>
-      <a href="roadmap.html">Roadmap</a>
-      <a href="install.html">Install</a>
-      <a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a>
-    </nav>
+<nav class="nav"><div class="wrap navin"><a class="brand" href="index.html"><span class="mark">V3</span>OBS Safe VST3</a><div class="navlinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download</a></div></div></nav>
+
+<header class="hero"><div class="wrap heroGrid"><div>
+  <span class="eyebrow"><span class="pulse"></span>Stable v0.6.0 · VST3 Rack is here</span>
+  <h1><span class="gradient">VST3 in OBS.</span><br>Single or full Rack.</h1>
+  <p class="lead">Use modern VST3 audio effects in OBS Studio without deliberately loading vendor DSP/UI code into <code>obs64.exe</code>. Choose the proven single-effect Safe Host or build a graphical serial Rack with up to eight effects.</p>
+  <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.0</a><a class="btn secondary" href="install.html">Installation guide</a></div>
+  <div class="trustline"><span><b>✓</b> Windows x64</span><span><b>✓</b> OBS 29.1+</span><span><b>✓</b> Native VST3 editors</span><span><b>✓</b> Rack presets</span></div>
+</div>
+<div class="mock"><div class="mockTop"><span>OBS SAFE VST3 RACK</span><span class="dots"><i></i><i></i><i></i></span></div>
+  <div class="form">
+    <div class="status"><i></i>Ready · 3 effects · aggregate latency</div>
+    <div class="field"><label>PRESET</label><div class="control"><span>Broadcast Vocal</span><span>Save As · Update · …</span></div></div>
+    <div class="field"><label>SIGNAL CHAIN</label><div class="control"><span>01 · Vocal Enhancer</span><span>Ready · Open UI</span></div></div>
+    <div class="field"><div class="control"><span>02 · Compressor</span><span>Ready · Bypass</span></div></div>
+    <div class="field"><div class="control"><span>03 · Limiter</span><span>Ready · Open UI</span></div></div>
+    <div class="openBtn">+ Add Effect</div>
   </div>
-</header>
+</div></div></header>
 
-<main>
-  <section class="hero">
-    <div class="wrap heroGrid">
-      <div>
-        <div class="eyebrow"><span class="pulse"></span> Public stable v0.5.0 · Windows x64</div>
-        <h1><span class="gradient">OBS still doesn't support VST3.</span> Your studio plug-ins shouldn't stop at the stream.</h1>
-        <p class="lead">Bring modern VST3 audio effects into OBS through a native filter built for live use. Use the real plug-in GUI, keep third-party VST3 code outside <code>obs64.exe</code>, and bring studio/mastering-grade processing tools into your livestream workflow.</p>
-        <div class="actions">
-          <a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.5.0 stable</a>
-          <a class="btn secondary" href="install.html">Beginner install guide</a>
-        </div>
-        <div class="trustline">
-          <span><b>✓</b> Native OBS filter</span>
-          <span><b>✓</b> Modern VST3 effects</span>
-          <span><b>✓</b> Real vendor GUI</span>
-          <span><b>✓</b> Crash-isolated host</span>
-        </div>
-      </div>
+<section><div class="wrap"><div class="sectionHead"><span class="kicker">Two workflows</span><h2>Use exactly as much host as you need.</h2><p>The Single filter stays simple. The Rack adds a professional serial-chain workflow without changing the isolation philosophy.</p></div>
+<div class="grid3">
+  <div class="card"><div class="icon">1</div><h3>Single VST3</h3><p>Add <strong>VST 3.x Plug-in</strong> when one effect per OBS filter is enough. Discovery, state restore and native vendor GUI remain isolated in the external host.</p></div>
+  <div class="card"><div class="icon">8</div><h3>VST3 Rack</h3><p>Add <strong>VST3 Rack</strong> for up to eight mono/stereo Float32 effects in series. Search, add, insert, reorder, bypass, replace and remove from one graphical editor.</p></div>
+  <div class="card"><div class="icon">P</div><h3>Named presets</h3><p>Save reusable Rack presets, load independent copies, explicitly update, rename or delete them, and preserve Missing placeholders when a referenced plug-in is unavailable.</p></div>
+</div></div></section>
 
-      <div class="mock" aria-label="Illustration of the OBS VST3 filter workflow">
-        <div class="mockTop"><span>Filters for Desktop Audio</span><span class="dots"><i></i><i></i><i></i></span></div>
-        <div class="form">
-          <div class="field"><label>1. Plug-in Source</label><div class="control"><span>Installed plug-ins</span><span>⌄</span></div></div>
-          <div class="field"><label>2. Installed Plug-in</label><div class="control"><span>Choose your VST3 audio effect</span><span>⌄</span></div></div>
-          <div class="openBtn">3. Open Plug-in Interface</div>
-          <div class="status"><i></i><span>Ready · vendor editor available</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
+<section><div class="wrap"><div class="sectionHead"><span class="kicker">Rack workflow</span><h2>A real audio-host workflow, not a debug panel.</h2><p>v0.6.0 adds the polished Rack Editor, floating native plug-in windows and a first-class preset workflow.</p></div>
+<div class="steps"><div class="step"><h3>Open Rack</h3><p>Add <strong>VST3 Rack</strong> in OBS and use <strong>Open Rack</strong>. The editor belongs to the external Rack helper and can be closed while DSP continues.</p></div><div class="step"><h3>Build the chain</h3><p>Search the catalog, Add Effect, drag/reorder slots, bypass or replace them, then use Open UI for each vendor editor.</p></div><div class="step"><h3>Save the sound</h3><p>Save As creates a named preset. Loading is a copy; normal edits do not silently mutate the saved preset. Update is always explicit.</p></div></div></div></section>
 
-  <section id="why">
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">The missing layer</div>
-        <h2>The plug-in world moved forward. OBS's built-in VST filter did not move to VST3 yet.</h2>
-        <p>OBS's official VST filter documentation currently lists VST3.x as unsupported and warns that some VST plug-ins can crash OBS. Meanwhile, many modern studio processors are distributed primarily—or only—as VST3.</p>
-      </div>
-      <div class="grid3">
-        <article class="card"><div class="icon">V3</div><h3>Use modern plug-ins</h3><p>Bring current VST3 EQ, dynamics, restoration, saturation, reverb, limiting and mastering processors into the normal OBS Filters workflow.</p></article>
-        <article class="card"><div class="icon">OBS</div><h3>Stay inside OBS</h3><p>No separate DAW is required for the normal single-effect workflow. Add <strong>VST 3.x Plug-in</strong>, choose an effect and open its vendor interface.</p></article>
-        <article class="card"><div class="icon">SAFE</div><h3>Protect the broadcast boundary</h3><p>Third-party VST3 DSP, native UI and scanning are kept outside <code>obs64.exe</code> by architecture, reducing the risk that a plug-in failure takes OBS down with it.</p></article>
-      </div>
-      <div class="actions"><a class="btn secondary" href="https://obsproject.com/kb/vst-2-x-plugin-filter">Read OBS's official VST support page</a></div>
-    </div>
-  </section>
+<section><div class="wrap safety"><div class="shield"><div><div class="shieldMark">◈</div><strong>Outside obs64.exe</strong><p>Single uses one isolated helper per effect. Rack uses one isolated helper per Rack, containing the Rack Editor and its serial VST3 slots.</p></div></div><div class="copyPanel"><span class="kicker">Safety architecture</span><h2>Designed to fail dry.</h2><p>Third-party native code is moved across a process boundary so a common plug-in crash or hang does not need to live inside OBS itself.</p><div class="ticks"><div class="tick"><span>✓</span><div><b>Dry fail-open</b><br>When a valid isolated wet block is unavailable in time, OBS keeps a dry path.</div></div><div class="tick"><span>✓</span><div><b>Bounded Rack shutdown</b><br>A stuck Rack helper gets only a short graceful-exit budget before forced termination, avoiding the old multi-second close delay.</div></div><div class="tick"><span>✓</span><div><b>Scanner isolation</b><br>Discovery is kept away from the OBS process.</div></div></div><div class="notice">Crash isolation is not a malware sandbox. A VST3 is native code with the current Windows user's permissions. Only use plug-ins you trust.</div></div></div></section>
 
-  <section>
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Studio sound, live</div>
-        <h2>Use the same class of processing tools you trust in a studio—while you are live.</h2>
-        <p>The host does not fake “mastering” with fixed presets. It gives OBS access to modern VST3 processors so your livestream chain can use the tools and sound design you already know.</p>
-      </div>
-      <div class="grid3">
-        <article class="card"><div class="icon">EQ</div><h3>Clean and control</h3><p>Corrective EQ, dynamic EQ, de-essing, expansion, compression and restoration can turn an untreated live source into a controlled broadcast signal.</p></article>
-        <article class="card"><div class="icon">FX</div><h3>Shape the character</h3><p>Saturation, coloration, reverb, delay and spatial processors let creators move beyond utility filtering into a deliberate studio sound.</p></article>
-        <article class="card"><div class="icon">MAX</div><h3>Finish the stream</h3><p>Limiters, maximizers and mastering-style processors can provide the final polish when used correctly. Audio quality still depends on the source, plug-in and settings.</p></article>
-      </div>
-    </div>
-  </section>
+<section><div class="wrap"><div class="sectionHead"><span class="kicker">v0.6.0 scope</span><h2>Clear limits, no hidden promises.</h2></div><div class="compat">
+<div class="row"><div>Rack topology</div><div><span class="yes">Up to 8 serial effects</span>; one helper process per Rack</div></div>
+<div class="row"><div>Audio format</div><div>Mono/stereo · Float32 VST3 audio effects</div></div>
+<div class="row"><div>Vendor GUI</div><div><span class="yes">Floating native VST3 editor per slot</span></div></div>
+<div class="row"><div>Presets</div><div><span class="yes">Save As, Load, Update, Rename, Delete</span> + Missing placeholders</div></div>
+<div class="row"><div>OBS compatibility floor</div><div>29.1+; automated real-loader probe uses official OBS 29.1.3</div></div>
+<div class="row"><div>Not in v0.6.0</div><div><span class="warnTxt">Parallel graph, sidechain, MIDI/instruments, nested Racks, Float64/arbitrary multichannel, macOS/Linux</span></div></div>
+</div></div></section>
 
-  <section>
-    <div class="wrap safety">
-      <div class="shield">
-        <div><div class="shieldMark">🛡</div><strong>Built to protect the show</strong><p>A VST3 problem is handled behind a helper-process boundary instead of deliberately loading third-party VST3 code into OBS itself.</p></div>
-      </div>
-      <div class="copyPanel">
-        <div class="kicker">Reliability before features</div>
-        <h2>Live software should fail gracefully.</h2>
-        <p>OBS's own VST documentation warns that some VST plug-ins may crash and recommends saving or backing up settings when experimenting. This project is designed around a different failure boundary.</p>
-        <div class="ticks">
-          <div class="tick"><span>✓</span><div><b>VST3 runtime outside OBS.</b> The third-party module and vendor GUI live in <code>obs-safe-vst3-host.exe</code>, not <code>obs64.exe</code>.</div></div>
-          <div class="tick"><span>✓</span><div><b>Scanner isolation.</b> Discovery probes plug-ins outside OBS instead of deliberately loading every candidate into the broadcast process.</div></div>
-          <div class="tick"><span>✓</span><div><b>Dry fail-open audio.</b> If a valid wet result is not available in time, the filter is designed to keep the original dry audio rather than intentionally block the realtime path.</div></div>
-          <div class="tick"><span>✓</span><div><b>State-aware recovery.</b> Helper failures use watchdog detection, bounded backoff and state restoration so a bad plug-in load is less likely to destroy the user's live workflow.</div></div>
-        </div>
-        <div class="notice">Crash isolation is not a malware sandbox and cannot guarantee that every driver, OS or hardware failure will never crash OBS. It is a concrete architectural boundary for third-party VST3 failures. <a href="safety.html">Read the exact safety model →</a></div>
-      </div>
-    </div>
-  </section>
+<section id="download"><div class="wrap"><div class="downloadBox"><div><span class="kicker">Download</span><h2>OBS Safe VST3 Host v0.6.0</h2><p>Use the Smart Installer for a normal OBS installation. Portable ZIP and SHA-256 checksums are published in the same GitHub Release.</p><div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Latest release</a><a class="btn secondary" href="compatibility.html">Check compatibility</a></div></div><div class="releaseCard"><strong>Windows x64 package</strong><code>OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe</code><code>OBS-Safe-VST3-Host-v0.6.0-Windows-x64-Portable.zip</code><code>SHA256SUMS.txt</code><p class="small">Release binaries are currently not commercially Authenticode-signed; Windows may show an Unknown publisher / SmartScreen reputation warning.</p></div></div></div></section>
 
-  <section>
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Broad real-world compatibility</div>
-        <h2>Built for popular studio VST3 effects—not a hand-written vendor whitelist.</h2>
-        <p>v0.5.0 targets conventional Windows x64 VST3 audio effects in the current mono/stereo Float32 scope. The scanner keeps normal effects eligible and excludes explicit instrument-only classes from today's insert-effect list.</p>
-      </div>
-      <div class="brands" aria-label="Examples of real-machine tested vendors">
-        <span class="brandPill">iZotope Ozone / RX</span><span class="brandPill">FabFilter</span><span class="brandPill">Waves</span><span class="brandPill">Klevgrand</span><span class="brandPill">Neuro Audio</span><span class="brandPill">Process Audio</span>
-      </div>
-      <div class="compat" style="margin-top:20px">
-        <div class="row"><div>Windows x64</div><div><span class="yes">Supported</span></div></div>
-        <div class="row"><div>OBS Studio</div><div><span class="yes">29.1+ compatibility floor</span>; release qualification also builds against pinned current OBS/libobs.</div></div>
-        <div class="row"><div>VST3 audio effects</div><div><span class="yes">Supported</span> in the current mono/stereo Float32 host scope.</div></div>
-        <div class="row"><div>VST3 instruments / MIDI</div><div><span class="warnTxt">Roadmap</span> — intentionally not exposed as effects today.</div></div>
-        <div class="row"><div>Rack / chains / sidechain routing</div><div><span class="warnTxt">Roadmap</span> — planned as the next platform expansion.</div></div>
-      </div>
-      <div class="actions"><a class="btn secondary" href="compatibility.html">See compatibility details</a></div>
-    </div>
-  </section>
+<section><div class="wrap"><div class="sectionHead"><span class="kicker">FAQ</span><h2>Common questions</h2></div><div class="faq">
+<details><summary>Does OBS itself now support VST3?</summary><p>This project adds its own OBS filters and VST3 host processes. It does not change OBS's built-in VST filter.</p></details>
+<details><summary>Does each Rack slot get its own process?</summary><p>No. v0.6.0 uses one isolated helper process per Rack, with up to eight serial slots inside it.</p></details>
+<details><summary>Can I use my plug-in's native GUI?</summary><p>Yes, when the VST3 exposes a supported native editor. In Rack, use Open UI on the slot.</p></details>
+<details><summary>Are Rack presets live-linked?</summary><p>No. Loading a preset creates an independent working Rack. Only explicit Update changes the saved preset.</p></details>
+<details><summary>Does it support instruments, MIDI or parallel routing?</summary><p>Not in v0.6.0. The Rack is intentionally a serial mono/stereo Float32 audio-effects lane.</p></details>
+</div></div></section>
 
-  <section>
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Roadmap</div>
-        <h2>Today: safe VST3 effects. Next: a complete live audio platform for OBS.</h2>
-        <p>The stable single-effect host is the foundation. The roadmap grows it into a rack, routing engine and eventually a MIDI/VST3-instrument live-performance workflow.</p>
-      </div>
-      <div class="grid3">
-        <article class="card"><div class="icon">1</div><h3>Safe VST3 Effects — now</h3><p>Single-effect hosting, automatic discovery, real vendor GUI, state recovery, isolated scanning/runtime and dry fail-open behavior.</p></article>
-        <article class="card"><div class="icon">2</div><h3>Safe VST3 Rack</h3><p>Multiple effects, ordered chains, bypass/reorder, rack presets, latency handling and live-friendly fault isolation.</p></article>
-        <article class="card"><div class="icon">3</div><h3>Routing + Sidechain</h3><p>Multi-bus audio, flexible signal flow, sidechain paths and richer broadcast/mastering topologies.</p></article>
-      </div>
-      <div class="grid3" style="margin-top:15px">
-        <article class="card"><div class="icon">4</div><h3>MIDI + VST3 Instruments</h3><p>Play software instruments from MIDI controllers, deliver timed VST3 events and bring live instrument performance directly into OBS.</p></article>
-        <article class="card"><div class="icon">5</div><h3>Live Performance Rack</h3><p>Combine instruments, effects, routing, presets and performance control into a creator-focused live rig.</p></article>
-        <article class="card"><div class="icon">∞</div><h3>Studio-quality live workflow</h3><p>The long-term goal is an OBS-native audio environment that can cover mastering-style stream chains and live performance without forcing a separate DAW for common workflows.</p></article>
-      </div>
-      <div class="actions"><a class="btn secondary" href="roadmap.html">Explore the roadmap</a></div>
-    </div>
-  </section>
-
-  <section id="download">
-    <div class="wrap downloadBox">
-      <div>
-        <div class="kicker">Official stable download</div>
-        <h2>Start with the Windows installer.</h2>
-        <p>Close OBS, run the official installer, choose your OBS root, reopen OBS and add <strong>VST 3.x Plug-in</strong> to an audio source. Installed effects are discovered automatically.</p>
-        <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable release</a><a class="btn secondary" href="install.html">Installation steps</a></div>
-      </div>
-      <div class="releaseCard">
-        <strong>OBS Safe VST3 Host v0.5.0</strong>
-        <code>OBS-Safe-VST3-Host-v0.5.0-Setup-x64.exe</code>
-        <code>OBS-Safe-VST3-Host-v0.5.0-Windows-x64-Portable.zip</code>
-        <code>SHA256SUMS.txt</code>
-        <p class="small">Windows packages are currently not commercially Authenticode-signed, so SmartScreen may show Unknown publisher. Keep Windows security enabled and download only from the official GitHub release.</p>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="wrap">
-      <div class="sectionHead"><div class="kicker">FAQ</div><h2>What creators want to know before installing VST3 in OBS</h2></div>
-      <div class="faq">
-        <details><summary>Does OBS Studio already support VST3?</summary><p>OBS's official built-in VST filter documentation currently lists VST3.x as unsupported. OBS Safe VST3 Host exists specifically to fill that gap for Windows VST3 audio effects.</p></details>
-        <details><summary>Can I use professional mastering plug-ins in OBS?</summary><p>Yes, when the VST3 audio effect fits the current host scope. Real-machine qualification has included popular processors from iZotope, FabFilter, Waves and other studio vendors. The final sound still depends on your source, plug-in and settings.</p></details>
-        <details><summary>Will a bad VST3 crash OBS?</summary><p>No native host can honestly guarantee zero crashes from every driver, OS, hardware or malicious-code failure. This project reduces the plug-in-specific risk by keeping third-party VST3 DSP and GUI code outside <code>obs64.exe</code>, isolating scanner probes, using bounded recovery and keeping dry audio when wet processing is unavailable.</p></details>
-        <details><summary>Does it support every VST3?</summary><p>The current stable product targets VST3 audio effects, not instruments/MIDI or every possible advanced bus topology. It is designed for broad compatibility with conventional popular studio effects and is not based on a vendor whitelist.</p></details>
-        <details><summary>Will it support VST3 instruments, MIDI, chains and sidechain?</summary><p>Yes, those are explicit roadmap directions: Safe VST3 Rack, chains, routing/sidechain, MIDI event support and VST3 instruments for live-performance workflows.</p></details>
-      </div>
-    </div>
-  </section>
-</main>
-
-<footer class="footer"><div class="wrap footerIn"><div>OBS Safe VST3 Host · modern VST3 for OBS Studio</div><div class="footerLinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a href="https://github.com/masarray/obs-vst3">GitHub</a><a href="https://github.com/masarray/obs-vst3/releases/latest">Releases</a></div></div></footer>
+<footer class="footer"><div class="wrap footerIn"><span>OBS Safe VST3 Host · open source</span><div class="footerLinks"><a href="https://github.com/masarray/obs-vst3">GitHub</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a></div></div></footer>
 </body>
 </html>
