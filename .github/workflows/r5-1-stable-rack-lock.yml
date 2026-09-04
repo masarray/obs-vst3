@@ -1,0 +1,42 @@
+name: R5-1 Stable Rack Lock
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r5-1-stable-rack-lock.yml'
+      - 'src/obs-plugin/rack_filter.cpp'
+      - 'src/platform/windows/win_rack_bridge.*'
+      - 'src/rack/main_r3_5.cpp'
+      - 'src/rack/main_r3_2_hosted.cpp'
+      - 'src/rack/rack_hosted_plugin.hpp'
+      - 'src/rack/rack_session_snapshot.*'
+      - 'src/rack/CMakeLists.txt'
+      - 'tests/r5_1/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r5-1-stable-rack-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stable-rack-lock:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure R5-1 stable Rack lock
+        shell: pwsh
+        run: cmake -S tests/r5_1 -B build/r5-1 -A x64
+
+      - name: Build R5-1 stable Rack lock
+        shell: pwsh
+        run: cmake --build build/r5-1 --config Release --parallel
+
+      - name: Run R5-1 stable Rack lock
+        shell: pwsh
+        run: ctest --test-dir build/r5-1 -C Release --output-on-failure
