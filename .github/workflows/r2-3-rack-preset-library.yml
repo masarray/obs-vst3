@@ -1,0 +1,37 @@
+name: R2-3 Rack Preset Library
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r2-3-rack-preset-library.yml'
+      - 'src/rack/rack_preset_library.*'
+      - 'src/rack/rack_session_snapshot.*'
+      - 'tests/r2_3/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r2-3-rack-preset-library-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-preset-library-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure R2-3 deterministic preset contracts
+        shell: pwsh
+        run: cmake -S tests/r2_3 -B build/r2-3 -A x64
+
+      - name: Build R2-3 deterministic preset contracts
+        shell: pwsh
+        run: cmake --build build/r2-3 --config Release --parallel
+
+      - name: Run R2-3 deterministic preset contracts
+        shell: pwsh
+        run: ctest --test-dir build/r2-3 -C Release --output-on-failure
