@@ -51,17 +51,21 @@ target_link_libraries(r3-2-browser-b-fixture PRIVATE sdk)
 target_compile_definitions(r3-2-browser-b-fixture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # The integration translation unit includes main_r3_2.cpp directly so it can
-# drive the exact internal command executor and generation store. Force the same
-# Rack-only HostedPlugin wrapper used by the shipping helper before that include.
+# drive the exact internal command executor and generation store. Freeze the
+# manager declaration against the protocol-neutral HostedPlugin base before the
+# Rack-only wrapper defines its translation-unit token alias.
 set_source_files_properties(
     "${CMAKE_CURRENT_LIST_DIR}/rack_product_integration.cpp"
-    PROPERTIES COMPILE_OPTIONS "/FI${SAFEVST3_ROOT}/src/rack/rack_hosted_plugin.hpp")
+    PROPERTIES COMPILE_OPTIONS
+        "/FI${SAFEVST3_ROOT}/src/rack/rack_vendor_editor_manager.hpp;/FI${SAFEVST3_ROOT}/src/rack/rack_hosted_plugin.hpp")
 
 add_executable(r3-2-rack-product-integration
     "${CMAKE_CURRENT_LIST_DIR}/rack_product_integration.cpp"
     "${SAFEVST3_ROOT}/src/rack/rack_editor_window.cpp"
     "${SAFEVST3_ROOT}/src/rack/rack_plugin_catalog.cpp"
+    "${SAFEVST3_ROOT}/src/rack/rack_vendor_editor_manager.cpp"
     "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
+    "${SAFEVST3_ROOT}/src/host/native_editor.cpp"
 )
 target_include_directories(r3-2-rack-product-integration PRIVATE "${SAFEVST3_ROOT}/src")
 target_compile_definitions(r3-2-rack-product-integration PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)

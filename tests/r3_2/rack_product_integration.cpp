@@ -22,6 +22,7 @@ using safevst3::rack::ui::RackPluginCatalogRecord;
 using safevst3::rack::ui::RackUiCommand;
 using safevst3::rack::ui::RackUiCommandResult;
 using safevst3::rack::ui::RackUiCommandType;
+using safevst3::rack::ui::RackVendorEditorManager;
 
 bool expect(bool condition, const char* message)
 {
@@ -208,6 +209,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
     DynamicRackState state;
     publish_dynamic_projection(region, state, store.generations[0].number);
     RackEditorWindow editor;
+    RackVendorEditorManager vendor_editors;
     std::vector<RetiredDynamicPlugin> retired;
     bool topology_changed = false;
     std::uint64_t command_id = 1;
@@ -218,7 +220,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
         command_id++, RackUiCommandType::AddSlot,
         catalog_snapshot.generation, record_a.entry_id, 0);
     auto ack = execute_dynamic_command(add_a, state, store, region, catalog_runtime,
-                                       editor, retired, topology_changed);
+                                       editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Accepted && topology_changed,
                  "AddSlot must open real HostedPlugin and publish generation");
     ok &= expect(state.slot_count == 1 && state.slots[0].plugin != nullptr,
@@ -231,7 +233,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
         command_id++, RackUiCommandType::AddSlot,
         catalog_snapshot.generation, record_b.entry_id, 0);
     ack = execute_dynamic_command(add_b, state, store, region, catalog_runtime,
-                                  editor, retired, topology_changed);
+                                  editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Accepted && state.slot_count == 2,
                  "second AddSlot must insert at requested index");
     const RackSlotId second_slot_id = state.slots[0].id;
@@ -246,7 +248,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
     move.slot_id = first_slot_id;
     move.target_index = 0;
     ack = execute_dynamic_command(move, state, store, region, catalog_runtime,
-                                  editor, retired, topology_changed);
+                                  editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Accepted &&
                      state.slots[0].id == first_slot_id &&
                      state.slots[1].id == second_slot_id,
@@ -258,7 +260,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
     bypass.slot_id = first_slot_id;
     bypass.bypass = true;
     ack = execute_dynamic_command(bypass, state, store, region, catalog_runtime,
-                                  editor, retired, topology_changed);
+                                  editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Accepted && state.slots[0].bypass,
                  "SetBypass must commit coherent logical bypass state");
     ok &= run_audio_block(endpoint, region, 3, 1.0f, 0.5f, 64,
@@ -270,7 +272,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
         catalog_snapshot.generation, record_a.entry_id);
     replace.slot_id = second_slot_id;
     ack = execute_dynamic_command(replace, state, store, region, catalog_runtime,
-                                  editor, retired, topology_changed);
+                                  editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Accepted &&
                      state.slots[1].id == second_slot_id &&
                      state.slots[1].path != second_old_path,
@@ -285,7 +287,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
         catalog_snapshot.generation + 99, record_b.entry_id);
     failed_replace.slot_id = second_slot_id;
     ack = execute_dynamic_command(failed_replace, state, store, region, catalog_runtime,
-                                  editor, retired, topology_changed);
+                                  editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Rejected &&
                      ack.committed_generation == before_failed_replace &&
                      state.slots[1].path == before_failed_path,
@@ -299,7 +301,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
     remove.type = RackUiCommandType::RemoveSlot;
     remove.slot_id = second_slot_id;
     ack = execute_dynamic_command(remove, state, store, region, catalog_runtime,
-                                  editor, retired, topology_changed);
+                                  editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Accepted && state.slot_count == 1,
                  "RemoveSlot must publish new generation while old reader may still exist");
     ok &= expect(retired.size() == 1 && retired.front().plugin != nullptr,
@@ -317,7 +319,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
     enable.slot_id = first_slot_id;
     enable.bypass = false;
     ack = execute_dynamic_command(enable, state, store, region, catalog_runtime,
-                                  editor, retired, topology_changed);
+                                  editor, vendor_editors, retired, topology_changed);
     ok &= expect(ack.result == RackUiCommandResult::Accepted && !state.slots[0].bypass,
                  "Enable must restore active processing for same stable slot");
     ok &= run_audio_block(endpoint, region, 6, 1.0f, 0.5f, 64,
@@ -327,6 +329,7 @@ bool run_test(const fs::path& scanner, const fs::path& fixture_a,
     SetEvent(endpoint.request);
     if (dsp.joinable())
         dsp.join();
+    vendor_editors.close_all();
     reap_retired_plugins(store, retired);
     close_dynamic_state(state, retired);
     endpoint.region = nullptr; // stack-backed region must not be UnmapViewOfFile'd.

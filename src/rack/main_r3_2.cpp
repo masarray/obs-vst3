@@ -11,6 +11,7 @@
 
 #include "rack/rack_plugin_catalog.hpp"
 #include "rack/rack_slot_workflow.hpp"
+#include "rack/rack_vendor_editor_manager.hpp"
 
 #include <array>
 #include <condition_variable>
@@ -31,9 +32,11 @@ using safevst3::rack::ui::RackPluginCatalog;
 using safevst3::rack::ui::RackPluginCatalogRecord;
 using safevst3::rack::ui::RackUiCommandReplayGuard;
 using safevst3::rack::ui::RackUiCommandType;
+using safevst3::rack::ui::RackVendorEditorManager;
 
 constexpr RackSlotId kDynamicSlotIdBase = 0x1000000000000000ull;
 constexpr std::size_t kDynamicCommandQueueCapacity = 16;
+constexpr auto kVendorEditorPumpInterval = std::chrono::milliseconds(16);
 
 struct DynamicSlot {
     RackSlotId id = 0;
@@ -80,7 +83,7 @@ public:
     bool pop(RackUiCommand& command) noexcept
     {
         std::unique_lock lock(mutex_);
-        cv_.wait_for(lock, std::chrono::milliseconds(100), [&] {
+        cv_.wait_for(lock, kVendorEditorPumpInterval, [&] {
             return stopping_ || count_ != 0;
         });
         if (count_ == 0)
@@ -215,6 +218,7 @@ RackUiSnapshot build_dynamic_ui_snapshot(const DynamicRackState& state,
         destination.slot_id = source.id;
         destination.latency_samples = source.latency_samples;
         destination.bypass = source.bypass;
+        destination.editor_available = source.plugin && source.plugin->edit_controller();
         destination.health = source.bypass ? RackUiSlotHealth::Bypassed : source.health;
         copy_ui_text(destination.plugin_name, source.name);
         copy_ui_text(destination.vendor, source.vendor);
@@ -317,17 +321,38 @@ RackUiCommandAck execute_dynamic_command(
     const RackUiCommand& command, DynamicRackState& state,
     GenerationStore& store, RackSharedAudioRegion& region,
     CatalogRuntime& catalog_runtime, RackEditorWindow& editor,
+    RackVendorEditorManager& vendor_editors,
     std::vector<RetiredDynamicPlugin>& retired,
     bool& topology_changed) noexcept
 {
     topology_changed = false;
     reap_retired_plugins(store, retired);
 
+    const std::uint32_t published_index = store.published_index.load(std::memory_order_acquire);
+    const std::uint64_t published_generation = store.generations[published_index].number;
+
     if (command.type == RackUiCommandType::RefreshCatalog) {
         return start_catalog_refresh(catalog_runtime, editor)
-                   ? accepted_ack(command, store.generations[
-                         store.published_index.load(std::memory_order_acquire)].number)
+                   ? accepted_ack(command, published_generation)
                    : rejected_ack(command, store);
+    }
+
+    if (command.type == RackUiCommandType::OpenVendorEditor) {
+        const std::uint32_t index = find_dynamic_slot(state, command.slot_id);
+        if (index >= state.slot_count)
+            return rejected_ack(command, store);
+        DynamicSlot& slot = state.slots[index];
+        if (!slot.plugin || !slot.plugin->edit_controller() ||
+            (slot.health != RackUiSlotHealth::Ready &&
+             slot.health != RackUiSlotHealth::Bypassed))
+            return rejected_ack(command, store);
+        std::string error;
+        if (!vendor_editors.open(slot.id, *slot.plugin, slot.name, error)) {
+            if (!error.empty())
+                std::cerr << "R3-3 vendor editor: " << error << '\n';
+            return failed_ack(command, store);
+        }
+        return accepted_ack(command, published_generation);
     }
 
     CommitReservation reservation{};
@@ -415,6 +440,7 @@ RackUiCommandAck execute_dynamic_command(
         if (!reserve_commit(store, region, reservation))
             return failed_ack(command, store);
 
+        vendor_editors.close(command.slot_id);
         RetiredDynamicPlugin old{};
         old.plugin = std::move(state.slots[index].plugin);
         old.generation_index = reservation.current_index;
@@ -447,10 +473,11 @@ RackUiCommandAck execute_dynamic_command(
             return failed_ack(command, store);
         }
 
+        const RackSlotId stable_id = state.slots[index].id;
+        vendor_editors.close(stable_id);
         RetiredDynamicPlugin old{};
         old.plugin = std::move(state.slots[index].plugin);
         old.generation_index = reservation.current_index;
-        const RackSlotId stable_id = state.slots[index].id;
         const bool bypass = state.slots[index].bypass;
         DynamicSlot replaced{};
         replaced.id = stable_id;
@@ -473,6 +500,7 @@ RackUiCommandAck execute_dynamic_command(
     case RackUiCommandType::None:
     case RackUiCommandType::OpenRack:
     case RackUiCommandType::RefreshCatalog:
+    case RackUiCommandType::OpenVendorEditor:
         break;
     }
     return rejected_ack(command, store);
@@ -493,7 +521,7 @@ int run_r3_2_product(const Options& options)
 {
     Endpoint endpoint;
     if (!endpoint.open(options)) {
-        std::cerr << "R3-2 Rack helper could not open transport\n";
+        std::cerr << "R3-3 Rack helper could not open transport\n";
         return 3;
     }
     if (endpoint.region->magic != safevst3::rack::kRackProtocolMagic ||
@@ -522,6 +550,7 @@ int run_r3_2_product(const Options& options)
     DynamicCommandQueue command_queue;
     std::vector<RetiredDynamicPlugin> retired;
     RackUiCommandReplayGuard replay;
+    RackVendorEditorManager vendor_editors;
 
     RackEditorWindow editor([&](const RackUiCommand& command) {
         if (command_queue.push(command))
@@ -537,6 +566,7 @@ int run_r3_2_product(const Options& options)
     std::thread command_worker([&] {
         while (!command_queue.stopping() &&
                InterlockedCompareExchange(&endpoint.region->shutdown_requested, 0, 0) == 0) {
+            vendor_editors.pump_messages();
             RackUiCommand command{};
             if (!command_queue.pop(command))
                 continue;
@@ -549,8 +579,8 @@ int run_r3_2_product(const Options& options)
 
             bool topology_changed = false;
             ack = execute_dynamic_command(command, state, store, *endpoint.region,
-                                          catalog_runtime, editor, retired,
-                                          topology_changed);
+                                          catalog_runtime, editor, vendor_editors,
+                                          retired, topology_changed);
             replay.remember(command, ack);
             editor.apply_ack(ack);
             if (ack.result == RackUiCommandResult::Accepted && topology_changed) {
@@ -559,6 +589,8 @@ int run_r3_2_product(const Options& options)
                     state, store.generations[current].number));
             }
         }
+        vendor_editors.close_all();
+        vendor_editors.pump_messages();
     });
 
     InterlockedExchange(&endpoint.region->host_status, static_cast<long>(RackHostStatus::Ready));
@@ -602,8 +634,8 @@ int wmain(int argc, wchar_t** argv)
     }
 
     // Every deterministic fixture launch stays on the previously qualified
-    // R1/R2/R3 implementation. Only the production empty-Rack path gains the
-    // R3-2 dynamic slot/catalog control plane.
+    // R1/R2/R3 implementation. Only the production empty-Rack path owns the
+    // dynamic slot/browser/vendor-editor control plane.
     if (options.fixture_plugins_enabled)
         return safevst3_r3_1_legacy_run(options);
     return run_r3_2_product(options);

@@ -34,6 +34,7 @@ enum class RackUiCommandType : std::uint32_t {
     RemoveSlot = 5,
     SetBypass = 6,
     RefreshCatalog = 7,
+    OpenVendorEditor = 8,
 };
 
 enum class RackUiCommandResult : std::uint32_t {
@@ -48,6 +49,7 @@ struct RackUiSlotSnapshot {
     std::uint32_t latency_samples = 0;
     RackUiSlotHealth health = RackUiSlotHealth::Ready;
     bool bypass = false;
+    bool editor_available = false;
     std::array<char, kRackUiNameBytes> plugin_name{};
     std::array<char, kRackUiVendorBytes> vendor{};
 };
@@ -108,6 +110,12 @@ inline bool rack_ui_can_bypass(RackUiSlotHealth health) noexcept
 {
     return health == RackUiSlotHealth::Ready || health == RackUiSlotHealth::Bypassed ||
            health == RackUiSlotHealth::NeedsAttention;
+}
+
+inline bool rack_ui_can_open_vendor_editor(const RackUiSlotSnapshot& slot) noexcept
+{
+    return slot.editor_available &&
+           (slot.health == RackUiSlotHealth::Ready || slot.health == RackUiSlotHealth::Bypassed);
 }
 
 inline bool validate_rack_ui_snapshot(const RackUiSnapshot& snapshot) noexcept
@@ -243,6 +251,20 @@ public:
         return begin_command(command);
     }
 
+    RackUiCommand request_open_vendor_editor(RackUiSlotId slot_id) noexcept
+    {
+        const std::uint32_t index = has_snapshot_ ? find_slot(slot_id) : 0;
+        if (!has_snapshot_ || pending_command() || slot_id == 0 ||
+            index >= snapshot_.slot_count ||
+            !rack_ui_can_open_vendor_editor(snapshot_.slots[index]))
+            return {};
+
+        RackUiCommand command{};
+        command.type = RackUiCommandType::OpenVendorEditor;
+        command.slot_id = slot_id;
+        return begin_command(command);
+    }
+
     bool apply_ack(const RackUiCommandAck& ack) noexcept
     {
         if (!pending_command() || ack.command_id != pending_.command.command_id)
@@ -254,11 +276,12 @@ public:
             pending_ = {};
             return true;
         case RackUiCommandResult::Accepted:
-            if (pending_.command.type == RackUiCommandType::RefreshCatalog) {
-                // Refresh acceptance means the isolated scanner request was
-                // queued. Catalog progress/results arrive on their own immutable
-                // catalog-generation stream and must not manufacture a Rack DSP
-                // generation merely to clear a UI command.
+            if (pending_.command.type == RackUiCommandType::RefreshCatalog ||
+                pending_.command.type == RackUiCommandType::OpenVendorEditor) {
+                // These are transient control actions. Catalog refresh completes
+                // on its own catalog-generation stream; opening a floating vendor
+                // window changes no Rack DSP/topology generation. Neither action
+                // may manufacture a Rack generation merely to clear Pending.
                 pending_ = {};
                 return true;
             }
