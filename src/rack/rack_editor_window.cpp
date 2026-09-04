@@ -9,6 +9,7 @@
 #include <d3d11.h>
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -175,6 +177,17 @@ std::string bounded_text(const char* data, std::size_t capacity)
     return std::string(data, length);
 }
 
+std::array<char, 33> preset_id_text(const RackPresetId& id) noexcept
+{
+    static constexpr char digits[] = "0123456789abcdef";
+    std::array<char, 33> result{};
+    for (std::size_t index = 0; index < id.size(); ++index) {
+        result[index * 2] = digits[(id[index] >> 4u) & 0x0fu];
+        result[index * 2 + 1] = digits[id[index] & 0x0fu];
+    }
+    return result;
+}
+
 } // namespace
 
 struct RackEditorWindow::Impl {
@@ -184,8 +197,10 @@ struct RackEditorWindow::Impl {
         Replace,
     };
 
-    explicit Impl(RackUiCommandHandler handler)
-        : command_handler(std::move(handler))
+    explicit Impl(RackUiCommandHandler handler,
+                  RackPresetUiCommandHandler preset_handler)
+        : command_handler(std::move(handler)),
+          preset_command_handler(std::move(preset_handler))
     {
     }
 
@@ -209,10 +224,22 @@ struct RackEditorWindow::Impl {
         return true;
     }
 
+    bool publish_presets(const RackPresetUiSnapshot& snapshot) noexcept
+    {
+        std::lock_guard lock(model_mutex);
+        return preset_model.publish_snapshot(snapshot);
+    }
+
     bool apply_ack(const RackUiCommandAck& ack) noexcept
     {
         std::lock_guard lock(model_mutex);
         return model.apply_ack(ack);
+    }
+
+    bool apply_preset_ack(const RackPresetUiAck& ack) noexcept
+    {
+        std::lock_guard lock(model_mutex);
+        return preset_model.apply_ack(ack);
     }
 
     bool visible() const noexcept
@@ -296,10 +323,22 @@ struct RackEditorWindow::Impl {
         return has_catalog ? catalog : PluginCatalogSnapshot{};
     }
 
+    RackPresetUiSnapshot preset_snapshot_copy() const noexcept
+    {
+        std::lock_guard lock(model_mutex);
+        return preset_model.has_snapshot() ? preset_model.snapshot() : RackPresetUiSnapshot{};
+    }
+
     bool pending_copy() const noexcept
     {
         std::lock_guard lock(model_mutex);
         return model.pending_command();
+    }
+
+    bool preset_pending_copy() const noexcept
+    {
+        std::lock_guard lock(model_mutex);
+        return preset_model.pending_command();
     }
 
     void dispatch(RackUiCommand command) noexcept
@@ -309,6 +348,15 @@ struct RackEditorWindow::Impl {
         const RackUiCommandAck ack = command_handler(command);
         if (ack.command_id != 0)
             apply_ack(ack);
+    }
+
+    void dispatch_preset(RackPresetUiCommand command) noexcept
+    {
+        if (command.command_id == 0 || !preset_command_handler)
+            return;
+        const RackPresetUiAck ack = preset_command_handler(command);
+        if (ack.command_id != 0)
+            apply_preset_ack(ack);
     }
 
     void emit_move(RackUiSlotId slot_id, std::uint32_t target_index) noexcept
@@ -381,6 +429,71 @@ struct RackEditorWindow::Impl {
         dispatch(command);
     }
 
+    bool emit_save_as(std::string_view name) noexcept
+    {
+        RackPresetUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = preset_model.request_save_as(name);
+        }
+        if (command.command_id == 0)
+            return false;
+        dispatch_preset(command);
+        return true;
+    }
+
+    bool emit_load(const RackPresetId& preset_id) noexcept
+    {
+        RackPresetUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = preset_model.request_load(preset_id);
+        }
+        if (command.command_id == 0)
+            return false;
+        dispatch_preset(command);
+        return true;
+    }
+
+    bool emit_rename(const RackPresetId& preset_id, std::string_view name) noexcept
+    {
+        RackPresetUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = preset_model.request_rename(preset_id, name);
+        }
+        if (command.command_id == 0)
+            return false;
+        dispatch_preset(command);
+        return true;
+    }
+
+    bool emit_delete(const RackPresetId& preset_id) noexcept
+    {
+        RackPresetUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = preset_model.request_delete(preset_id);
+        }
+        if (command.command_id == 0)
+            return false;
+        dispatch_preset(command);
+        return true;
+    }
+
+    bool emit_update(const RackPresetId& preset_id) noexcept
+    {
+        RackPresetUiCommand command{};
+        {
+            std::lock_guard lock(model_mutex);
+            command = preset_model.request_update(preset_id);
+        }
+        if (command.command_id == 0)
+            return false;
+        dispatch_preset(command);
+        return true;
+    }
+
     void open_add_browser(std::uint32_t target_index) noexcept
     {
         browser_mode = BrowserMode::Add;
@@ -444,11 +557,140 @@ struct RackEditorWindow::Impl {
         ImGui::EndPopup();
     }
 
+    void render_preset_dialogs(const RackPresetUiSnapshot& presets, bool pending)
+    {
+        if (save_as_open_requested) {
+            preset_name.fill('\0');
+            ImGui::OpenPopup("Save as Rack Preset");
+            save_as_open_requested = false;
+        }
+        if (ImGui::BeginPopupModal("Save as Rack Preset", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("Save the current Rack as a reusable preset.");
+            ImGui::SetNextItemWidth(360.0f);
+            ImGui::InputTextWithHint("##save-preset-name", "Preset name",
+                                     preset_name.data(), preset_name.size());
+            const std::string_view name(preset_name.data());
+            ImGui::BeginDisabled(pending || !rack_preset_ui_name_valid(name));
+            if (ImGui::Button("Save", ImVec2(110.0f, 0.0f)) && emit_save_as(name))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f)))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
+        if (rename_open_requested) {
+            preset_name.fill('\0');
+            const std::string_view active = rack_preset_ui_name_view(presets.active_preset_name);
+            std::copy(active.begin(), active.end(), preset_name.begin());
+            ImGui::OpenPopup("Rename Rack Preset");
+            rename_open_requested = false;
+        }
+        if (ImGui::BeginPopupModal("Rename Rack Preset", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("Rename this preset without changing its identity or sound.");
+            ImGui::SetNextItemWidth(360.0f);
+            ImGui::InputTextWithHint("##rename-preset-name", "Preset name",
+                                     preset_name.data(), preset_name.size());
+            const std::string_view name(preset_name.data());
+            ImGui::BeginDisabled(pending || !rack_preset_id_nonzero(presets.active_preset_id) ||
+                                 !rack_preset_ui_name_valid(name));
+            if (ImGui::Button("Rename", ImVec2(110.0f, 0.0f)) &&
+                emit_rename(presets.active_preset_id, name))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f)))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
+        if (delete_open_requested) {
+            ImGui::OpenPopup("Delete Rack Preset?");
+            delete_open_requested = false;
+        }
+        if (ImGui::BeginPopupModal("Delete Rack Preset?", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            const std::string active(rack_preset_ui_name_view(presets.active_preset_name));
+            ImGui::Text("Delete '%s'?", active.empty() ? "selected preset" : active.c_str());
+            ImGui::TextDisabled("The current working Rack will remain available.");
+            ImGui::BeginDisabled(pending || !rack_preset_id_nonzero(presets.active_preset_id));
+            if (ImGui::Button("Delete", ImVec2(110.0f, 0.0f)) &&
+                emit_delete(presets.active_preset_id))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f)))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    }
+
+    void render_preset_bar(const RackPresetUiSnapshot& presets, bool pending)
+    {
+        ImGui::TextUnformatted("Preset");
+        ImGui::SameLine();
+        const std::string active_name(rack_preset_ui_name_view(presets.active_preset_name));
+        const char* preview = active_name.empty() ? "No preset selected" : active_name.c_str();
+        ImGui::SetNextItemWidth(260.0f);
+        ImGui::BeginDisabled(pending || presets.generation == 0);
+        if (ImGui::BeginCombo("##rack-preset-select", preview)) {
+            if (presets.entry_count == 0)
+                ImGui::TextDisabled("No saved presets yet");
+            for (std::uint32_t index = 0; index < presets.entry_count; ++index) {
+                const RackPresetUiEntry& entry = presets.entries[index];
+                const auto id_text = preset_id_text(entry.preset_id);
+                const std::string name(rack_preset_ui_name_view(entry.name));
+                const bool selected = entry.preset_id == presets.active_preset_id;
+                ImGui::PushID(id_text.data());
+                if (ImGui::Selectable(name.c_str(), selected))
+                    (void)emit_load(entry.preset_id);
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(pending || presets.generation == 0);
+        if (ImGui::Button("Save As"))
+            save_as_open_requested = true;
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(pending || !rack_preset_id_nonzero(presets.active_preset_id));
+        if (ImGui::Button("Update"))
+            (void)emit_update(presets.active_preset_id);
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(pending || !rack_preset_id_nonzero(presets.active_preset_id));
+        if (ImGui::Button("Preset ..."))
+            ImGui::OpenPopup("preset-actions");
+        ImGui::EndDisabled();
+        if (ImGui::BeginPopup("preset-actions")) {
+            if (ImGui::MenuItem("Rename"))
+                rename_open_requested = true;
+            if (ImGui::MenuItem("Delete"))
+                delete_open_requested = true;
+            ImGui::EndPopup();
+        }
+
+        render_preset_dialogs(presets, pending);
+    }
+
     void render_ui()
     {
         const RackUiSnapshot snapshot = snapshot_copy();
         const PluginCatalogSnapshot current_catalog = catalog_copy();
-        const bool pending = pending_copy();
+        const RackPresetUiSnapshot presets = preset_snapshot_copy();
+        const bool rack_pending = pending_copy();
+        const bool preset_pending = preset_pending_copy();
+        const bool pending = rack_pending || preset_pending;
 
         ImGuiIO& io = ImGui::GetIO();
         ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
@@ -469,6 +711,9 @@ struct RackEditorWindow::Impl {
             ImGui::SameLine();
             ImGui::TextUnformatted("Pending...");
         }
+        ImGui::Separator();
+
+        render_preset_bar(presets, pending);
         ImGui::Separator();
 
         ImGui::SetNextItemWidth(-210.0f);
@@ -710,8 +955,10 @@ struct RackEditorWindow::Impl {
     }
 
     RackUiCommandHandler command_handler;
+    RackPresetUiCommandHandler preset_command_handler;
     mutable std::mutex model_mutex;
     RackEditorModel model;
+    RackPresetEditorModel preset_model;
     PluginCatalogSnapshot catalog{};
     bool has_catalog = false;
 
@@ -720,6 +967,11 @@ struct RackEditorWindow::Impl {
     RackUiSlotId browser_slot_id = 0;
     std::uint32_t browser_target_index = 0;
     bool browser_open_requested = false;
+
+    std::array<char, kRackPresetUiNameBytes> preset_name{};
+    bool save_as_open_requested = false;
+    bool rename_open_requested = false;
+    bool delete_open_requested = false;
 
     std::mutex lifecycle_mutex;
     std::condition_variable lifecycle_cv;
@@ -732,8 +984,10 @@ struct RackEditorWindow::Impl {
     bool creation_succeeded = false;
 };
 
-RackEditorWindow::RackEditorWindow(RackUiCommandHandler command_handler)
-    : impl_(std::make_unique<Impl>(std::move(command_handler)))
+RackEditorWindow::RackEditorWindow(RackUiCommandHandler command_handler,
+                                   RackPresetUiCommandHandler preset_command_handler)
+    : impl_(std::make_unique<Impl>(std::move(command_handler),
+                                   std::move(preset_command_handler)))
 {
 }
 
@@ -749,9 +1003,19 @@ bool RackEditorWindow::publish_catalog(const PluginCatalogSnapshot& snapshot) no
     return impl_->publish_catalog(snapshot);
 }
 
+bool RackEditorWindow::publish_presets(const RackPresetUiSnapshot& snapshot) noexcept
+{
+    return impl_->publish_presets(snapshot);
+}
+
 bool RackEditorWindow::apply_ack(const RackUiCommandAck& ack) noexcept
 {
     return impl_->apply_ack(ack);
+}
+
+bool RackEditorWindow::apply_preset_ack(const RackPresetUiAck& ack) noexcept
+{
+    return impl_->apply_preset_ack(ack);
 }
 
 bool RackEditorWindow::open_or_foreground() noexcept
