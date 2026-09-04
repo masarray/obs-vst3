@@ -76,23 +76,29 @@ QUICK INSTALL
    obs-plugins\64bit\obs-safe-vst3-scanner.exe
    data\obs-plugins\obs-safe-vst3\locale\en-US.ini
 4. Start OBS Studio.
-5. Add `VST 3.x Plug-in` for the proven one-effect Safe Host, or add `VST3 Rack`
-   for the isolated serial Rack surface.
-6. In VST3 Rack Properties, use Open Rack to show the helper-owned graphical editor.
 
-CURRENT PRODUCT SHAPE
-- Single VST3 filter keeps the existing isolated helper/scanner/state/recovery workflow.
-- VST3 Rack is a separate OBS filter with a separate helper executable and Rack protocol.
-- Rack Editor is owned by obs-safe-vst3-rack-host.exe, never obs64.exe.
-- A newly created Rack starts as a coherent empty serial Rack and remains dry/pass-through.
-- Graphical add/replace/remove/bypass/browser workflow is delivered by later Rack tickets.
-- Dry fail-open audio remains active whenever a valid isolated wet result is unavailable in time.
+SINGLE VST3
+- Add `VST 3.x Plug-in` to an OBS audio source.
+- Choose an installed VST3 effect.
+- The effect and its native vendor UI run in obs-safe-vst3-host.exe outside obs64.exe.
 
-CURRENT SCOPE / LIMITATIONS
+VST3 RACK
+- Add `VST3 Rack` to an OBS audio source.
+- In Properties, use Open Rack.
+- Search/Add Effect, then insert/reorder/enable/bypass/replace/remove up to 8 serial effects.
+- Use Open UI for a slot's native VST3 editor.
+- Use Save As, Load, explicit Update, Rename and Delete for named Rack presets.
+- Loading a preset creates an independent working copy; normal edits do not live-mutate the saved preset.
+- Missing plug-ins referenced by a preset can remain pass-through placeholders.
+- The Rack Editor and all Rack slots live in one obs-safe-vst3-rack-host.exe process per Rack.
+
+SAFETY / SCOPE
+- Dry fail-open behavior protects OBS from waiting indefinitely on isolated wet DSP.
+- Rack shutdown uses a short bounded helper-exit path so a stuck VST3 cannot hold OBS close for seconds.
 - Windows x64 only.
-- Mono/stereo float32 audio effects only.
-- Rack v2 remains a serial effects lane; graph routing, sidechain, MIDI/instruments and arbitrary multichannel are out of scope.
-- Third-party compatibility varies; only load plug-ins you trust.
+- Mono/stereo Float32 VST3 audio effects only.
+- No parallel graph, sidechain, MIDI/instruments, nested Racks, Float64/arbitrary multichannel or macOS/Linux stable runtime in v$Version.
+- Crash isolation is not a malware sandbox. Only load plug-ins you trust.
 
 For a normal OBS Studio installation, use the Smart Installer from GitHub Releases.
 To uninstall this manual package, close OBS and run UNINSTALL-MANUAL.cmd from the OBS root.
