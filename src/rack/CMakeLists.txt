@@ -74,6 +74,16 @@ add_executable(obs-safe-vst3-rack-host
     "${SAFEVST3_RACK_ROOT}/src/host/hosted_plugin.cpp"
     "${SAFEVST3_RACK_ROOT}/src/host/native_editor.cpp"
 )
+
+# P1 product skin is compile-time isolated to the Rack Editor source.  The
+# qualified helper/DSP/control implementation is built byte-for-byte from its
+# existing sources and never sees the visual redirection macros.
+set_source_files_properties(
+    "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp"
+    PROPERTIES
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p1_skin.hpp"
+)
+
 target_include_directories(obs-safe-vst3-rack-host BEFORE PRIVATE
     "${_safevst3_r3_2_embed_root}"
     "${SAFEVST3_RACK_ROOT}/src"
