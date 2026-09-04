@@ -63,9 +63,41 @@ set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
 file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
 
+# A Rack Editor close destroys the Win32/D3D/ImGui session while the owning
+# helper/window thread remains alive. Some Windows runners exposed a narrow
+# immediate-reopen race where transient session creation can fail once after
+# teardown. Preserve the qualified checked-in editor source and generate the
+# shipping translation unit with a bounded UI-thread-only recreation retry.
+# A successfully created session still blocks until normal user close and is
+# therefore never retried. DSP/control paths are unaffected.
+set(_safevst3_editor_source "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp")
+file(READ "${_safevst3_editor_source}" _safevst3_editor_embed)
+set(_safevst3_editor_session_call "            run_window_session();")
+string(FIND "${_safevst3_editor_embed}" "${_safevst3_editor_session_call}" _safevst3_editor_session_pos)
+if(_safevst3_editor_session_pos EQUAL -1)
+    message(FATAL_ERROR "Rack editor lifecycle hardening could not locate the session call")
+endif()
+set(_safevst3_editor_session_retry [=[
+            for (int attempt = 0; attempt < 3; ++attempt) {
+                if (run_window_session())
+                    break;
+                if (stop_requested.load(std::memory_order_acquire))
+                    break;
+                Sleep(50);
+            }
+]=])
+string(REPLACE
+    "${_safevst3_editor_session_call}"
+    "${_safevst3_editor_session_retry}"
+    _safevst3_editor_embed
+    "${_safevst3_editor_embed}"
+)
+set(_safevst3_editor_generated "${CMAKE_CURRENT_BINARY_DIR}/rack_editor_window_release.cpp")
+file(WRITE "${_safevst3_editor_generated}" "${_safevst3_editor_embed}")
+
 add_executable(obs-safe-vst3-rack-host
     "${CMAKE_CURRENT_LIST_DIR}/main_r3_2_hosted.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp"
+    "${_safevst3_editor_generated}"
     "${CMAKE_CURRENT_LIST_DIR}/rack_plugin_catalog.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_preset_library.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_preset_management.cpp"
@@ -75,11 +107,10 @@ add_executable(obs-safe-vst3-rack-host
     "${SAFEVST3_RACK_ROOT}/src/host/native_editor.cpp"
 )
 
-# P1 product skin is compile-time isolated to the Rack Editor source.  The
-# qualified helper/DSP/control implementation is built byte-for-byte from its
-# existing sources and never sees the visual redirection macros.
+# P1 product skin is compile-time isolated to the generated Rack Editor source.
+# The qualified helper/DSP/control implementation never sees the visual macros.
 set_source_files_properties(
-    "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp"
+    "${_safevst3_editor_generated}"
     PROPERTIES
         COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p1_skin.hpp"
 )
