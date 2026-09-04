@@ -20,6 +20,20 @@ std::string win_error(const char* what)
     os << what << " failed (Win32 error " << code << ')';
     return os.str();
 }
+
+bool is_hex_session_id(std::string_view value) noexcept
+{
+    if (value.size() != 32)
+        return false;
+    for (const char ch : value) {
+        const bool digit = ch >= '0' && ch <= '9';
+        const bool lower = ch >= 'a' && ch <= 'f';
+        const bool upper = ch >= 'A' && ch <= 'F';
+        if (!digit && !lower && !upper)
+            return false;
+    }
+    return true;
+}
 }
 
 WinRackBridge::~WinRackBridge() { stop(); }
@@ -78,7 +92,9 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
                           std::uint32_t sample_rate,
                           std::uint32_t channels,
                           std::string& error,
-                          std::stop_token cancel)
+                          std::stop_token cancel,
+                          const std::filesystem::path& session_snapshot,
+                          std::string_view session_id)
 {
     stop();
     if (cancel.stop_requested()) {
@@ -91,6 +107,14 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
     }
     if (sample_rate == 0 || channels == 0 || channels > kMaxChannels) {
         error = "Rack supports mono/stereo audio only";
+        return false;
+    }
+    if (session_snapshot.empty() != session_id.empty()) {
+        error = "Rack Session Snapshot path and identity must be supplied together";
+        return false;
+    }
+    if (!session_id.empty() && !is_hex_session_id(session_id)) {
+        error = "Rack Session Snapshot identity is invalid";
         return false;
     }
 
@@ -136,6 +160,11 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
         L" --response-event " + quote(names_.response_event) +
         L" --ready-event " + quote(names_.ready_event) +
         L" --ui-open-event " + quote(names_.ui_open_event);
+    if (!session_snapshot.empty()) {
+        command += L" --session-snapshot " + quote(session_snapshot.wstring());
+        const std::wstring session_id_wide(session_id.begin(), session_id.end());
+        command += L" --session-id " + quote(session_id_wide);
+    }
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -387,6 +416,23 @@ RackBridgeStatus WinRackBridge::status() const noexcept
         }
         SwitchToThread();
     }
+    return snapshot;
+}
+
+RackBridgeHealthSnapshot WinRackBridge::health_snapshot() const noexcept
+{
+    RackBridgeHealthSnapshot snapshot{};
+    snapshot.process_alive = process_alive();
+    snapshot.deadline_misses = deadline_misses_.load(std::memory_order_relaxed);
+    if (!region_)
+        return snapshot;
+
+    snapshot.ready = snapshot.process_alive &&
+        InterlockedCompareExchange(&region_->host_status, 0, 0) ==
+            static_cast<long>(rack::RackHostStatus::Ready);
+    snapshot.dsp_progress_generation = static_cast<std::uint64_t>(
+        InterlockedCompareExchange64(
+            reinterpret_cast<volatile LONG64*>(&region_->dsp_progress_generation), 0, 0));
     return snapshot;
 }
 
