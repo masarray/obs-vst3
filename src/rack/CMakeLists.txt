@@ -41,6 +41,28 @@ target_compile_definitions(safevst3_rack_imgui PRIVATE
     WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(safevst3_rack_imgui PUBLIC d3d11 dxgi dwmapi)
 
+# R3-4 reuses the already-qualified R3-2 implementation in the same translation
+# unit so its internal generation/control seams stay authoritative. Generate an
+# include-only copy whose sole textual difference is the legacy entrypoint name;
+# the checked-in R3-2 source remains unchanged and its exact regressions continue
+# to compile it normally in their own targets.
+set(_safevst3_r3_2_source "${CMAKE_CURRENT_LIST_DIR}/main_r3_2.cpp")
+file(READ "${_safevst3_r3_2_source}" _safevst3_r3_2_embed)
+set(_safevst3_r3_2_entry "int wmain(int argc, wchar_t** argv)")
+string(FIND "${_safevst3_r3_2_embed}" "${_safevst3_r3_2_entry}" _safevst3_r3_2_entry_pos)
+if(_safevst3_r3_2_entry_pos EQUAL -1)
+    message(FATAL_ERROR "R3-4 could not locate the qualified R3-2 entrypoint")
+endif()
+string(REPLACE
+    "${_safevst3_r3_2_entry}"
+    "int safevst3_r3_2_embedded_wmain(int argc, wchar_t** argv)"
+    _safevst3_r3_2_embed
+    "${_safevst3_r3_2_embed}"
+)
+set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
+file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
+file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
+
 add_executable(obs-safe-vst3-rack-host
     "${CMAKE_CURRENT_LIST_DIR}/main_r3_2_hosted.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp"
@@ -52,7 +74,10 @@ add_executable(obs-safe-vst3-rack-host
     "${SAFEVST3_RACK_ROOT}/src/host/hosted_plugin.cpp"
     "${SAFEVST3_RACK_ROOT}/src/host/native_editor.cpp"
 )
-target_include_directories(obs-safe-vst3-rack-host PRIVATE "${SAFEVST3_RACK_ROOT}/src")
+target_include_directories(obs-safe-vst3-rack-host BEFORE PRIVATE
+    "${_safevst3_r3_2_embed_root}"
+    "${SAFEVST3_RACK_ROOT}/src"
+)
 target_link_libraries(obs-safe-vst3-rack-host PRIVATE
     ole32
     safevst3_rack_imgui
