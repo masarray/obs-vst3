@@ -19,7 +19,7 @@ $Suites = @(
     @{ Name = 'R3-3 Rack Vendor Editor'; Path = 'tests/r3_3' },
     @{ Name = 'R3-4 Rack Preset UX'; Path = 'tests/r3_4' },
     @{ Name = 'P0 Rack Shutdown'; Path = 'tests/p0_shutdown' },
-    @{ Name = 'P1 Rack Editor Polish'; Path = 'tests/p1_rack_editor_polish' },
+    @{ Name = 'P1 Rack Editor Polish'; Path = 'tests/p1_rack_editor' },
     @{ Name = 'R5-1 Stable Rack Lock'; Path = 'tests/r5_1' }
 )
 
