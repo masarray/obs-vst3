@@ -19,6 +19,7 @@ set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
 
 get_filename_component(SAFEVST3_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 add_subdirectory("${SAFEVST3_ROOT}" safevst3-root)
+add_subdirectory("${SAFEVST3_ROOT}/src/rack" rack-target)
 
 add_executable(r3-4-preset-ux-contract
     "${CMAKE_CURRENT_LIST_DIR}/rack_preset_ux_contract.cpp"
@@ -31,10 +32,21 @@ add_executable(r3-4-preset-management-contract
     "${SAFEVST3_ROOT}/src/rack/rack_preset_management.cpp"
     "${SAFEVST3_ROOT}/src/rack/rack_preset_library.cpp"
     "${SAFEVST3_ROOT}/src/rack/rack_session_snapshot.cpp"
+    "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
 )
 target_include_directories(r3-4-preset-management-contract PRIVATE "${SAFEVST3_ROOT}/src")
 target_compile_definitions(r3-4-preset-management-contract PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(r3-4-preset-management-contract PRIVATE ole32)
+target_link_libraries(r3-4-preset-management-contract PRIVATE
+    ole32
+    safevst3_vst3_hosting_runtime
+    safevst3_lifecycle_policy
+    safevst3_state_restore_policy
+    safevst3_latency_restart_transaction
+    safevst3_parameter_refresh_transaction
+    safevst3_io_restart_transaction
+    safevst3_reload_component_transaction
+    safevst3_process_context_policy
+)
 
 enable_testing()
 add_test(NAME r3-4-preset-ux-contract COMMAND $<TARGET_FILE:r3-4-preset-ux-contract>)
