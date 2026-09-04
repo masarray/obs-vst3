@@ -3,9 +3,13 @@
 #include "rack/rack_recovery_policy.hpp"
 #include "rack/rack_session_snapshot.hpp"
 
+#include "pluginterfaces/base/funknown.h"
+#include "pluginterfaces/vst/ivsteditcontroller.h"
+
 #include <windows.h>
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -33,6 +37,61 @@ constexpr char kRackIdText[] = "00112233445546778899aabbccddeeff";
 constexpr std::array<std::uint8_t, 16> kRackId{
     0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x46, 0x77,
     0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+};
+
+class TestComponentHandler final : public Steinberg::Vst::IComponentHandler {
+public:
+    Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID iid,
+                                                 void** object) override
+    {
+        if (!object)
+            return Steinberg::kInvalidArgument;
+        *object = nullptr;
+        if (Steinberg::FUnknownPrivate::iidEqual(iid, Steinberg::FUnknown::iid) ||
+            Steinberg::FUnknownPrivate::iidEqual(
+                iid, Steinberg::Vst::IComponentHandler::iid)) {
+            *object = static_cast<Steinberg::Vst::IComponentHandler*>(this);
+            addRef();
+            return Steinberg::kResultTrue;
+        }
+        return Steinberg::kNoInterface;
+    }
+
+    Steinberg::uint32 PLUGIN_API addRef() override
+    {
+        return refs_.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+
+    Steinberg::uint32 PLUGIN_API release() override
+    {
+        const auto previous = refs_.fetch_sub(1, std::memory_order_relaxed);
+        if (previous <= 1) {
+            refs_.store(1, std::memory_order_relaxed);
+            return 1;
+        }
+        return previous - 1;
+    }
+
+    Steinberg::tresult PLUGIN_API beginEdit(Steinberg::Vst::ParamID) override
+    {
+        return Steinberg::kResultTrue;
+    }
+    Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID,
+                                              Steinberg::Vst::ParamValue) override
+    {
+        return Steinberg::kResultTrue;
+    }
+    Steinberg::tresult PLUGIN_API endEdit(Steinberg::Vst::ParamID) override
+    {
+        return Steinberg::kResultTrue;
+    }
+    Steinberg::tresult PLUGIN_API restartComponent(Steinberg::int32) override
+    {
+        return Steinberg::kResultTrue;
+    }
+
+private:
+    std::atomic<Steinberg::uint32> refs_{1};
 };
 
 bool expect(bool condition, const char* message)
@@ -109,16 +168,18 @@ bool create_two_slot_snapshot(const std::filesystem::path& fixture,
 {
     HostedPlugin plugin_a;
     HostedPlugin plugin_b;
+    TestComponentHandler handler_a;
+    TestComponentHandler handler_b;
     std::string error;
     const std::string fixture_path = fixture.string();
 
-    if (!expect(plugin_a.open(fixture_path, "", kSampleRate, kChannels, nullptr, error),
+    if (!expect(plugin_a.open(fixture_path, "", kSampleRate, kChannels, &handler_a, error),
                 "open fixture A for Session Snapshot")) {
         std::cerr << error << '\n';
         return false;
     }
     error.clear();
-    if (!expect(plugin_b.open(fixture_path, "", kSampleRate, kChannels, nullptr, error),
+    if (!expect(plugin_b.open(fixture_path, "", kSampleRate, kChannels, &handler_b, error),
                 "open fixture B for Session Snapshot")) {
         std::cerr << error << '\n';
         plugin_a.close();
