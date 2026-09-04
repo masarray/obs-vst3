@@ -63,6 +63,28 @@ set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
 file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
 
+# Stable R3-5 composes automatic Session Snapshot restore/checkpoint semantics
+# above the qualified R3-4 implementation. Keep R3-4 checked in unchanged and
+# generate an include-only copy with only its entrypoint renamed. This mirrors
+# the established R3-4/R3-2 composition pattern and preserves every lower-level
+# regression target on its original source file.
+set(_safevst3_r3_4_source "${CMAKE_CURRENT_LIST_DIR}/main_r3_4.cpp")
+file(READ "${_safevst3_r3_4_source}" _safevst3_r3_4_embed)
+set(_safevst3_r3_4_entry "int wmain(int argc, wchar_t** argv)")
+string(FIND "${_safevst3_r3_4_embed}" "${_safevst3_r3_4_entry}" _safevst3_r3_4_entry_pos)
+if(_safevst3_r3_4_entry_pos EQUAL -1)
+    message(FATAL_ERROR "Stable Rack could not locate the qualified R3-4 entrypoint")
+endif()
+string(REPLACE
+    "${_safevst3_r3_4_entry}"
+    "int safevst3_r3_4_embedded_wmain(int argc, wchar_t** argv)"
+    _safevst3_r3_4_embed
+    "${_safevst3_r3_4_embed}"
+)
+set(_safevst3_r3_4_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_5_embed")
+file(MAKE_DIRECTORY "${_safevst3_r3_4_embed_root}/rack")
+file(WRITE "${_safevst3_r3_4_embed_root}/rack/main_r3_4.cpp" "${_safevst3_r3_4_embed}")
+
 # A Rack Editor close destroys the Win32/D3D/ImGui session while the owning
 # helper/window thread remains alive. Some Windows runners exposed a narrow
 # immediate-reopen race where transient session creation can fail once after
@@ -116,6 +138,7 @@ set_source_files_properties(
 )
 
 target_include_directories(obs-safe-vst3-rack-host BEFORE PRIVATE
+    "${_safevst3_r3_4_embed_root}"
     "${_safevst3_r3_2_embed_root}"
     "${SAFEVST3_RACK_ROOT}/src"
 )
