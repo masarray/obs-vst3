@@ -72,15 +72,21 @@ int main()
     assert(model.publish_snapshot(snapshot));
     assert(!model.pending_command());
 
-    // Load is detached working-state materialization. It is transient for the
-    // library stream and must not require a fabricated library generation.
+    // Load materializes detached working state and then publishes the selected
+    // preset as authoritative library/UI context. It never mutates the preset.
     RackPresetUiCommand load = model.request_load(a);
     assert(load.type == RackPresetUiCommandType::Load);
     RackPresetUiAck load_ack{};
     load_ack.command_id = load.command_id;
     load_ack.result = RackPresetUiCommandResult::Accepted;
+    load_ack.committed_generation = 3;
     load_ack.preset_id = a;
     assert(model.apply_ack(load_ack));
+    assert(model.pending_command());
+    snapshot.generation = 3;
+    snapshot.active_preset_id = a;
+    set_name(snapshot.active_preset_name, "Broadcast Vocal");
+    assert(model.publish_snapshot(snapshot));
     assert(!model.pending_command());
 
     // Rename preserves preset identity; Update is explicit; Delete is scoped
@@ -107,10 +113,10 @@ int main()
 
     // Duplicate IDs and stale snapshots are invalid; known-good remains.
     RackPresetUiSnapshot malformed = snapshot;
-    malformed.generation = 3;
+    malformed.generation = 4;
     malformed.entries[1].preset_id = malformed.entries[0].preset_id;
     assert(!model.publish_snapshot(malformed));
-    assert(model.snapshot().generation == 2);
+    assert(model.snapshot().generation == 3);
 
     return 0;
 }
