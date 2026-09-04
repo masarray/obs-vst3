@@ -19,6 +19,7 @@ set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
 
 get_filename_component(SAFEVST3_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 add_subdirectory("${SAFEVST3_ROOT}" safevst3-root)
+add_subdirectory("${SAFEVST3_ROOT}/src/rack" rack-target)
 
 add_executable(r3-3-vendor-editor-contract
     "${CMAKE_CURRENT_LIST_DIR}/rack_vendor_editor_contract.cpp"
@@ -52,10 +53,40 @@ target_link_libraries(r3-3-vendor-editor-integration PRIVATE
 )
 add_dependencies(r3-3-vendor-editor-integration r3-3-vendor-editor-fixture)
 
+# Combined failure proof: the child owns both the real Rack Editor and a real
+# deterministic VST3 IPlugView/HWND. The parent kills that UI-owning helper,
+# stays alive/dry, recreates it, and proves transient windows do not auto-open.
+add_executable(r3-3-vendor-editor-recovery
+    "${CMAKE_CURRENT_LIST_DIR}/rack_vendor_editor_recovery.cpp"
+    "${SAFEVST3_ROOT}/src/rack/rack_editor_window.cpp"
+    "${SAFEVST3_ROOT}/src/rack/rack_vendor_editor_manager.cpp"
+    "${SAFEVST3_ROOT}/src/host/native_editor.cpp"
+    "${SAFEVST3_ROOT}/src/host/hosted_plugin.cpp"
+)
+target_include_directories(r3-3-vendor-editor-recovery PRIVATE "${SAFEVST3_ROOT}/src")
+target_compile_definitions(r3-3-vendor-editor-recovery PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(r3-3-vendor-editor-recovery PRIVATE
+    safevst3_rack_imgui
+    safevst3_vst3_hosting_runtime
+    safevst3_lifecycle_policy
+    safevst3_state_restore_policy
+    safevst3_latency_restart_transaction
+    safevst3_parameter_refresh_transaction
+    safevst3_io_restart_transaction
+    safevst3_reload_component_transaction
+    safevst3_process_context_policy
+)
+add_dependencies(r3-3-vendor-editor-recovery r3-3-vendor-editor-fixture)
+
 enable_testing()
 add_test(NAME r3-3-vendor-editor-contract COMMAND $<TARGET_FILE:r3-3-vendor-editor-contract>)
 add_test(
     NAME r3-3-vendor-editor-integration
     COMMAND $<TARGET_FILE:r3-3-vendor-editor-integration>
+        $<TARGET_FILE:r3-3-vendor-editor-fixture>
+)
+add_test(
+    NAME r3-3-vendor-editor-recovery
+    COMMAND $<TARGET_FILE:r3-3-vendor-editor-recovery>
         $<TARGET_FILE:r3-3-vendor-editor-fixture>
 )
