@@ -1,77 +1,24 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071019">
-  <title>OBS VST3 Compatibility – Popular Studio Plugins in OBS</title>
-  <meta name="description" content="See which VST3 audio effects work with OBS Safe VST3 Host, real-machine tested studio plug-ins, Windows/OBS scope, limitations and future instrument support.">
-  <meta name="robots" content="index,follow,max-snippet:-1">
-  <link rel="canonical" href="https://masarray.github.io/obs-vst3/compatibility.html">
-  <link rel="stylesheet" href="site.css">
-  <meta property="og:title" content="OBS VST3 Compatibility – Popular Studio Effects and Current Scope">
-  <meta property="og:description" content="Broad VST3 audio-effect compatibility for OBS, with real-machine qualification across popular commercial studio plug-ins and a clear current scope.">
-  <meta property="og:url" content="https://masarray.github.io/obs-vst3/compatibility.html">
-  <meta property="og:type" content="article">
-</head>
-<body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a></nav></div></header>
-<main>
-  <section class="pageHero"><div class="wrap prose"><div class="eyebrow"><span class="pulse"></span> Compatibility · v0.5.0 stable</div><h1><span class="gradient">Built for the VST3 effects people actually use in studio workflows.</span></h1><p class="lead">The current stable host targets Windows VST3 <strong>audio effects</strong> and is designed for broad compatibility with conventional popular studio processors. It is not a vendor whitelist, and it does not claim every advanced VST3 topology is complete.</p></div></section>
-  <section><div class="wrap prose">
-    <h2>Current stable host scope</h2>
-    <div class="compat">
-      <div class="row"><div>Windows</div><div><span class="yes">Windows x64 supported</span></div></div>
-      <div class="row"><div>OBS Studio</div><div><span class="yes">OBS 29.1+ compatibility floor</span>. Release qualification also builds against pinned current OBS/libobs.</div></div>
-      <div class="row"><div>VST3 audio effects</div><div><span class="yes">Supported</span> for the current mono/stereo Float32 processing scope.</div></div>
-      <div class="row"><div>Native vendor editor</div><div><span class="yes">Supported</span> when the plug-in provides a usable VST3 editor.</div></div>
-      <div class="row"><div>State persistence</div><div><span class="yes">Supported</span> for full VST3 component/controller state in the current host model.</div></div>
-      <div class="row"><div>Instrument-only VST3 / MIDI</div><div><span class="warnTxt">Roadmap</span>. Explicit instrument-only classes are intentionally excluded from today's insert-effect list.</div></div>
-      <div class="row"><div>Rack / multiple effects</div><div><span class="warnTxt">Roadmap</span>. The stable line is currently one effect per OBS filter.</div></div>
-      <div class="row"><div>Sidechain / multiple audio buses</div><div><span class="warnTxt">Roadmap / not fully supported yet</span>.</div></div>
-      <div class="row"><div>Arbitrary multichannel / Float64-only behavior</div><div><span class="warnTxt">Not complete yet</span>.</div></div>
-      <div class="row"><div>macOS / Linux runtime packages</div><div><span class="no">Not currently shipped</span>.</div></div>
-    </div>
-
-    <h2>Real-machine qualification with popular studio plug-ins</h2>
-    <p>The v0.5.0 line has been exercised on a real Windows/OBS machine with commercial effects including:</p>
-    <ul>
-      <li><strong>iZotope</strong> — Ozone 11, RX 9 Spectral De-noise</li>
-      <li><strong>FabFilter</strong> — Pro-Q 3, Pro-C 2, Pro-R, Saturn</li>
-      <li><strong>Waves</strong> — SSL Channel</li>
-      <li><strong>Klevgrand</strong> — Brusfri</li>
-      <li><strong>Neuro Audio</strong> — Westwood</li>
-      <li><strong>Process Audio</strong> — Sugar</li>
-    </ul>
-    <div class="callout"><strong>This is compatibility evidence, not a whitelist.</strong> A VST3 effect does not need to appear in this list to work. The scanner does not decide compatibility by vendor name.</div>
-
-    <h2>Why this covers a large part of the studio-effect world</h2>
-    <p>The stable scope is intentionally focused on the most common OBS use case: <strong>audio insert effects</strong>. EQ, dynamics, restoration, reverb, saturation, limiting and mastering-style processors usually fit that model far better than synths, samplers or unusual multi-bus instruments.</p>
-    <p>That focus lets the project target broad compatibility with the kinds of VST3 processors creators and engineers actually want for microphones, music, voice, streaming and final-bus processing, while keeping unsupported feature classes explicit.</p>
-
-    <h2>Why instruments are hidden today</h2>
-    <p>VST3 audio effects and instruments share the same broad VST3 audio-module class family. The scanner therefore looks at VST3 subcategory metadata. Plug-ins explicitly marked as <strong>Instrument</strong> without an <strong>Fx</strong> role are excluded from today's OBS insert-effect list, while normal Fx and hybrid Fx/Instrument classes remain eligible.</p>
-    <p>This prevents synths and samplers from confusing a user who only wants an audio filter, without using an aggressive effect whitelist that could hide legitimate vendor plug-ins with incomplete metadata.</p>
-
-    <h2>Instruments and MIDI are a roadmap feature, not a rejected idea</h2>
-    <p>Instrument hosting needs more than simply showing synths in the list. A dependable implementation needs MIDI input, VST3 event-bus delivery, event timestamps, note/controller state, monitoring and recovery behavior. Those are planned as part of the future live-performance direction.</p>
-    <p>See the <a href="roadmap.html">public roadmap</a> for rack, chain, routing, sidechain, MIDI and VST3 instrument plans.</p>
-
-    <h2>How to report a plug-in that does not work</h2>
-    <p>Please include enough detail to make the failure reproducible:</p>
-    <ul>
-      <li>OBS Studio version</li>
-      <li>Windows version</li>
-      <li>VST3 product and exact version</li>
-      <li>whether the problem is discovery, loading, vendor GUI, DSP or state restore</li>
-      <li>the exact filter status message</li>
-      <li>relevant <code>[obs-safe-vst3]</code> OBS log lines</li>
-    </ul>
-    <p><a href="https://github.com/masarray/obs-vst3/issues">Open a public compatibility issue on GitHub</a>.</p>
-
-    <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Try the stable release</a><a class="btn secondary" href="install.html">Install guide</a><a class="btn secondary" href="safety.html">Safety model</a><a class="btn secondary" href="roadmap.html">Roadmap</a></div>
-  </div></section>
-</main>
-<footer class="footer"><div class="wrap footerIn"><div>OBS Safe VST3 Host · compatibility guide</div><div class="footerLinks"><a href="./">Home</a><a href="roadmap.html">Roadmap</a><a href="https://github.com/masarray/obs-vst3">GitHub</a><a href="https://github.com/masarray/obs-vst3/releases/latest">Releases</a></div></div></footer>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Compatibility — OBS Safe VST3 Host v0.6.0</title><meta name="description" content="Compatibility scope for OBS Safe VST3 Host and VST3 Rack v0.6.0."><link rel="stylesheet" href="site.css"></head><body>
+<nav class="nav"><div class="wrap navin"><a class="brand" href="index.html"><span class="mark">V3</span>OBS Safe VST3</a><div class="navlinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download</a></div></div></nav>
+<header class="pageHero"><div class="wrap"><span class="eyebrow"><span class="pulse"></span>v0.6.0 compatibility</span><h1>Stable scope first. Broader claims only with evidence.</h1><p class="lead">The Rack is now part of the normal product, but v0.6.0 intentionally stays inside a bounded Windows audio-effects scope.</p></div></header>
+<main class="wrap">
+<div class="compat">
+<div class="row"><div>Operating system</div><div><span class="yes">Windows x64</span></div></div>
+<div class="row"><div>OBS Studio</div><div>Compatibility floor <strong>29.1+</strong>; built with OBS 32.2.2 SDK and automatically loader-probed against official OBS 29.1.3 runtime.</div></div>
+<div class="row"><div>Single filter</div><div><span class="yes">VST3 audio effects</span> via <strong>VST 3.x Plug-in</strong>, one external helper per filter.</div></div>
+<div class="row"><div>Rack filter</div><div><span class="yes">VST3 Rack</span>, one external helper per Rack, up to <strong>8 serial effects</strong>.</div></div>
+<div class="row"><div>Audio layout</div><div>Mono / stereo, Float32 audio effects.</div></div>
+<div class="row"><div>Rack operations</div><div>Search/Add, insert, reorder, enable/bypass, replace, remove, native Open UI, aggregate latency.</div></div>
+<div class="row"><div>Rack presets</div><div>Save As, browse/load, explicit Update, Rename, Delete, independent working copy and Missing placeholders.</div></div>
+<div class="row"><div>Parallel graph / patchbay</div><div><span class="no">Not supported in v0.6.0</span></div></div>
+<div class="row"><div>Sidechain</div><div><span class="no">Not supported in v0.6.0</span></div></div>
+<div class="row"><div>MIDI / VST3 instruments</div><div><span class="no">Not supported in v0.6.0</span></div></div>
+<div class="row"><div>Float64 / arbitrary multichannel</div><div><span class="no">Not supported in v0.6.0</span></div></div>
+<div class="row"><div>macOS / Linux</div><div><span class="no">Not supported by the stable runtime</span></div></div>
+</div>
+<section><div class="sectionHead"><span class="kicker">Qualification</span><h2>What was actually tested?</h2><p>Release qualification combines deterministic Rack contracts, Windows builds, OBS loader checks and real user smoke testing.</p></div><div class="grid3"><div class="card"><div class="icon">CI</div><h3>Deterministic Rack gates</h3><p>Serial DSP, safety, topology, recovery baseline, Session Snapshot, editor lifecycle, browser, vendor editor, presets, P0 shutdown and P1 product-UI contracts.</p></div><div class="card"><div class="icon">OBS</div><h3>OBS/package gate</h3><p>Windows Compatibility builds the plug-in/helper/scanner/Rack, runs tests and scanner smoke, probes the module on official OBS 29.1.3, then validates portable and installer layout.</p></div><div class="card"><div class="icon">✓</div><h3>Real OBS smoke</h3><p>OBS 32.1.2 testing confirmed a multi-effect serial Rack produces audio, slot Enable/Bypass works, native VST3 UI opens, and the bounded P0 shutdown fix makes OBS close faster than before.</p></div></div></section>
+<section><div class="sectionHead"><span class="kicker">Third-party plug-ins</span><h2>Compatibility still varies by plug-in.</h2><p>A VST3 can use vendor-specific state, GUI and threading behavior. Passing the host qualification does not mean every commercial VST3 has been individually certified in Rack mode.</p></div><div class="notice">If a plug-in works in another host but fails here, report the exact plug-in name/version, OBS version, Windows version, whether the problem occurs in Single or Rack, and a minimal reproduction.</div></section>
+<section><div class="sectionHead"><span class="kicker">Rack resilience</span><h2>What v0.6.0 does and does not promise.</h2></div><div class="ticks"><div class="tick"><span>✓</span><div><b>Missing preset slot preservation.</b> A plug-in unavailable during preset load can remain visible as a pass-through Missing placeholder while the rest of the chain is reconstructed.</div></div><div class="tick"><span>✓</span><div><b>Whole Rack process boundary.</b> Third-party Rack code is outside OBS in one Rack helper process.</div></div><div class="tick"><span>→</span><div><b>Future hardening:</b> finer slot-correlated repeated-failure quarantine/recovery and a broader commercial multi-plug-in stress matrix remain roadmap work.</div></div></div></section>
+<section><div class="sectionHead"><span class="kicker">Report an issue</span><h2>Useful compatibility reports are reproducible.</h2></div><p>Open a GitHub issue with the plug-in vendor/name/version, OBS version, Windows version, Single vs Rack, steps to reproduce, and whether the native vendor editor was open.</p><div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/issues">GitHub Issues</a><a class="btn secondary" href="install.html">Installation guide</a></div></section>
+</main><footer class="footer"><div class="wrap footerIn"><span>OBS Safe VST3 Host v0.6.0</span><div class="footerLinks"><a href="index.html">Home</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a></div></div></footer></body></html>
