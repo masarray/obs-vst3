@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <stop_token>
 #include <string>
+#include <string_view>
 
 namespace safevst3 {
 
@@ -19,6 +20,13 @@ struct RackBridgeStatus {
     std::uint64_t chain_generation = 0;
     std::uint32_t effect_count = 0;
     std::uint32_t total_latency_samples = 0;
+};
+
+struct RackBridgeHealthSnapshot {
+    bool process_alive = false;
+    bool ready = false;
+    std::uint64_t dsp_progress_generation = 0;
+    std::uint64_t deadline_misses = 0;
 };
 
 class WinRackBridge {
@@ -33,7 +41,9 @@ public:
                std::uint32_t sample_rate,
                std::uint32_t channels,
                std::string& error,
-               std::stop_token cancel = {});
+               std::stop_token cancel = {},
+               const std::filesystem::path& session_snapshot = {},
+               std::string_view session_id = {});
 
     void stop() noexcept;
     void abort() noexcept;
@@ -46,6 +56,7 @@ public:
 
     bool open_editor() noexcept;
     RackBridgeStatus status() const noexcept;
+    RackBridgeHealthSnapshot health_snapshot() const noexcept;
 
     std::uint64_t deadline_misses() const noexcept
     {
