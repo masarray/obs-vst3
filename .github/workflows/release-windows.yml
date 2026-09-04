@@ -94,6 +94,7 @@ jobs:
           "- Release: ``$Tag``" >> $env:GITHUB_STEP_SUMMARY
           "- OBS/libobs baseline: ``$ObsVersion``" >> $env:GITHUB_STEP_SUMMARY
           "- Single VST3 host + graphical VST3 Rack + scanner" >> $env:GITHUB_STEP_SUMMARY
+          "- Focused Rack stable-lock suites execute on the exact publish source head" >> $env:GITHUB_STEP_SUMMARY
           "- Smart Installer + portable ZIP + SHA-256 checksums" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Run portable protocol tests
@@ -186,6 +187,9 @@ jobs:
 
       - name: Run Windows tests
         run: ctest --test-dir build/release -C Release --output-on-failure
+
+      - name: Run focused Rack stable release gates
+        run: .\scripts\run-rack-release-lock.ps1 -BuildRoot 'build/release-lock'
 
       - name: Verify release binaries
         run: |
