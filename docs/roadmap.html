@@ -1,99 +1,11 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071019">
-  <title>OBS VST3 Roadmap – Rack, Routing, Sidechain, MIDI & Instruments</title>
-  <meta name="description" content="Roadmap for OBS Safe VST3 Host: VST3 rack chains, routing, sidechain, MIDI, VST3 instruments and a future live-performance audio platform for OBS Studio.">
-  <meta name="robots" content="index,follow,max-snippet:-1">
-  <link rel="canonical" href="https://masarray.github.io/obs-vst3/roadmap.html">
-  <link rel="stylesheet" href="site.css">
-  <meta property="og:title" content="OBS VST3 Roadmap – From Safe Effects to Live Performance">
-  <meta property="og:description" content="See the direction from stable VST3 effects to rack chains, routing, sidechain, MIDI and VST3 instruments inside OBS.">
-  <meta property="og:url" content="https://masarray.github.io/obs-vst3/roadmap.html">
-  <meta property="og:type" content="article">
-</head>
-<body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a></nav></div></header>
-<main>
-  <section class="pageHero"><div class="wrap prose"><div class="eyebrow"><span class="pulse"></span> Product roadmap</div><h1><span class="gradient">From safe VST3 effects to a complete live audio platform for OBS.</span></h1><p class="lead">The stable v0.5.0 line solves today's VST3 audio-effect gap. The roadmap grows that foundation into effect racks, routing, sidechain, MIDI and VST3 instruments for live performance.</p></div></section>
-
-  <section><div class="wrap prose">
-    <div class="callout"><strong>Roadmap, not a release-date promise.</strong> Major features should ship only after their realtime, lifecycle, recovery and compatibility behavior is strong enough for a live broadcast.</div>
-
-    <h2>Stage 1 — Safe VST3 Effects — available now</h2>
-    <p>The current stable product keeps the workflow deliberately simple: one VST3 audio effect per OBS filter, with installed discovery, native vendor GUI, isolated runtime/scanning, state persistence, recovery and dry fail-open behavior.</p>
-    <ul>
-      <li>Native OBS <strong>VST 3.x Plug-in</strong> filter.</li>
-      <li>Automatic discovery and manual `.vst3` browsing.</li>
-      <li>Real vendor editor and foreground workflow.</li>
-      <li>Crash-isolated VST3 runtime and scanner.</li>
-      <li>State restore, watchdog health monitoring and bounded recovery.</li>
-    </ul>
-
-    <h2>Stage 2 — Safe VST3 Rack</h2>
-    <p>The next major platform step is a rack that turns multiple single effects into one live processing chain.</p>
-    <div class="code">Input → Noise Reduction → EQ → Compressor → Saturation → Limiter → OBS Output</div>
-    <ul>
-      <li>Multiple VST3 effects in one rack.</li>
-      <li>Insert, remove, reorder and per-slot bypass.</li>
-      <li>Rack presets and deterministic state restore.</li>
-      <li>Aggregate latency handling.</li>
-      <li>Per-slot health/recovery behavior when one effect fails.</li>
-      <li>Fast access to each native vendor GUI.</li>
-    </ul>
-
-    <h2>Stage 3 — Routing and Sidechain</h2>
-    <p>A rack becomes significantly more powerful when it can route signals instead of only running a straight serial chain.</p>
-    <ul>
-      <li>Sidechain input paths.</li>
-      <li>VST3 multi-bus audio handling.</li>
-      <li>Explicit input/output routing.</li>
-      <li>Parallel processing where practical.</li>
-      <li>Richer multichannel negotiation and latency strategy.</li>
-    </ul>
-    <p>Example workflows include music ducking from a microphone, parallel compression, restoration-before-effects branches and more advanced broadcast/mastering chains.</p>
-
-    <h2>Stage 4 — MIDI and VST3 Instruments</h2>
-    <p>Instrument hosting is intentionally a later phase because a serious implementation needs a real event/timing model—not simply letting synths appear in today's effect list.</p>
-    <ul>
-      <li>VST3 instrument class support.</li>
-      <li>MIDI input device selection.</li>
-      <li>Timed note/controller event delivery.</li>
-      <li>Sustain, pitch and modulation handling.</li>
-      <li>Instrument state/preset persistence.</li>
-      <li>Low-latency live monitoring and recovery designed to avoid stuck-note behavior where possible.</li>
-    </ul>
-    <p>The goal is to let a creator play a piano, synth or sampler from a MIDI controller directly into an OBS live-performance setup.</p>
-
-    <h2>Stage 5 — Live Performance Rack</h2>
-    <p>The long-term vision combines effects, instruments and routing into an OBS-native live rig:</p>
-    <ul>
-      <li>instrument + effect racks;</li>
-      <li>MIDI-mapped controls and macros;</li>
-      <li>scene-aware rack presets and snapshots;</li>
-      <li>fast A/B chains and recall;</li>
-      <li>metering per processing stage;</li>
-      <li>performance-oriented switching without unbounded audio-path stalls.</li>
-    </ul>
-
-    <h2>The product vision</h2>
-    <p>A creator should be able to build a <strong>studio-quality live audio rig inside OBS</strong>: use mastering-style processors for stream audio today, build routed racks and sidechains next, and eventually perform live with MIDI-controlled VST3 instruments—all without forcing a separate DAW into common live workflows.</p>
-
-    <h2>What will not be compromised</h2>
-    <p>Every stage must preserve the architecture that makes the current product valuable:</p>
-    <ul>
-      <li>third-party plug-in code stays outside <code>obs64.exe</code>;</li>
-      <li>realtime processing stays bounded;</li>
-      <li>failure degrades gracefully rather than intentionally blocking OBS;</li>
-      <li>advanced features remain optional so simple users still get a simple filter;</li>
-      <li>compatibility claims stay evidence-based.</li>
-    </ul>
-
-    <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Use VST3 effects today</a><a class="btn secondary" href="compatibility.html">Current compatibility</a><a class="btn secondary" href="https://github.com/masarray/obs-vst3/blob/main/ROADMAP.md">Engineering roadmap</a></div>
-  </div></section>
-</main>
-<footer class="footer"><div class="wrap footerIn"><div>OBS Safe VST3 Host · product roadmap</div><div class="footerLinks"><a href="./">Home</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="https://github.com/masarray/obs-vst3">GitHub</a></div></div></footer>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roadmap — OBS Safe VST3 Host</title><meta name="description" content="Roadmap for OBS Safe VST3 Host after the v0.6.0 VST3 Rack release."><link rel="stylesheet" href="site.css"></head><body>
+<nav class="nav"><div class="wrap navin"><a class="brand" href="index.html"><span class="mark">V3</span>OBS Safe VST3</a><div class="navlinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download</a></div></div></nav>
+<header class="pageHero"><div class="wrap"><span class="eyebrow"><span class="pulse"></span>After v0.6.0</span><h1>The Rack is shipped. Hardening continues.</h1><p class="lead">The roadmap now separates delivered product capability from the next reliability and routing layers.</p></div></header>
+<main class="wrap">
+<div class="steps"><div class="step"><h3>Stage 1 · Shipped</h3><p><strong>Safe Single VST3 Host.</strong> External host process, scanner, native vendor UI, state restore and dry fail-open behavior.</p></div><div class="step"><h3>Stage 2 · Shipped in v0.6.0</h3><p><strong>Graphical VST3 Rack.</strong> Up to eight serial effects, browser, add/insert/reorder/bypass/replace/remove, vendor UI, Session Snapshot and named presets.</p></div><div class="step"><h3>Stage 3 · Hardening</h3><p><strong>Rack resilience + qualification.</strong> Finer missing/repeated-failure slot correlation, quarantine/recovery and broader deterministic/commercial stress evidence.</p></div></div>
+<section><div class="sectionHead"><span class="kicker">Delivered in v0.6.0</span><h2>Rack v2 product surface</h2><p>The following items are no longer future roadmap promises.</p></div><div class="grid3"><div class="card"><div class="icon">UI</div><h3>Graphical Rack Editor</h3><p>Helper-owned professional dark editor with compact slot cards, catalog search, drag/reorder, health/latency status and keyboard/menu fallbacks.</p></div><div class="card"><div class="icon">VST</div><h3>Vendor editors</h3><p>Floating native VST3 editor windows per Rack slot while Rack DSP stays in the external helper.</p></div><div class="card"><div class="icon">P</div><h3>Preset library</h3><p>Save As, Load, explicit Update, Rename and Delete with independent working-copy semantics and Missing placeholders.</p></div></div></section>
+<section><div class="sectionHead"><span class="kicker">Next reliability work</span><h2>Evidence before breadth.</h2></div><div class="ticks"><div class="tick"><span>→</span><div><b>Correlated slot failure recovery.</b> Preserve good slots while distinguishing Missing, repeatedly crashing and ambiguous helper failures without restart storms.</div></div><div class="tick"><span>→</span><div><b>Deterministic Rack torture matrix.</b> Repeated add/remove/reorder/bypass, 1/2/4/8 effects, helper kills, corrupt state/presets, missing plug-ins and editor open/close cycles.</div></div><div class="tick"><span>→</span><div><b>Broader commercial qualification.</b> Expand evidence across representative real-world VST3 effects before making stronger compatibility claims.</div></div><div class="tick"><span>→</span><div><b>Performance evidence.</b> Track helper CPU, deadline misses, memory, hidden-editor cost and visible editor CPU/GPU at representative Rack sizes.</div></div></div></section>
+<section><div class="sectionHead"><span class="kicker">Later product layers</span><h2>Explicitly not v0.6.0.</h2><p>These features require new architecture or a larger product contract and are not implied by the current Rack.</p></div><div class="grid3"><div class="card"><h3>Advanced routing</h3><p>Parallel lanes, graph/patchbay workflows and sidechain routing.</p></div><div class="card"><h3>MIDI / instruments</h3><p>VST3 instruments, MIDI event routing and performance-oriented control.</p></div><div class="card"><h3>Broader formats/platforms</h3><p>Arbitrary multichannel, Float64 and non-Windows stable runtimes.</p></div></div></section>
+<section><div class="notice">Roadmap items are direction, not release guarantees. Reliability, real-time safety and reproducible compatibility evidence take priority over adding a broad feature surface quickly.</div></section>
+</main><footer class="footer"><div class="wrap footerIn"><span>OBS Safe VST3 Host roadmap</span><div class="footerLinks"><a href="index.html">Home</a><a href="compatibility.html">Compatibility</a><a href="https://github.com/masarray/obs-vst3/issues">Issues</a></div></div></footer></body></html>
