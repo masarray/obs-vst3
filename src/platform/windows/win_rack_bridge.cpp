@@ -196,6 +196,11 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
         return false;
     }
 
+    // Rack protocol v4 historically publishes Ready immediately before the
+    // helper creates/enters its DSP request worker. Yield one Windows scheduler
+    // interval once at startup so the very first tiny OBS block does not race
+    // that worker creation and consume its sub-millisecond realtime budget.
+    // This does not relax any per-block processing deadline.
     Sleep(1);
 
     next_sequence_ = 1;
@@ -207,10 +212,10 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
 
 void WinRackBridge::stop() noexcept
 {
-    // Publish every available shutdown signal before waiting. The helper owns
-    // DSP, command, vendor-editor and Rack-editor work; waking both event loops
-    // here lets them observe shutdown_requested immediately instead of waiting
-    // for their normal polling cadence.
+    // Publish every available shutdown signal before waiting. The Rack helper
+    // owns DSP, command, vendor-editor and Rack-editor work; waking both event
+    // paths lets it observe shutdown_requested immediately instead of waiting
+    // for a normal polling cadence.
     if (region_) {
         InterlockedExchange(&region_->shutdown_requested, 1);
         MemoryBarrier();
@@ -221,14 +226,12 @@ void WinRackBridge::stop() noexcept
         if (response_event_)
             SetEvent(response_event_);
     }
-
     if (process_.hProcess) {
         const DWORD wait = WaitForSingleObject(
             process_.hProcess, kRackHelperGracefulShutdownTimeoutMs);
         if (wait == WAIT_TIMEOUT) {
-            // Rack runs out-of-process specifically so a stuck third-party VST3
-            // cannot hold OBS hostage. Once the short graceful budget expires,
-            // terminate the helper rather than adding seconds to OBS shutdown.
+            // Rack is intentionally out-of-process: a stuck third-party VST3
+            // must not hold OBS hostage during application shutdown.
             TerminateProcess(process_.hProcess, 0xDEAD);
             (void)WaitForSingleObject(
                 process_.hProcess, kRackHelperForcedShutdownWaitMs);
@@ -285,6 +288,9 @@ bool WinRackBridge::process(float* const* channels,
         channel_count != region_->channels)
         return false;
 
+    // Rack protocol v4 has one bounded request region. If a prior block missed
+    // its realtime deadline, never overwrite it while the helper may still be
+    // consuming that memory. Fail dry until the old response frontier arrives.
     if (!retire_completed_request()) {
         deadline_misses_.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -365,21 +371,22 @@ RackBridgeStatus WinRackBridge::status() const noexcept
 
     snapshot.running = running();
     for (int attempt = 0; attempt < 3; ++attempt) {
-        const std::uint32_t seq_a = static_cast<std::uint32_t>(
-            InterlockedCompareExchange(&region_->status_sequence, 0, 0));
-        if (seq_a & 1u)
-            continue;
+        const auto before = static_cast<std::uint64_t>(InterlockedCompareExchange64(
+            reinterpret_cast<volatile LONG64*>(&region_->committed_chain_generation), 0, 0));
         MemoryBarrier();
-        snapshot.effect_count = region_->committed_slot_count;
-        snapshot.total_latency_samples = region_->committed_total_latency_samples;
-        snapshot.chain_generation = region_->committed_chain_generation;
+        const std::uint32_t count = std::min(region_->committed_slot_count, rack::kRackMaxSlots);
+        const std::uint32_t latency = region_->total_latency_samples;
         MemoryBarrier();
-        const std::uint32_t seq_b = static_cast<std::uint32_t>(
-            InterlockedCompareExchange(&region_->status_sequence, 0, 0));
-        if (seq_a == seq_b && !(seq_b & 1u))
-            break;
+        const auto after = static_cast<std::uint64_t>(InterlockedCompareExchange64(
+            reinterpret_cast<volatile LONG64*>(&region_->committed_chain_generation), 0, 0));
+        if (before == after) {
+            snapshot.chain_generation = after;
+            snapshot.effect_count = count;
+            snapshot.total_latency_samples = latency;
+            return snapshot;
+        }
+        SwitchToThread();
     }
-    snapshot.deadline_misses = deadline_misses_.load(std::memory_order_relaxed);
     return snapshot;
 }
 
