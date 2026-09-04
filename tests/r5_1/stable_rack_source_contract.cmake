@@ -90,13 +90,21 @@ endif()
 
 # Realtime path must remain a bounded reader of the already-running bridge. Do
 # not allow recovery/start/session filesystem work to leak into filter_audio.
+# Find the callback first, then search for its namespace terminator only inside
+# the tail beginning at that callback. A global namespace search can otherwise
+# match an earlier helper namespace and produce a false lock failure.
 string(FIND "${FILTER_TEXT}" "obs_audio_data* rack_filter_audio" AUDIO_START)
-string(FIND "${FILTER_TEXT}" "} // namespace" AUDIO_END)
-if(AUDIO_START EQUAL -1 OR AUDIO_END EQUAL -1 OR AUDIO_END LESS AUDIO_START)
+if(AUDIO_START EQUAL -1)
+    message(FATAL_ERROR "R5-1 could not locate rack_filter_audio source")
+endif()
+string(SUBSTRING "${FILTER_TEXT}" ${AUDIO_START} -1 AUDIO_TAIL)
+set(AUDIO_TERMINATOR "\n}\n\n} // namespace")
+string(FIND "${AUDIO_TAIL}" "${AUDIO_TERMINATOR}" AUDIO_END_RELATIVE)
+if(AUDIO_END_RELATIVE EQUAL -1)
     message(FATAL_ERROR "R5-1 could not isolate rack_filter_audio source")
 endif()
-math(EXPR AUDIO_LENGTH "${AUDIO_END} - ${AUDIO_START}")
-string(SUBSTRING "${FILTER_TEXT}" ${AUDIO_START} ${AUDIO_LENGTH} AUDIO_TEXT)
+math(EXPR AUDIO_LENGTH "${AUDIO_END_RELATIVE} + 2")
+string(SUBSTRING "${AUDIO_TAIL}" 0 ${AUDIO_LENGTH} AUDIO_TEXT)
 foreach(FORBIDDEN IN ITEMS
         "restart_rack_bridge"
         "start_rack_bridge"
