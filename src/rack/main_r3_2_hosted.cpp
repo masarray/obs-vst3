@@ -1,11 +1,13 @@
 #ifdef _WIN32
-// Include the vendor-editor manager before rack_hosted_plugin.hpp defines the
-// Rack-local HostedPlugin token macro. The manager intentionally accepts the
-// protocol-neutral HostedPlugin base; RackHostedPlugin derives from it and can
-// therefore reuse the exact Single NativeEditorWindow implementation without
-// exporting a macro-renamed manager ABI.
+// Keep protocol-neutral preset/session declarations visible before
+// rack_hosted_plugin.hpp defines the Rack-local HostedPlugin token macro.
+// This preserves the established base HostedPlugin ABI while allowing the
+// dynamic Rack translation unit to use RackHostedPlugin instances.
 #include "rack/rack_vendor_editor_manager.hpp"
+#include "rack/rack_preset_management.hpp"
+#include "rack/rack_preset_ui_contract.hpp"
+#include "rack/rack_session_snapshot.hpp"
 #include "rack/rack_hosted_plugin.hpp"
 #endif
 
-#include "rack/main_r3_2.cpp"
+#include "rack/main_r3_4.cpp"
