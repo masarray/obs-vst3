@@ -8,6 +8,7 @@ $meter = Get-Content -Raw (Join-Path $root 'src\rack\rack_meter_telemetry.hpp')
 $cmake = Get-Content -Raw (Join-Path $root 'src\rack\CMakeLists.txt')
 $rc = Get-Content -Raw (Join-Path $root 'src\rack\rack_host.rc')
 $iconPath = Join-Path $root 'src\rack\rack_host.ico'
+$iconSourcePath = Join-Path $root 'src\rack\assets\OBS_Studio_Logo.svg'
 
 function Require-Text([string]$haystack, [string]$needle, [string]$description) {
     if (-not $haystack.Contains($needle)) {
@@ -66,6 +67,13 @@ Require-Text $cmake 'wc.hIcon' 'large Win32 Rack window icon'
 Require-Text $cmake 'wc.hIconSm' 'small Win32 Rack window icon'
 Require-Text $cmake 'MAKEINTRESOURCEW(101)' 'stable Rack icon resource id'
 Require-Text $rc '101 ICON "rack_host.ico"' 'Rack icon resource declaration'
+Require-Text $rc '80% of the icon canvas' 'smaller OBS companion icon treatment'
+if (-not (Test-Path $iconSourcePath)) {
+    throw 'P4 Rack Editor contract missing: maintainer-provided OBS_Studio_Logo.svg source'
+}
+$iconSource = Get-Content -Raw $iconSourcePath
+Require-Text $iconSource '<title>OBS Studio</title>' 'OBS SVG source identity'
+
 if (-not (Test-Path $iconPath)) {
     throw 'P4 Rack Editor contract missing: rack_host.ico'
 }
@@ -76,6 +84,10 @@ if ($iconBytes.Length -lt 256) {
 if ($iconBytes[0] -ne 0 -or $iconBytes[1] -ne 0 -or
     $iconBytes[2] -ne 1 -or $iconBytes[3] -ne 0) {
     throw 'P4 Rack icon is not a valid Windows ICO container'
+}
+$iconImageCount = [BitConverter]::ToUInt16($iconBytes, 4)
+if ($iconImageCount -lt 4) {
+    throw 'P4 Rack icon must provide at least 16/32/48/256 px Windows icon variants'
 }
 
 if ($cmake.Contains('target_compile_options(obs-safe-vst3-rack-host') -and
