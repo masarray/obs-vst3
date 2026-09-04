@@ -23,6 +23,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Enforce bounded Rack shutdown contract
+      - name: Enforce bounded Rack shutdown source contract
         shell: pwsh
         run: ./tests/p0_shutdown/shutdown_contract.ps1
+
+      - name: Configure P0 runtime shutdown test
+        shell: pwsh
+        run: cmake -S tests/p0_shutdown -B build/p0-shutdown -A x64
+
+      - name: Build P0 runtime shutdown test
+        shell: pwsh
+        run: cmake --build build/p0-shutdown --config Release --parallel
+
+      - name: Run P0 runtime shutdown test
+        shell: pwsh
+        run: ctest --test-dir build/p0-shutdown -C Release --output-on-failure
