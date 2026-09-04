@@ -1,0 +1,4 @@
+// Windows application icon for the isolated VST3 Rack helper.
+// ID 101 is intentionally stable because rack_editor_window.cpp loads it for
+// both the large and small window-class icons.
+101 ICON "rack_host.ico"
