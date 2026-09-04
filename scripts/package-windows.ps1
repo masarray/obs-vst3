@@ -77,25 +77,29 @@ QUICK INSTALL
    data\obs-plugins\obs-safe-vst3\locale\en-US.ini
 4. Start OBS Studio.
 5. Add `VST 3.x Plug-in` for the proven one-effect Safe Host, or add `VST3 Rack`
-   for the isolated serial Rack surface.
+   for the isolated serial multi-effect workflow.
 6. In VST3 Rack Properties, use Open Rack to show the helper-owned graphical editor.
 
 CURRENT PRODUCT SHAPE
-- Single VST3 filter keeps the existing isolated helper/scanner/state/recovery workflow.
-- VST3 Rack is a separate OBS filter with a separate helper executable and Rack protocol.
-- Rack Editor is owned by obs-safe-vst3-rack-host.exe, never obs64.exe.
-- A newly created Rack starts as a coherent empty serial Rack and remains dry/pass-through.
-- Graphical add/replace/remove/bypass/browser workflow is delivered by later Rack tickets.
-- Dry fail-open audio remains active whenever a valid isolated wet result is unavailable in time.
+- Single VST3 filter keeps the isolated helper/scanner/state/recovery workflow.
+- VST3 Rack is a separate OBS filter with its own helper executable and Rack protocol.
+- Rack Editor, Rack VST3 DSP and vendor editors stay outside obs64.exe.
+- Rack supports add, replace, remove, reorder and bypass in a serial effects lane.
+- Rack Session Snapshot protects working-state recovery; named Rack presets support reusable chains.
+- Missing Rack plug-ins can remain pass-through placeholders without destroying the saved definition.
+- A failed/corrupt preset load cannot replace the current working Rack.
+- Dry fail-open/pass-through audio remains active whenever a valid isolated wet result is unavailable in time.
 
 CURRENT SCOPE / LIMITATIONS
 - Windows x64 only.
-- Mono/stereo float32 audio effects only.
-- Rack v2 remains a serial effects lane; graph routing, sidechain, MIDI/instruments and arbitrary multichannel are out of scope.
+- OBS Studio 29.1+ compatibility floor.
+- Mono/stereo Float32 VST3 audio effects only.
+- Rack is serial; graph routing, sidechain, MIDI/instruments, arbitrary multichannel and Float64 fallback are out of scope for this release.
 - Third-party compatibility varies; only load plug-ins you trust.
 
 For a normal OBS Studio installation, use the Smart Installer from GitHub Releases.
 To uninstall this manual package, close OBS and run UNINSTALL-MANUAL.cmd from the OBS root.
+Official project: https://github.com/masarray/obs-vst3
 "@
 Set-Content -Path (Join-Path $PortableStage 'README-FIRST.txt') -Value $Readme -Encoding UTF8
 

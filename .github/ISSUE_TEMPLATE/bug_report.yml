@@ -1,0 +1,120 @@
+name: Bug or compatibility report
+description: Report a reproducible OBS Safe VST3 Host or VST3 Rack problem
+title: "[Bug]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve OBS Safe VST3 Host. Please keep reports reproducible and do not upload commercial VST3 binaries.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Product surface
+      options:
+        - VST 3.x Plug-in (Single Host)
+        - VST3 Rack
+        - Both Single Host and Rack
+        - Installer / packaging
+        - Scanner / discovery
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: OBS Safe VST3 Host version
+      placeholder: "v0.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: obs
+    attributes:
+      label: OBS Studio version
+      placeholder: "e.g. 32.2.2"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "e.g. Windows 11 24H2 x64"
+    validations:
+      required: true
+
+  - type: input
+    id: plugin
+    attributes:
+      label: VST3 vendor / product / version
+      description: Use "not applicable" for installer-only or non-plug-in issues.
+      placeholder: "e.g. Vendor — Product — 1.2.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add ...
+        2. Select ...
+        3. Open ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: audio
+    attributes:
+      label: What happened to audio?
+      options:
+        - Audio continued normally
+        - Audio fell back to dry / pass-through
+        - Audio stopped or became invalid
+        - Not applicable
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant OBS log excerpt or link
+      description: Remove private information before posting. Prefer the smallest section that shows the issue.
+      render: text
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Include vendor-editor involvement, screenshots, upgrade history, portable/custom OBS root, or anything else needed to reproduce the issue.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I downloaded OBS Safe VST3 Host from the official repository/release page.
+          required: true
+        - label: I have not attached a commercial VST3 binary that I do not have permission to redistribute.
+          required: true

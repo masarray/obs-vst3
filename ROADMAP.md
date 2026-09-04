@@ -1,57 +1,68 @@
 # OBS Safe VST3 Host — Product Roadmap
 
-OBS Safe VST3 Host starts with a focused problem: **OBS's built-in VST filter does not support VST3, while modern studio plug-ins increasingly ship as VST3-only.**
+OBS Safe VST3 Host focuses on one product promise: **make modern VST3 audio effects practical in OBS without deliberately trusting third-party plug-in code with the stability of `obs64.exe`.**
 
-The current stable line solves that problem for VST3 audio effects with an OBS-native workflow and crash-isolated hosting. The roadmap extends the same reliability model into a broader live-audio platform.
-
-> Roadmap items describe product direction, not guaranteed release dates. New features should ship only after their lifecycle, realtime, recovery and compatibility gates are strong enough for live use.
+> Roadmap items describe product direction, not guaranteed release dates. Features become stable only after their realtime, lifecycle, recovery, OBS-integration and packaging gates are strong enough for live use.
 
 ## Product principles
 
-Every roadmap stage should preserve these constraints:
-
-1. **OBS remains the broadcast host.** The user should not need a separate DAW for the normal workflow.
-2. **Third-party plug-in code stays outside `obs64.exe`.** New features should not weaken the crash-containment boundary.
-3. **Realtime audio stays bounded.** Editor, disk, scanning, state and recovery work must not become unbounded realtime callback work.
-4. **Failure should degrade gracefully.** A broken plug-in should not be allowed to intentionally stall the broadcast path.
-5. **User workflow stays understandable.** Advanced routing should be optional, not forced on someone who only wants one EQ or compressor.
-6. **Compatibility claims remain evidence-based.** Prefer real-machine qualification and exact failure diagnostics over vendor-name hacks.
+1. **OBS remains the broadcast host.** Normal workflows should not require a separate DAW.
+2. **Third-party plug-in code stays outside `obs64.exe`.** New features must preserve the isolation boundary.
+3. **Realtime work stays bounded.** UI, scanning, disk/state and lifecycle work must not become unbounded audio-callback work.
+4. **Failure degrades gracefully.** An unavailable wet path should fail to dry/pass-through rather than deliberately stall the broadcast path.
+5. **Simple stays simple.** The Single Host remains available even as Rack features grow.
+6. **Compatibility claims stay evidence-based.** Prefer reproducible qualification and clear diagnostics over vendor-name special cases.
 
 ---
 
-## Stage 1 — Safe VST3 Effects — Stable now
+## Stage 1 — Safe VST3 Single Host — Stable
 
-**Status: v0.5.0 public stable**
+**Status: public stable since v0.5.0; retained in v0.6.0**
 
-The current product provides one VST3 audio effect per OBS filter.
+The Single Host is the focused one-effect workflow.
 
-### Available capabilities
+Available capabilities include:
 
-- native OBS filter: **VST 3.x Plug-in**;
-- automatic installed VST3 discovery;
-- manual `.vst3` selection for non-standard locations;
-- conservative effect-vs-instrument classification;
+- native OBS **VST 3.x Plug-in** filter;
+- automatic installed VST3 discovery and manual bundle selection;
 - isolated scanner probes;
-- isolated VST3 runtime process;
+- isolated VST3 runtime helper;
 - native vendor GUI;
-- editor foreground activation for fast tweaking;
-- full component/controller state persistence;
-- watchdog-based helper health monitoring;
-- bounded recovery/backoff;
-- dry fail-open behavior when a valid wet block is unavailable;
-- OBS 29.1+ Windows compatibility floor for the stable line.
+- component/controller state persistence;
+- watchdog health monitoring and bounded recovery;
+- dry fail-open behavior;
+- Windows x64 / OBS 29.1+ compatibility floor.
 
-### Stable product goal
-
-Let a streamer use modern EQ, dynamics, restoration, saturation, spatial and mastering-style VST3 processors in OBS without deliberately loading third-party plug-in code into the OBS process.
+The Single Host remains the recommended path when one EQ, compressor, denoiser, reverb or mastering processor is all the user needs.
 
 ---
 
-## Stage 2 — Safe VST3 Rack
+## Stage 2 — Safe VST3 Rack — Stable in v0.6.0
 
-**Goal: turn multiple single effects into a practical live chain.**
+**Status: public stable in v0.6.0**
 
-A rack should let users build processing such as:
+The Rack turns multiple VST3 audio effects into one isolated serial processing lane while remaining a separate OBS product surface and helper process.
+
+Delivered in v0.6.0:
+
+- separate OBS **VST3 Rack** filter;
+- separate Rack helper executable and protocol;
+- serial multi-effect chain;
+- stable slot identity through topology changes;
+- add, replace, remove and reorder;
+- per-slot bypass / enable workflow;
+- graphical helper-owned Rack Editor;
+- native vendor editor orchestration;
+- coherent Session Snapshot recovery;
+- named Rack preset save/load/rename/update/delete;
+- pass-through placeholders for missing VST3 slots;
+- bounded handling of invalid preset loads;
+- fail-dry behavior when a valid Rack result is unavailable;
+- bounded helper shutdown and editor close/reopen hardening.
+
+Current Rack scope is intentionally a **serial effects lane**, not a free-form node graph.
+
+Example:
 
 ```text
 Input
@@ -69,125 +80,95 @@ Limiter / Maximizer
 OBS output
 ```
 
-### Planned rack capabilities
+### Remaining Rack hardening
 
-- multiple VST3 effects in one rack;
-- insert, remove and reorder;
-- per-slot bypass;
-- rack-level enable/bypass;
-- clear per-slot health state;
-- rack preset save/load;
-- deterministic state restoration;
-- aggregate latency reporting/compensation strategy;
-- bounded handling when one slot fails;
-- fast access to each native vendor editor;
-- simple default view with an optional advanced view.
-
-### Reliability question to solve
-
-A rack must define what happens if one plug-in crashes while the rest are healthy. The implementation should preserve as much of the chain as safely possible without creating an uncontrolled restart loop or corrupting state.
+Future Rack work may deepen diagnostics, quarantine/recovery behavior, stress qualification and compatibility intelligence without weakening the stable v0.6.0 product contract.
 
 ---
 
 ## Stage 3 — Routing, Sidechain and Advanced Audio Buses
 
-**Goal: move from a linear chain to a broadcast-grade signal flow.**
+**Status: future**
 
-### Planned capabilities
+Goal: expand beyond a linear serial lane only after the stable Rack baseline remains dependable.
+
+Potential capabilities:
 
 - sidechain input support;
 - VST3 multi-bus audio handling;
 - explicit input/output routing;
-- parallel paths where practical;
-- send/return-style processing concepts;
+- parallel paths where justified;
+- send/return concepts;
 - bus-aware latency handling;
-- clearer channel-layout negotiation;
-- richer multichannel support;
-- Float64 fallback where required and justified.
+- richer channel-layout negotiation;
+- wider multichannel support;
+- Float64 fallback where required and evidence-backed.
 
-### Example use cases
-
-- duck music from microphone level;
-- sidechain a compressor from another OBS source;
-- parallel compression;
-- route restoration before a creative effects branch;
-- build more complex broadcast/master chains without leaving OBS.
+Possible use cases include music ducking from microphone level, parallel compression and more complex broadcast/master chains.
 
 ---
 
 ## Stage 4 — MIDI and VST3 Instruments
 
-**Goal: make OBS capable of hosting live VST3 instruments, not only effects.**
+**Status: future**
 
-This is intentionally a later stage because instrument hosting is not just “allow synths in the list.” It requires a real event/timing model.
+Instrument hosting requires a real event/timing model and is deliberately separate from today's audio-effect product.
 
-### Planned capabilities
+Potential capabilities:
 
 - VST3 instrument class support;
-- MIDI input device selection;
-- VST3 event-bus delivery;
-- note on/off, velocity and controller events;
-- stable event timestamps relative to audio blocks;
+- MIDI device selection;
+- event-bus delivery;
+- note, velocity and controller events;
+- stable event timing relative to audio blocks;
 - sustain/pitch/modulation handling;
-- transport/clock concepts where required;
-- instrument state and preset persistence;
-- low-latency live monitoring path;
-- safe editor lifecycle for instruments;
-- recovery behavior that avoids stuck notes where possible.
-
-### Example use cases
-
-- play a software piano or synth during a livestream;
-- trigger sampler instruments from a MIDI controller;
-- combine instrument output with a VST3 effects rack;
-- route live-performance instruments directly into OBS scenes.
+- transport/clock concepts where justified;
+- instrument state/preset persistence;
+- low-latency live monitoring;
+- recovery behavior designed to avoid stuck notes where possible.
 
 ---
 
-## Stage 5 — Live Performance Rack
+## Stage 5 — Professional live-audio platform
 
-**Long-term product vision**
+**Long-term direction**
 
-Bring effects, instruments and routing together into a live-performance environment designed specifically for OBS.
+Bring the proven isolation/recovery model to a broader live-performance and broadcast environment without turning the default experience into a DAW-sized control surface.
 
-Potential directions include:
+Potential directions:
 
-- combined instrument + effect racks;
-- MIDI mapping for rack controls;
-- scene-aware rack presets;
-- macro controls;
-- A/B chains;
+- combined effect/instrument rigs;
+- MIDI mapping and macro controls;
+- scene-aware Rack presets;
 - snapshots and fast recall;
-- metering per stage;
-- safe background preset/state capture;
-- performance-oriented switching without audio-path stalls.
+- A/B chains;
+- richer metering and diagnostics;
+- compatibility intelligence;
+- signed Windows releases;
+- cross-platform packages where engineering and support quality justify them.
 
-The end goal is a creator workflow where OBS can host a **studio-quality live audio rig**: mastering-style stream processing, routed effect chains, sidechains and eventually MIDI instruments—without forcing the user to run a full DAW beside OBS for common live workflows.
+## What is deliberately not promised
 
----
+The roadmap does **not** promise:
 
-## What is deliberately not promised yet
-
-The roadmap does **not** currently promise:
-
-- a release date for rack or MIDI stages;
+- a date for sidechain, routing or MIDI stages;
 - universal compatibility with every VST3 implementation;
 - a zero-crash guarantee for every Windows/driver/hardware failure;
-- macOS/Linux packages on a specific timeline;
+- macOS/Linux packages on a fixed timeline;
 - replacement of a full professional DAW for every production task.
 
-The project should remain ambitious about workflow and conservative about guarantees.
+## How a roadmap item becomes stable
 
-## How roadmap items become stable
+A major feature should not be called stable until applicable gates cover:
 
-A major roadmap feature should not be considered stable until it has:
-
-1. a clear lifecycle contract;
+1. lifecycle/state contracts;
 2. bounded realtime behavior;
-3. failure/recovery behavior defined;
-4. automated tests for the critical state machine;
-5. Windows packaging/loader qualification;
-6. real-machine compatibility evidence with representative commercial plug-ins;
-7. a beginner workflow that does not expose unnecessary engineering complexity.
+3. failure and recovery behavior;
+4. automated deterministic regression tests;
+5. Windows packaging and loader qualification;
+6. representative real-machine VST3 evidence;
+7. OBS integration and shutdown/reopen behavior;
+8. an understandable beginner workflow;
+9. synchronized public documentation and release notes.
 
-That acceptance discipline is part of the product: the goal is not merely to make VST3 features appear in OBS, but to make them dependable enough for a live broadcast.
+The project should remain ambitious about workflow and conservative about guarantees.

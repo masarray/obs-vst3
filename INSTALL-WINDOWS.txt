@@ -1,38 +1,51 @@
-OBS Safe VST3 Host v0.5.0 — Windows x64
+OBS Safe VST3 Host v0.6.0 — Windows x64
 =========================================
 
 What this installs
 ------------------
-OBS Safe VST3 Host adds a normal OBS audio filter named:
+OBS Safe VST3 Host adds two normal OBS audio filters:
 
-  VST 3.x Plug-in
+  VST 3.x Plug-in   — simple one-effect Safe Host
+  VST3 Rack         — isolated serial multi-effect Rack
 
-It lets OBS use compatible VST3 audio effects while the third-party VST3 DSP
-and vendor GUI run in a separate helper process instead of inside obs64.exe.
+Third-party VST3 DSP and vendor GUI code run in helper processes instead of
+inside obs64.exe. Plug-in scanning is isolated as well.
 
 Recommended install — Smart Setup.exe
 -------------------------------------
-1. Close OBS Studio.
+1. Close OBS Studio completely.
 2. Download the latest stable release only from:
      https://github.com/masarray/obs-vst3/releases/latest
 3. Run:
-     OBS-Safe-VST3-Host-v0.5.0-Setup-x64.exe
+     OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe
 4. Select the OBS root folder that contains:
      bin\64bit\obs64.exe
 5. Click Install.
 6. Start OBS Studio.
-7. Open an audio source -> Filters -> + -> VST 3.x Plug-in.
-8. Under "1. Plug-in Source", keep "Installed plug-ins" for normal VST3s.
-9. Choose an effect under "2. Installed Plug-in".
-10. Click "3. Open Plug-in Interface" to open the vendor GUI.
 
-Installed VST3 effects are discovered automatically. If you install a new VST3
-while OBS is already running, click "Refresh Plug-in List".
+Single effect quick start
+-------------------------
+1. Open an audio source -> Filters -> + -> VST 3.x Plug-in.
+2. Keep "Installed plug-ins" for normally installed VST3 effects, or browse to
+   a .vst3 bundle in a non-standard location.
+3. Select the effect.
+4. Click "Open Plug-in Interface" to open the native vendor GUI.
 
-Browse a non-standard VST3
---------------------------
-If a VST3 is not installed in a normal Windows VST3 location, change
-"1. Plug-in Source" to "Browse a .vst3 file..." and select the bundle manually.
+Multiple effects — VST3 Rack
+----------------------------
+1. Open an audio source -> Filters -> + -> VST3 Rack.
+2. Click "Open Rack" in Rack Properties.
+3. Add compatible VST3 effects in the graphical Rack Editor.
+4. Reorder, bypass, replace or remove slots as needed.
+5. Open a plug-in's native vendor editor when you need its detailed controls.
+6. Use Rack presets for reusable named chains.
+
+The Rack is a serial effects lane in v0.6.0. Free-form graph routing, sidechain,
+MIDI/instruments and arbitrary multichannel processing are not part of this
+release.
+
+Installed VST3 effects are discovered automatically. Install only VST3 plug-ins
+from vendors you trust.
 
 What files are installed
 ------------------------
@@ -40,6 +53,7 @@ The installer installs only these product files into the selected OBS root:
 
   obs-plugins\64bit\obs-safe-vst3.dll
   obs-plugins\64bit\obs-safe-vst3-host.exe
+  obs-plugins\64bit\obs-safe-vst3-rack-host.exe
   obs-plugins\64bit\obs-safe-vst3-scanner.exe
   data\obs-plugins\obs-safe-vst3\locale\en-US.ini
 
@@ -50,12 +64,13 @@ Portable / manual install
 -------------------------
 Advanced users can use:
 
-  OBS-Safe-VST3-Host-v0.5.0-Windows-x64-Portable.zip
+  OBS-Safe-VST3-Host-v0.6.0-Windows-x64-Portable.zip
 
 Extract it directly into the OBS root. The package includes:
 
   obs-plugins/64bit/obs-safe-vst3.dll
   obs-plugins/64bit/obs-safe-vst3-host.exe
+  obs-plugins/64bit/obs-safe-vst3-rack-host.exe
   obs-plugins/64bit/obs-safe-vst3-scanner.exe
   data/obs-plugins/obs-safe-vst3/locale/en-US.ini
   README-FIRST.txt
@@ -79,7 +94,7 @@ integrity check.
 
 Example:
 
-  Get-FileHash .\OBS-Safe-VST3-Host-v0.5.0-Setup-x64.exe -Algorithm SHA256
+  Get-FileHash .\OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe -Algorithm SHA256
 
 Current compatibility scope
 ---------------------------
@@ -88,33 +103,41 @@ Supported today:
 - OBS Studio 29.1+ compatibility floor.
 - VST3 audio effects.
 - Mono/stereo Float32 processing.
+- Single VST3 Host.
+- Serial multi-effect VST3 Rack.
+- Graphical helper-owned Rack Editor.
+- Add / replace / remove / reorder / bypass Rack workflow.
 - Installed VST3 discovery.
 - Native vendor VST3 editor when provided by the plug-in.
-- Full VST3 component/controller state persistence.
+- Single Host state persistence and recovery.
+- Rack Session Snapshot and named Rack presets.
 - Crash-isolated helper runtime and scanner.
-- Dry fail-open audio and bounded recovery behavior.
+- Dry fail-open/pass-through audio and bounded recovery behavior.
 
 Not in the complete current scope:
 - VST3 instruments / MIDI.
-- Full sidechain / multiple-audio-bus support.
+- Full sidechain / multiple-audio-bus routing.
+- Free-form graph routing.
 - Arbitrary multichannel layouts.
 - Float64-only fallback.
 - macOS or Linux runtime packages.
 
 A specific third-party plug-in can still expose vendor-specific behavior, so no
 responsible host should claim guaranteed compatibility with every VST3 ever made.
-The project intentionally targets normal VST3 audio effects and keeps explicit
-instrument-only classes out of the OBS insert-effect list.
 
 Crash-isolation boundary
 ------------------------
-Third-party VST3 DSP and vendor UI code run in obs-safe-vst3-host.exe, not in
-obs64.exe. VST3 candidate probing also runs outside OBS. If the helper becomes
-unhealthy, the host is designed to keep dry audio and use bounded recovery.
+Single Host VST3 DSP/vendor UI code runs in obs-safe-vst3-host.exe. Rack VST3
+DSP, Rack UI and vendor UI ownership live in obs-safe-vst3-rack-host.exe. VST3
+candidate probing also runs outside OBS.
+
+If a valid isolated wet result is unavailable, the product is designed to keep
+original dry/pass-through audio instead of deliberately stalling the realtime
+OBS audio path.
 
 This materially reduces the failure surface compared with direct in-process
-plug-in hosting, but it is not a guarantee that Windows, OBS, drivers or malicious
-native code can never crash a computer or application.
+plug-in hosting, but it is not a guarantee that Windows, OBS, drivers, hardware
+or malicious native code can never fail.
 
 Security note
 -------------
@@ -122,8 +145,8 @@ Crash isolation is not a malware sandbox. A VST3 is native code and still runs
 with your Windows user permissions inside the helper process. Only load plug-ins
 from vendors you trust.
 
-More beginner documentation
----------------------------
+More documentation
+------------------
 Landing page:
   https://masarray.github.io/obs-vst3/
 
@@ -135,3 +158,9 @@ Compatibility:
 
 Safety model:
   https://masarray.github.io/obs-vst3/safety.html
+
+Roadmap:
+  https://masarray.github.io/obs-vst3/roadmap.html
+
+Changelog:
+  https://github.com/masarray/obs-vst3/blob/main/CHANGELOG.md

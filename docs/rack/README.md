@@ -1,36 +1,28 @@
-# VST3 Rack v2 — Planning & Execution Index
+# VST3 Rack — Architecture, Evidence & Execution Index
 
-This folder is the source of truth for the next major product target: **Safe VST3 Rack v2**.
+This folder records the architecture and engineering evidence behind the isolated **VST3 Rack** that enters the public stable Windows package in **v0.6.0**.
 
-If you are a new maintainer, reviewer, or AI coding thread, **do not start by browsing random source files**. Start with the execution state and authoritative read order below.
+For public product information, start with:
+
+- [`../../README.md`](../../README.md) — product overview and download;
+- [`../../CHANGELOG.md`](../../CHANGELOG.md) — release changes;
+- [`../../ROADMAP.md`](../../ROADMAP.md) — current roadmap;
+- [`CURRENT_STATUS.md`](CURRENT_STATUS.md) — latest Rack engineering status.
+
+The ticket/ADR files in this folder preserve the staged engineering history. Older sequencing statements inside historical execution documents should not be interpreted as the current public product status when they conflict with `CURRENT_STATUS.md` or the shipped release documentation.
 
 ## Current status
 
-- Parent/evidence ledger: [GitHub issue #56](https://github.com/masarray/obs-vst3/issues/56)
-- Current only unblocked ticket: [#57 REG-0](https://github.com/masarray/obs-vst3/issues/57)
-- No Rack production code is authorized until REG-0 returns accepted GO.
-- After REG-0 GO, the next fresh ticket is **UI-0**, then R0-1.
+- Public release target: **v0.6.0 stable**.
+- Qualified pre-release integration baseline: `660c83c6c67fbc4643401140c0bf09c31a1111c7`.
+- Final Rack integration: PR #97.
+- Parent/evidence ledger: [GitHub issue #56](https://github.com/masarray/obs-vst3/issues/56).
+- R3-4 preset UX, shutdown hardening, Rack Editor product polish and close/reopen lifecycle hardening are integrated.
+- Focused Rack gates, CI and Compatibility Test Build passed on the final candidate recorded in PR #97.
 
-See [`CURRENT_STATUS.md`](CURRENT_STATUS.md) for the latest execution pointer.
+See [`CURRENT_STATUS.md`](CURRENT_STATUS.md) for exact qualification runs and the stable release scope.
 
-## Mandatory read order
-
-1. [`../../AGENTS.md`](../../AGENTS.md)
-2. [`../CODEX_EXECUTION_CONTRACT.md`](../CODEX_EXECUTION_CONTRACT.md)
-3. Rack section of [`../NORTH_STAR_PRD.md`](../NORTH_STAR_PRD.md)
-4. [`ADR-0002-RACK-RUNTIME-ARCHITECTURE.md`](ADR-0002-RACK-RUNTIME-ARCHITECTURE.md)
-5. [`ADR-0003-ISOLATED-RACK-EDITOR.md`](ADR-0003-ISOLATED-RACK-EDITOR.md)
-6. [`VST3_RACK_RESEARCH.md`](VST3_RACK_RESEARCH.md)
-7. [`RACK_EDITOR_SPEC.md`](RACK_EDITOR_SPEC.md)
-8. [`VST3_RACK_EXECUTION_SPEC.md`](VST3_RACK_EXECUTION_SPEC.md)
-9. [`VST3_RACK_TICKETS.md`](VST3_RACK_TICKETS.md)
-10. [`THREAD_HANDOFF.md`](THREAD_HANDOFF.md)
-11. [`CURRENT_STATUS.md`](CURRENT_STATUS.md)
-12. current GitHub child ticket + exact current repository code
-
-For a fresh implementation conversation, `THREAD_HANDOFF.md` contains the copy/paste starter prompt and evidence format.
-
-## Product architecture in one picture
+## Product architecture
 
 ```text
 OBS64.EXE
@@ -45,58 +37,66 @@ OBS64.EXE
 obs-safe-vst3-rack-host.exe
 ┌──────────────────────────────────────┐
 │ Graphical Rack Editor                │
-│  search / add / reorder / presets    │
-│  floating native vendor editors      │
+│  add / replace / reorder / bypass    │
+│  presets / floating vendor editors   │
 │                                      │
-│ RackControlPlane                     │
+│ Rack control plane                   │
 │  immutable chain generations         │
+│  Session Snapshot / recovery         │
 │                                      │
 │ Rack DSP worker                      │
 │  A -> B -> C -> ... -> N             │
 └──────────────────────────────────────┘
 ```
 
-Core law: **VST3/vendor GUI/Rack graphical UI dependencies stay outside `obs64.exe`.**
+Core law: **VST3 DSP, vendor GUI and Rack graphical UI dependencies stay outside `obs64.exe`.**
 
-## v2 is graphical, but not a graph engine
+## Stable v0.6.0 shape
 
-The v2 user sees a dedicated graphical serial Rack window.
-
-The v2 DSP engine remains:
+The Rack is graphical, but the DSP topology remains a focused serial effects lane:
 
 ```text
 INPUT -> Slot 1 -> Slot 2 -> ... -> Slot N -> OUTPUT
 ```
 
-No arbitrary cables, parallel routing, sidechain, MIDI or VST3 instruments in v2.
+v0.6.0 includes:
 
-Those become post-v2 phases after the serial Rack is locked.
+- separate Rack helper and protocol;
+- serial multi-effect processing;
+- stable slot identity and coherent topology generation swaps;
+- add / replace / remove / reorder / bypass;
+- graphical helper-owned Rack Editor;
+- native vendor editor orchestration;
+- Session Snapshot recovery;
+- named Rack presets;
+- fail-dry behavior;
+- bounded shutdown and editor lifecycle hardening.
 
-## UI toolkit policy
+Not in v0.6.0:
 
-Default Windows candidate after **UI-0** proof:
+- arbitrary graph/patchbay routing;
+- sidechain;
+- MIDI / VST3 instruments;
+- arbitrary multichannel / Float64 fallback;
+- nested Racks;
+- per-slot worker processes;
+- expanded R2-2 quarantine work.
 
-- Dear ImGui;
-- Win32 backend;
-- DirectX 11 backend;
-- pinned exact upstream version/commit;
-- helper-only dependency.
+## Architecture and design records
 
-Do not link the Rack editor stack into the OBS module.
+Recommended order for understanding the design:
 
-JUCE/atkAudio/Kushview Element are references for product/architecture patterns. Do not copy their source. JUCE requires a separate licensing/dependency decision before it may become a public dependency.
+1. [`../NORTH_STAR_PRD.md`](../NORTH_STAR_PRD.md)
+2. [`ADR-0002-RACK-RUNTIME-ARCHITECTURE.md`](ADR-0002-RACK-RUNTIME-ARCHITECTURE.md)
+3. [`ADR-0003-ISOLATED-RACK-EDITOR.md`](ADR-0003-ISOLATED-RACK-EDITOR.md)
+4. [`ADR-0004-REG0-RACK-ENTRY-AUTHORIZATION.md`](ADR-0004-REG0-RACK-ENTRY-AUTHORIZATION.md)
+5. [`VST3_RACK_RESEARCH.md`](VST3_RACK_RESEARCH.md)
+6. [`RACK_EDITOR_SPEC.md`](RACK_EDITOR_SPEC.md)
+7. [`VST3_RACK_EXECUTION_SPEC.md`](VST3_RACK_EXECUTION_SPEC.md)
+8. [`VST3_RACK_TICKETS.md`](VST3_RACK_TICKETS.md) — historical staged ticket plan
+9. [`THREAD_HANDOFF.md`](THREAD_HANDOFF.md) — historical execution handoff format
+10. [`CURRENT_STATUS.md`](CURRENT_STATUS.md) — current pointer
 
-## Execution spine
+## Development rule after v0.6.0
 
-```text
-REG-0
--> UI-0
--> R0 reusable HostedPlugin seam
--> R1 serial Rack runtime
--> R2 persistence/recovery/preset foundation
--> R3 graphical Rack Editor + thin OBS launcher
--> R4 stress/package/commercial qualification
--> R5 v2.0 lock
-```
-
-One vertical ticket per fresh thread. Exact-head evidence is mandatory before merge.
+Future Rack work must preserve the public stable contracts rather than treating the shipped Rack as disposable prototype code. Regressions found in real use should become permanent deterministic tests at the highest stable seam that reproduces them.
