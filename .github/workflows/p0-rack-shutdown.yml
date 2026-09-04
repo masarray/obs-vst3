@@ -1,0 +1,40 @@
+name: P0 Rack Shutdown
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-rack-shutdown.yml'
+      - 'src/platform/windows/win_rack_bridge.*'
+      - 'src/obs-plugin/rack_filter.*'
+      - 'src/rack/**'
+      - 'tests/p0_shutdown/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-rack-shutdown-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-shutdown-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce bounded Rack shutdown source contract
+        shell: pwsh
+        run: ./tests/p0_shutdown/shutdown_contract.ps1
+
+      - name: Configure P0 runtime shutdown test
+        shell: pwsh
+        run: cmake -S tests/p0_shutdown -B build/p0-shutdown -A x64
+
+      - name: Build P0 runtime shutdown test
+        shell: pwsh
+        run: cmake --build build/p0-shutdown --config Release --parallel
+
+      - name: Run P0 runtime shutdown test
+        shell: pwsh
+        run: ctest --test-dir build/p0-shutdown -C Release --output-on-failure

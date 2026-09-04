@@ -10,6 +10,8 @@
 namespace safevst3 {
 namespace {
 constexpr ULONGLONG kRackHelperStartupTimeoutMs = 5000;
+constexpr DWORD kRackHelperGracefulShutdownTimeoutMs = 250;
+constexpr DWORD kRackHelperForcedShutdownWaitMs = 250;
 
 std::string win_error(const char* what)
 {
@@ -210,18 +212,29 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
 
 void WinRackBridge::stop() noexcept
 {
+    // Publish every available shutdown signal before waiting. The Rack helper
+    // owns DSP, command, vendor-editor and Rack-editor work; waking both event
+    // paths lets it observe shutdown_requested immediately instead of waiting
+    // for a normal polling cadence.
     if (region_) {
         InterlockedExchange(&region_->shutdown_requested, 1);
+        MemoryBarrier();
         if (request_event_)
             SetEvent(request_event_);
         if (ui_open_event_)
             SetEvent(ui_open_event_);
+        if (response_event_)
+            SetEvent(response_event_);
     }
     if (process_.hProcess) {
-        const DWORD wait = WaitForSingleObject(process_.hProcess, 2000);
+        const DWORD wait = WaitForSingleObject(
+            process_.hProcess, kRackHelperGracefulShutdownTimeoutMs);
         if (wait == WAIT_TIMEOUT) {
+            // Rack is intentionally out-of-process: a stuck third-party VST3
+            // must not hold OBS hostage during application shutdown.
             TerminateProcess(process_.hProcess, 0xDEAD);
-            (void)WaitForSingleObject(process_.hProcess, 1000);
+            (void)WaitForSingleObject(
+                process_.hProcess, kRackHelperForcedShutdownWaitMs);
         }
     }
     if (process_.hThread) CloseHandle(process_.hThread);

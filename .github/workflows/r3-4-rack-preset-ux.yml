@@ -1,0 +1,39 @@
+name: R3-4 Rack Preset UX
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/r3-4-rack-preset-ux.yml'
+      - 'src/rack/rack_preset_*'
+      - 'src/rack/rack_editor_window.*'
+      - 'src/rack/main_r3_2.cpp'
+      - 'src/rack/CMakeLists.txt'
+      - 'tests/r3_4/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3-4-rack-preset-ux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rack-preset-ux-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure R3-4 deterministic preset UX contracts
+        shell: pwsh
+        run: cmake -S tests/r3_4 -B build/r3-4 -A x64
+
+      - name: Build R3-4 deterministic preset UX contracts
+        shell: pwsh
+        run: cmake --build build/r3-4 --config Release --parallel
+
+      - name: Run R3-4 deterministic preset UX contracts
+        shell: pwsh
+        run: ctest --test-dir build/r3-4 -C Release --output-on-failure
