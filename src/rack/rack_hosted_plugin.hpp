@@ -12,12 +12,11 @@
 
 namespace safevst3 {
 
-// R3-2 has no vendor editor or parameter-control surface yet, but VST3
-// controllers are still allowed to require a host IComponentHandler during
-// initialization. Keep that host lifetime attached to each Rack-owned plug-in
-// instead of passing nullptr. R3-3 may extend the callbacks when vendor editor
-// orchestration is introduced; this R3-2 handler deliberately performs no UI
-// work and never touches the Rack DSP path.
+// Rack-owned component handler. Besides restart flags, it records controller
+// edit activity so the helper can debounce an automatic Session Snapshot on its
+// non-realtime control thread. The flag is intentionally only a hint: the Rack
+// still performs periodic checkpoints for plug-ins that do not report edits in
+// the conventional VST3 way.
 class RackComponentHandler final : public Steinberg::Vst::IComponentHandler {
 public:
     Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID iid,
@@ -60,13 +59,13 @@ public:
     Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID,
                                               Steinberg::Vst::ParamValue) override
     {
-        // Parameter/editor orchestration belongs to later Rack tickets. R3-2
-        // only needs a valid host callback surface for controller lifecycle.
+        state_dirty_.store(true, std::memory_order_release);
         return Steinberg::kResultTrue;
     }
 
     Steinberg::tresult PLUGIN_API endEdit(Steinberg::Vst::ParamID) override
     {
+        state_dirty_.store(true, std::memory_order_release);
         return Steinberg::kResultTrue;
     }
 
@@ -74,6 +73,7 @@ public:
     {
         restart_flags_.fetch_or(static_cast<std::uint32_t>(flags),
                                 std::memory_order_relaxed);
+        state_dirty_.store(true, std::memory_order_release);
         return Steinberg::kResultTrue;
     }
 
@@ -82,13 +82,19 @@ public:
         return restart_flags_.exchange(0, std::memory_order_acq_rel);
     }
 
+    bool take_state_dirty() noexcept
+    {
+        return state_dirty_.exchange(false, std::memory_order_acq_rel);
+    }
+
 private:
     std::atomic<Steinberg::uint32> refs_{1};
     std::atomic<std::uint32_t> restart_flags_{0};
+    std::atomic<bool> state_dirty_{false};
 };
 
 // Rack-only wrapper: every null handler supplied by the legacy Rack seams or
-// the R3-2 dynamic browser becomes a stable Rack-owned handler. The shared
+// the dynamic browser becomes a stable Rack-owned handler. The shared
 // HostedPlugin implementation and Single helper remain unchanged.
 class RackHostedPlugin : public HostedPlugin {
 public:
@@ -121,6 +127,8 @@ public:
                                   component_handler ? component_handler : &handler_,
                                   error);
     }
+
+    bool take_state_dirty() noexcept { return handler_.take_state_dirty(); }
 
 private:
     RackComponentHandler handler_;
