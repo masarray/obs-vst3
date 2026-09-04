@@ -1,79 +1,19 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071019">
-  <title>Is VST3 Safe in OBS? Crash Isolation and Recovery Explained</title>
-  <meta name="description" content="Why OBS Safe VST3 Host is less fragile than direct plug-in loading: external VST3 process, isolated scanner, dry fail-open audio, state recovery and honest limits.">
-  <meta name="robots" content="index,follow,max-snippet:-1">
-  <link rel="canonical" href="https://masarray.github.io/obs-vst3/safety.html">
-  <link rel="stylesheet" href="site.css">
-  <meta property="og:title" content="Is VST3 Safe in OBS? Crash Isolation and Recovery Explained">
-  <meta property="og:description" content="OBS warns that some VST plug-ins can crash. See how OBS Safe VST3 Host changes the failure boundary by keeping third-party VST3 code outside obs64.exe.">
-  <meta property="og:url" content="https://masarray.github.io/obs-vst3/safety.html">
-  <meta property="og:type" content="article">
-</head>
-<body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a></nav></div></header>
-<main>
-  <section class="pageHero"><div class="wrap prose"><div class="eyebrow"><span class="pulse"></span> Safety model · plain language</div><h1><span class="gradient">A bad plug-in should not be allowed to become a bad broadcast.</span></h1><p class="lead">OBS's official VST documentation warns that some VST plug-ins can cause crashes and recommends saving or backing up settings when experimenting. OBS Safe VST3 Host is designed around a stronger failure boundary: third-party VST3 DSP and vendor GUI code stay outside <code>obs64.exe</code>.</p></div></section>
-  <section><div class="wrap prose">
-    <h2>The problem with direct native plug-in loading</h2>
-    <p>A VST3 plug-in is native code. Native code can crash, hang, misuse memory or call operating-system APIs. If third-party plug-in code runs directly inside the broadcast process, a severe plug-in failure can take that process down with it.</p>
-    <p>For a livestream, the cost is bigger than restarting an effect: an OBS crash can interrupt the show and can also mean losing unsaved session changes or configuration work. That is why OBS's own VST documentation tells users to save and back up settings when experimenting with plug-ins.</p>
-    <p><a href="https://obsproject.com/kb/vst-2-x-plugin-filter">Read OBS's official VST filter documentation</a>.</p>
-
-    <h2>The OBS Safe VST3 Host boundary</h2>
-    <div class="code">OBS Studio (obs64.exe)
-        │
-        │ bounded shared-memory audio + control/state IPC
-        ▼
-obs-safe-vst3-host.exe
-        │
-        ├── VST3 DSP
-        ├── native vendor editor
-        ├── state persistence
-        └── watchdog / recovery
-        ▼
-third-party VST3 audio effect</div>
-
-    <h2>What is isolated</h2>
-    <ul>
-      <li><strong>VST3 runtime:</strong> the third-party plug-in module runs in the helper process, not inside OBS.</li>
-      <li><strong>Vendor GUI:</strong> the plug-in's native editor is helper-owned rather than embedded as third-party code inside OBS.</li>
-      <li><strong>Scanning:</strong> VST3 candidates are probed outside OBS with bounded child-process behavior.</li>
-      <li><strong>Recovery:</strong> helper health is monitored, and failures use bounded restart/backoff and state restoration.</li>
-    </ul>
-
-    <h2>What happens to audio when a plug-in fails?</h2>
-    <p>The realtime OBS filter is designed around a bounded wait for a valid processed result. If a valid wet block is not available in time, the filter keeps the original dry buffer instead of intentionally waiting forever for the VST3.</p>
-    <p>That failure policy matters during a live show: losing one effect is preferable to deliberately stalling the OBS realtime audio path.</p>
-
-    <h2>What happens to plug-in state?</h2>
-    <p>The current stable host persists VST3 component/controller state and keeps a last-known-good recovery checkpoint. If the helper must be recreated, the host can restore that state instead of treating every failure as a completely new plug-in session.</p>
-    <p>This does not replace saving your OBS scene collection and normal backups, but it reduces the amount of plug-in work that needs to be rebuilt after a helper failure.</p>
-
-    <h2>Can this promise OBS will never crash?</h2>
-    <p><strong>No responsible native-software project should make that absolute promise.</strong> Windows drivers, OBS itself, hardware faults, malicious code and operating-system failures exist outside this project's control.</p>
-    <p>The stronger and verifiable claim is architectural: <strong>third-party VST3 code is kept outside the OBS process by design.</strong> That materially changes the plug-in failure boundary compared with direct in-process hosting.</p>
-
-    <h2>Crash isolation is not a malware sandbox</h2>
-    <p>The helper process runs with your Windows user permissions. A malicious VST3 could still access files, network resources or other APIs available to your account. Only load plug-ins from vendors you trust.</p>
-    <div class="notice">Treat VST3 files like normal native software. Process isolation is for crash/hang containment, not for safely running untrusted malware.</div>
-
-    <h2>What the release pipeline checks</h2>
-    <p>The public Windows release pipeline validates more than compilation. The current stable line includes protocol and lifecycle tests, scanner smoke tests, recovery/fault tests, OBS module compilation, compatibility loading against the supported OBS floor, portable-package validation, Smart Installer install/uninstall/reinstall checks and SHA-256 generation.</p>
-    <p>Automated CI still cannot prove every commercial plug-in on every machine. That is why real-machine compatibility evidence and reproducible user reports remain part of the qualification model.</p>
-
-    <h2>Unsigned Windows package</h2>
-    <p>The current Windows package is not commercially Authenticode-signed. Windows may therefore show <strong>Unknown publisher</strong> or a SmartScreen reputation warning.</p>
-    <p>Do not disable Windows security globally. Download only from the project's official GitHub Releases page and compare the package against the published <code>SHA256SUMS.txt</code> when you want to verify integrity.</p>
-    <div class="code">Get-FileHash .\OBS-Safe-VST3-Host-v0.5.0-Setup-x64.exe -Algorithm SHA256</div>
-
-    <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Open official release</a><a class="btn secondary" href="install.html">Install guide</a><a class="btn secondary" href="compatibility.html">Compatibility</a><a class="btn secondary" href="roadmap.html">Roadmap</a></div>
-  </div></section>
-</main>
-<footer class="footer"><div class="wrap footerIn"><div>OBS Safe VST3 Host · crash-isolation and recovery model</div><div class="footerLinks"><a href="./">Home</a><a href="roadmap.html">Roadmap</a><a href="https://github.com/masarray/obs-vst3/blob/main/SECURITY.md">Security policy</a><a href="https://github.com/masarray/obs-vst3/releases/latest">Releases</a></div></div></footer>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Safety architecture — OBS Safe VST3 Host</title><meta name="description" content="Crash-isolation and fail-dry architecture for the Single VST3 Host and VST3 Rack."><link rel="stylesheet" href="site.css"></head><body>
+<nav class="nav"><div class="wrap navin"><a class="brand" href="index.html"><span class="mark">V3</span>OBS Safe VST3</a><div class="navlinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download</a></div></div></nav>
+<header class="pageHero"><div class="wrap"><span class="eyebrow"><span class="pulse"></span>Process isolation</span><h1>Keep third-party VST3 code out of obs64.exe.</h1><p class="lead">The Single filter and Rack use different external helpers, but share the same safety principle: vendor DSP/UI runs across a process boundary and OBS keeps a dry fallback path.</p></div></header>
+<main class="wrap">
+<div class="safety"><div class="shield"><div><div class="shieldMark">◈</div><strong>Crash isolation, not a sandbox</strong><p>The helper boundary is for common plug-in crashes/hangs and real-time failure containment. It does not make malicious native code safe.</p></div></div><div class="copyPanel"><h2>Two helper shapes</h2><div class="ticks"><div class="tick"><span>1</span><div><b>Single filter</b><br><code>obs-safe-vst3-host.exe</code> hosts one selected VST3 effect and its vendor editor.</div></div><div class="tick"><span>8</span><div><b>VST3 Rack</b><br><code>obs-safe-vst3-rack-host.exe</code> owns one Rack Editor and up to eight serial VST3 effects.</div></div><div class="tick"><span>✓</span><div><b>OBS stays on its side</b><br>The OBS module exchanges audio/control data with the helper instead of deliberately loading vendor VST3 code into <code>obs64.exe</code>.</div></div></div></div></div>
+<section><div class="sectionHead"><span class="kicker">Failure behavior</span><h2>Prefer dry audio to blocking OBS.</h2></div><div class="grid3"><div class="card"><div class="icon">DSP</div><h3>Dry fail-open</h3><p>If a valid isolated wet result is not ready inside the real-time deadline, the OBS-side filter can keep the dry signal rather than wait indefinitely on vendor code.</p></div><div class="card"><div class="icon">IPC</div><h3>Process boundary</h3><p>A helper crash or hang is separated from the OBS process boundary. Recovery behavior depends on the filter and failure state, but OBS does not need to host the vendor module in-process.</p></div><div class="card"><div class="icon">OFF</div><h3>Bounded Rack shutdown</h3><p>v0.6.0 requests Rack shutdown immediately, wakes the IPC paths and uses a short bounded graceful wait before forcing a stuck Rack helper to exit. The deterministic hung-helper fixture finishes in about 0.30 s.</p></div></div></section>
+<section><div class="sectionHead"><span class="kicker">Rack-specific model</span><h2>One process per Rack — not one per slot.</h2><p>Every Rack slot shares the same external Rack helper. This keeps the v0.6.0 architecture compact, but it means a severe helper-level failure is a Rack-level process failure.</p></div><pre class="code">obs64.exe
+   │ Rack IPC
+   ▼
+obs-safe-vst3-rack-host.exe
+   ├─ Rack Editor
+   ├─ Slot 1 VST3
+   ├─ Slot 2 VST3
+   └─ … Slot 8</pre><div class="notice">Do not interpret “Rack isolation” as per-slot process isolation. Finer correlated slot failure quarantine/recovery is future hardening work.</div></section>
+<section><div class="sectionHead"><span class="kicker">Preset safety</span><h2>Saved state should not destroy a working Rack.</h2></div><div class="ticks"><div class="tick"><span>✓</span><div><b>Load is a copy.</b> Editing the working Rack after loading does not silently mutate the saved preset.</div></div><div class="tick"><span>✓</span><div><b>Explicit Update.</b> Saved preset content changes only through an intentional Update action.</div></div><div class="tick"><span>✓</span><div><b>Corrupt-load protection.</b> A failed/corrupt preset load must not replace the current working Rack.</div></div><div class="tick"><span>✓</span><div><b>Missing placeholders.</b> Unavailable plug-ins can remain represented as pass-through slots so topology/state is not silently erased.</div></div></div></section>
+<section><div class="sectionHead"><span class="kicker">Security boundary</span><h2>A VST3 still runs as native code.</h2><p>The helper runs with the permissions of the current Windows user. A malicious plug-in could access files, networking or other APIs available to that account.</p></div><div class="notice"><strong>Only install VST3 software from vendors you trust.</strong> Do not disable Defender or SmartScreen globally for this project.</div></section>
+<section><div class="sectionHead"><span class="kicker">Windows package signing</span><h2>Current releases are not commercially Authenticode-signed.</h2><p>Windows may show <strong>Unknown publisher</strong> or a SmartScreen reputation warning. Download from the official GitHub Releases page and verify <code>SHA256SUMS.txt</code> when you want to confirm file integrity.</p></div><div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Official releases</a><a class="btn secondary" href="https://github.com/masarray/obs-vst3/blob/main/SECURITY.md">Security policy</a></div></section>
+</main><footer class="footer"><div class="wrap footerIn"><span>OBS Safe VST3 Host safety architecture</span><div class="footerLinks"><a href="index.html">Home</a><a href="compatibility.html">Compatibility</a><a href="roadmap.html">Roadmap</a></div></div></footer></body></html>
