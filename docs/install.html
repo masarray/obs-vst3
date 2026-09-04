@@ -1,76 +1,23 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071019">
-  <title>How to Install VST3 in OBS Studio on Windows – Beginner Guide</title>
-  <meta name="description" content="Beginner guide to install VST3 support in OBS Studio on Windows using OBS Safe VST3 Host. Install, add the filter, select a VST3 effect and open its GUI.">
-  <meta name="robots" content="index,follow,max-snippet:-1">
-  <link rel="canonical" href="https://masarray.github.io/obs-vst3/install.html">
-  <link rel="stylesheet" href="site.css">
-  <meta property="og:title" content="How to Install VST3 in OBS Studio on Windows">
-  <meta property="og:description" content="A plain-language VST3 for OBS installation guide: installer, filter setup, plug-in selection and troubleshooting.">
-  <meta property="og:url" content="https://masarray.github.io/obs-vst3/install.html">
-  <meta property="og:type" content="article">
-</head>
-<body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a></nav></div></header>
-<main>
-  <section class="pageHero"><div class="wrap prose"><div class="eyebrow"><span class="pulse"></span> Beginner guide · Windows x64</div><h1><span class="gradient">Install VST3 support in OBS</span> without guessing where files go.</h1><p class="lead">For most users, the Windows installer is the right choice. It installs the native OBS filter, isolated VST3 host helper and scanner into the OBS root you choose.</p><div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download latest stable</a><a class="btn secondary" href="#steps">Start the steps</a></div></div></section>
-  <section id="steps"><div class="wrap prose">
-    <h2>1. Close OBS Studio</h2>
-    <p>Close OBS before installing or updating the plug-in. This prevents Windows from keeping an older OBS plug-in DLL locked in memory.</p>
-
-    <h2>2. Download the official installer</h2>
-    <p>Open the <a href="https://github.com/masarray/obs-vst3/releases/latest">official GitHub release</a> and download:</p>
-    <div class="code">OBS-Safe-VST3-Host-v0.5.0-Setup-x64.exe</div>
-    <p>The same release also contains a portable ZIP and <code>SHA256SUMS.txt</code>.</p>
-    <div class="callout"><strong>SmartScreen note:</strong> the current Windows package is not commercially Authenticode-signed. Windows may show <strong>Unknown publisher</strong>. Keep Windows security enabled, download only from the official release, and verify SHA-256 if you want an extra integrity check.</div>
-
-    <h2>3. Select the real OBS root folder</h2>
-    <p>The installer asks for the OBS root. Choose the folder that contains:</p>
-    <div class="code">bin\64bit\obs64.exe</div>
-    <p>This works for a normal OBS installation as well as validated custom or portable OBS roots. The installer remembers the validated location for later updates.</p>
-
-    <h2>4. Start OBS and add the VST3 filter</h2>
-    <ol>
-      <li>Open the audio source you want to process.</li>
-      <li>Open <strong>Filters</strong>.</li>
-      <li>Press <strong>+</strong>.</li>
-      <li>Choose <strong>VST 3.x Plug-in</strong>.</li>
-    </ol>
-
-    <h2>5. Choose a plug-in</h2>
-    <p>In the filter properties:</p>
-    <ol>
-      <li>Under <strong>1. Plug-in Source</strong>, use <strong>Installed plug-ins</strong> for normal system-installed effects.</li>
-      <li>Choose the effect under <strong>2. Installed Plug-in</strong>.</li>
-      <li>If your VST3 is in a non-standard folder, choose <strong>Browse a .vst3 file…</strong> instead.</li>
-    </ol>
-    <p>Installed effects are discovered automatically. Use <strong>Refresh Plug-in List</strong> after installing a new VST3 while OBS is already open.</p>
-
-    <h2>6. Open the real vendor interface</h2>
-    <p>Click <strong>3. Open Plug-in Interface</strong>. The native vendor editor should appear in front of OBS so you can immediately adjust the plug-in.</p>
-
-    <h2>7. Confirm the status</h2>
-    <p>A healthy plug-in reports a Ready state and may show its latency. If a plug-in cannot initialize, OBS Safe VST3 Host keeps the failure outside the OBS process boundary and reports diagnostic information rather than intentionally loading the vendor DLL inside OBS.</p>
-
-    <h2>Portable / manual install</h2>
-    <p>Advanced users can download the portable ZIP and extract it directly into the OBS root. It contains the OBS module, isolated helper, isolated scanner, locale data, a readme and a manual uninstall script.</p>
-    <div class="code">OBS-Safe-VST3-Host-v0.5.0-Windows-x64-Portable.zip</div>
-
-    <h2>Quick troubleshooting</h2>
-    <h3>The VST3 does not appear</h3>
-    <p>Confirm it is a Windows x64 VST3 <strong>audio effect</strong>, then click <strong>Refresh Plug-in List</strong>. Instrument-only VST3 plug-ins are intentionally excluded from the insert-effect list.</p>
-    <h3>The vendor GUI opens but I hear no processed audio</h3>
-    <p>Check that the OBS source is producing audio and that the effect is not bypassed. If the filter reports a failure instead of Ready, capture the exact status and relevant <code>[obs-safe-vst3]</code> log lines for a bug report.</p>
-    <h3>Windows blocks the installer</h3>
-    <p>Do not disable Defender or SmartScreen globally. Confirm you downloaded from the official GitHub release, optionally verify SHA-256, then make your own trust decision for the unsigned package.</p>
-
-    <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download stable</a><a class="btn secondary" href="compatibility.html">Check compatibility</a><a class="btn secondary" href="safety.html">Read safety model</a></div>
-  </div></section>
-</main>
-<footer class="footer"><div class="wrap footerIn"><div>OBS Safe VST3 Host · beginner installation guide</div><div class="footerLinks"><a href="./">Home</a><a href="https://github.com/masarray/obs-vst3">GitHub</a><a href="https://github.com/masarray/obs-vst3/releases/latest">Releases</a></div></div></footer>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install — OBS Safe VST3 Host v0.6.0</title><meta name="description" content="Install OBS Safe VST3 Host and the VST3 Rack on Windows."><link rel="stylesheet" href="site.css"></head><body>
+<nav class="nav"><div class="wrap navin"><a class="brand" href="index.html"><span class="mark">V3</span>OBS Safe VST3</a><div class="navlinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download</a></div></div></nav>
+<header class="pageHero"><div class="wrap prose"><span class="eyebrow"><span class="pulse"></span>v0.6.0 · Windows x64</span><h1>Install once. Choose Single or Rack in OBS.</h1><p class="lead">The v0.6.0 package installs the OBS module, the Single VST3 helper, the Rack helper and the isolated scanner.</p></div></header>
+<main class="wrap prose">
+<h2>Recommended — Smart Installer</h2><ol><li>Close OBS Studio completely.</li><li>Download <strong>OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe</strong> from GitHub Releases.</li><li>Run the installer. Confirm the OBS Studio root folder when requested.</li><li>Start OBS Studio.</li></ol>
+<div class="callout">A normal OBS root contains folders such as <code>bin</code>, <code>obs-plugins</code> and <code>data</code>. The installer remembers the validated root for later updates.</div>
+<h2>Installed files</h2><pre class="code">obs-plugins\64bit\obs-safe-vst3.dll
+obs-plugins\64bit\obs-safe-vst3-host.exe
+obs-plugins\64bit\obs-safe-vst3-rack-host.exe
+obs-plugins\64bit\obs-safe-vst3-scanner.exe
+data\obs-plugins\obs-safe-vst3\locale\en-US.ini</pre>
+<h2>Use one VST3 effect</h2><ol><li>Open the Filters window for an OBS audio source.</li><li>Add <strong>VST 3.x Plug-in</strong>.</li><li>Keep Plug-in Source on <strong>Installed plug-ins</strong>.</li><li>Choose the VST3 effect from the Installed Plug-in list.</li><li>Use the plug-in UI button when you need its native editor.</li></ol>
+<h2>Use VST3 Rack</h2><ol><li>Open the Filters window for an OBS audio source.</li><li>Add <strong>VST3 Rack</strong>.</li><li>In Rack Properties, use <strong>Open Rack</strong>.</li><li>Search the installed catalog and choose <strong>Add Effect</strong>.</li><li>Add more effects as needed. Reorder, bypass/enable, replace or remove slots from the Rack Editor.</li><li>Use <strong>Open UI</strong> on a slot to open the VST3 vendor editor.</li><li>Use <strong>Save As</strong> to store the current Rack as a named preset.</li></ol>
+<p>The Rack is serial: <strong>OBS input → Slot 1 → Slot 2 → … → Slot 8 → OBS output</strong>. Closing the Rack Editor window does not stop the Rack audio processing.</p>
+<h2>Rack preset behavior</h2><ul><li><strong>Save As</strong> creates a new saved preset identity.</li><li>Selecting a preset loads an independent copy into the working Rack.</li><li>Normal edits after load do not change the saved preset.</li><li><strong>Update</strong> is the only normal action that writes the working Rack back to that preset.</li><li>Rename preserves preset identity/content.</li><li>Delete requires intentional confirmation.</li><li>If a referenced plug-in is unavailable, the preset can retain a Missing/pass-through placeholder instead of silently discarding that slot.</li></ul>
+<h2>Portable ZIP</h2><p>Download <strong>OBS-Safe-VST3-Host-v0.6.0-Windows-x64-Portable.zip</strong> and extract its contents directly into the OBS root. Keep the included <code>README-FIRST.txt</code> and <code>UNINSTALL-MANUAL.cmd</code>.</p>
+<h2>Verify download integrity</h2><p>The Release also contains <code>SHA256SUMS.txt</code>. On PowerShell:</p><pre class="code">Get-FileHash .\OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe -Algorithm SHA256</pre>
+<h2>Windows warning</h2><p>Release binaries are currently not commercially Authenticode-signed, so Windows may show <strong>Unknown publisher</strong> or a SmartScreen reputation warning. Do not disable Windows security globally. Download from the official GitHub Release and verify the checksum when desired.</p>
+<h2>Uninstall</h2><p>For the Smart Installer package, use the registered Windows uninstaller. For a manual portable installation, close OBS and run <code>UNINSTALL-MANUAL.cmd</code> from the OBS root.</p>
+<h2>If a plug-in does not appear</h2><ul><li>Confirm it is a 64-bit VST3 audio effect.</li><li>Refresh the plug-in list / Rack catalog.</li><li>Check normal Windows VST3 locations and the vendor's installation path.</li><li>Remember that instruments, MIDI-only plug-ins and unsupported bus layouts are outside the v0.6.0 scope.</li></ul>
+<p><a href="compatibility.html">Read the compatibility scope →</a></p>
+</main><footer class="footer"><div class="wrap footerIn"><span>OBS Safe VST3 Host v0.6.0</span><div class="footerLinks"><a href="index.html">Home</a><a href="https://github.com/masarray/obs-vst3/releases/latest">Release</a><a href="safety.html">Safety</a></div></div></footer></body></html>
