@@ -1,0 +1,28 @@
+name: P1 Rack Editor Polish
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p1-rack-editor-polish.yml'
+      - 'src/rack/rack_editor_p1_skin.hpp'
+      - 'src/rack/rack_editor_window.*'
+      - 'src/rack/CMakeLists.txt'
+      - 'tests/p1_rack_editor/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p1-rack-editor-polish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual-contract:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce P1 Rack Editor product-UX contract
+        shell: pwsh
+        run: ./tests/p1_rack_editor/p1_visual_contract.ps1
