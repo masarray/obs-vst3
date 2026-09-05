@@ -3,34 +3,41 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071019">
-  <title>VST3 Compatibility — OBS Safe VST3 Host v0.6.0</title>
-  <meta name="description" content="Compatibility scope for OBS Safe VST3 Host v0.6.0: Windows x64, OBS 29.1+, VST3 audio effects, Single Host and serial multi-effect Rack.">
+  <title>VST3 Compatibility — OBS Safe VST3 Host v0.6.1</title>
+  <meta name="description" content="Compatibility scope for OBS Safe VST3 Host v0.6.1: Windows x64, OBS 29.1+, VST3 audio effects, Single Host, serial multi-effect Rack and automatic working-Rack recall.">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/compatibility.html">
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.0</a></nav></div></header>
+<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.1</a></nav></div></header>
 <main>
-<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Compatibility · v0.6.0 stable</div><h1>Broad VST3 effect support, with explicit boundaries.</h1><p class="lead">The project targets conventional Windows x64 VST3 audio effects. Compatibility is evidence-based, not implemented as a hard-coded vendor whitelist, and no responsible host can guarantee every VST3 implementation.</p></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stable support matrix</div><h2>What v0.6.0 is designed to support</h2></div><div class="compat">
+<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Compatibility · v0.6.1 stable</div><h1>Broad VST3 effect support, with explicit boundaries.</h1><p class="lead">The project targets conventional Windows x64 VST3 audio effects. Compatibility is evidence-based, not implemented as a hard-coded vendor whitelist, and no responsible host can guarantee every VST3 implementation.</p></div></section>
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stable support matrix</div><h2>What v0.6.1 is designed to support</h2></div><div class="compat">
 <div class="row"><div>Windows</div><div><span class="yes">x64 supported</span></div></div>
 <div class="row"><div>OBS Studio</div><div><span class="yes">29.1+ compatibility floor</span>; release qualification builds against pinned current OBS/libobs.</div></div>
 <div class="row"><div>VST3 audio effects</div><div><span class="yes">Supported</span> in the current mono/stereo Float32 scope.</div></div>
 <div class="row"><div>Single VST3 Host</div><div><span class="yes">Stable</span></div></div>
-<div class="row"><div>Serial VST3 Rack</div><div><span class="yes">Stable in v0.6.0</span></div></div>
+<div class="row"><div>Serial VST3 Rack</div><div><span class="yes">Stable</span></div></div>
+<div class="row"><div>Automatic working-Rack recall</div><div><span class="yes">Supported in v0.6.1</span></div></div>
 <div class="row"><div>Graphical Rack Editor</div><div><span class="yes">Supported</span> in the isolated Rack helper.</div></div>
 <div class="row"><div>Native vendor editors</div><div><span class="yes">Supported</span> where the plug-in exposes a compatible native editor.</div></div>
-<div class="row"><div>Rack presets / Session Snapshot</div><div><span class="yes">Supported</span></div></div>
-<div class="row"><div>VST3 instruments / MIDI</div><div><span class="warnTxt">Not in v0.6.0</span></div></div>
-<div class="row"><div>Sidechain / free-form routing</div><div><span class="warnTxt">Not in v0.6.0</span></div></div>
-<div class="row"><div>Arbitrary multichannel / Float64 fallback</div><div><span class="warnTxt">Not in v0.6.0</span></div></div>
+<div class="row"><div>Named Rack presets</div><div><span class="yes">Supported</span> independently from the automatic working session.</div></div>
+<div class="row"><div>VST3 instruments / MIDI</div><div><span class="warnTxt">Not in v0.6.1</span></div></div>
+<div class="row"><div>Sidechain / free-form routing</div><div><span class="warnTxt">Not in v0.6.1</span></div></div>
+<div class="row"><div>Arbitrary multichannel / Float64 fallback</div><div><span class="warnTxt">Not in v0.6.1</span></div></div>
 <div class="row"><div>macOS / Linux packages</div><div><span class="warnTxt">Not currently shipped</span></div></div>
 </div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Real-machine evidence</div><h2>Representative commercial VST3 effects have been part of project qualification.</h2><p>Across the stable Single Host line and Rack development, real-machine qualification has included effects from vendors such as:</p></div><div class="brands"><span class="brandPill">iZotope Ozone / RX</span><span class="brandPill">FabFilter</span><span class="brandPill">Waves</span><span class="brandPill">Klevgrand</span><span class="brandPill">Neuro Audio</span><span class="brandPill">Process Audio</span></div><div class="notice" style="margin-top:20px">These names are qualification examples, not an allowlist or guarantee. A different plug-in version, licensing layer, editor implementation or VST3 lifecycle behavior can still expose a vendor-specific compatibility issue.</div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Rack behavior</div><h2>v0.6.0 Rack scope is intentionally serial.</h2></div><div class="grid3">
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">v0.6.1 persistence evidence</div><h2>Recall testing now covers the actual working Rack, not only reusable presets.</h2><p>Real OBS validation changed settings in commercial split controller/processor VST3 effects across three successive OBS sessions. The latest working Rack and full DSP state restored on each restart, including cases where controller metadata alone would not have been sufficient.</p></div><div class="ticks">
+<div class="tick"><span>✓</span><div><b>DSP-safe capture frontier.</b> State capture is coordinated away from concurrent vendor processing.</div></div>
+<div class="tick"><span>✓</span><div><b>Dry-first restore.</b> Slow chains do not have to finish materializing before the Rack can remain safely available as dry/pass-through.</div></div>
+<div class="tick"><span>✓</span><div><b>Split-component synchronization.</b> Native GUI edits and preset-wide parameter resyncs reach processor state before capture.</div></div>
+<div class="tick"><span>✓</span><div><b>Explicit storage failure.</b> The product does not present a writable Rack as normally persistent when durable session storage is unavailable.</div></div>
+</div></div></section>
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Rack behavior</div><h2>v0.6.1 Rack scope is intentionally serial.</h2></div><div class="grid3">
 <article class="card"><div class="icon">FX</div><h3>Effects only</h3><p>Normal audio effects are eligible. Explicit instrument-only classes are not exposed as today's insert-effect workflow.</p></article>
 <article class="card"><div class="icon">2CH</div><h3>Mono / stereo</h3><p>The stable scope is mono/stereo Float32. Advanced bus layouts and Float64 are future work.</p></article>
-<article class="card"><div class="icon">→</div><h3>Serial lane</h3><p>Rack slots process in a defined serial order. Sidechain, arbitrary graph routing and parallel patchbay behavior are deliberately outside v0.6.0.</p></article>
+<article class="card"><div class="icon">→</div><h3>Serial lane</h3><p>Rack slots process in a defined serial order. Sidechain, arbitrary graph routing and parallel patchbay behavior are deliberately outside v0.6.1.</p></article>
 </div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">When a plug-in is missing or unhealthy</div><h2>Compatibility failure should remain understandable and bounded.</h2></div><div class="ticks">
 <div class="tick"><span>✓</span><div><b>Missing Rack plug-ins can remain placeholders.</b> The saved Rack definition does not need to be destructively rewritten just because a VST3 is temporarily unavailable.</div></div>
