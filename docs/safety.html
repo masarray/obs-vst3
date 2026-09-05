@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071019">
   <title>VST3 Safety in OBS — Isolation, Fail-Dry and Recovery</title>
-  <meta name="description" content="Safety model for OBS Safe VST3 Host v0.6.0: isolated Single and Rack helpers, isolated scanning, bounded fail-dry audio, state recovery and honest security limits.">
+  <meta name="description" content="Safety model for OBS Safe VST3 Host v0.6.1: isolated Single and Rack helpers, DSP-safe state capture, durable working-Rack recall, isolated scanning and bounded fail-dry audio.">
   <meta name="robots" content="index,follow,max-snippet:-1">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/safety.html">
   <link rel="stylesheet" href="site.css">
@@ -15,9 +15,9 @@
   <meta property="og:type" content="article">
 </head>
 <body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.0</a></nav></div></header>
+<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.1</a></nav></div></header>
 <main>
-<section class="pageHero"><div class="wrap prose"><div class="eyebrow"><span class="pulse"></span> Safety model · v0.6.0</div><h1><span class="gradient">A bad plug-in should not be allowed to become a bad broadcast.</span></h1><p class="lead">VST3 plug-ins are native code. OBS Safe VST3 Host changes the failure boundary by keeping third-party VST3 DSP and vendor GUI code outside <code>obs64.exe</code> in both the Single Host and VST3 Rack workflows.</p></div></section>
+<section class="pageHero"><div class="wrap prose"><div class="eyebrow"><span class="pulse"></span> Safety model · v0.6.1</div><h1><span class="gradient">A bad plug-in should not be allowed to become a bad broadcast.</span></h1><p class="lead">VST3 plug-ins are native code. OBS Safe VST3 Host changes the failure boundary by keeping third-party VST3 DSP and vendor GUI code outside <code>obs64.exe</code> in both the Single Host and VST3 Rack workflows.</p></div></section>
 <section><div class="wrap prose">
 <h2>The core boundary</h2>
 <div class="code">OBS Studio (obs64.exe)
@@ -28,6 +28,7 @@
    └─ VST3 Rack        ── Rack IPC ─────► obs-safe-vst3-rack-host.exe
                                           ├─ graphical Rack Editor
                                           ├─ serial VST3 chain
+                                          ├─ durable working-session state
                                           └─ vendor UI windows
 
 VST3 discovery ─────────────────────────► obs-safe-vst3-scanner.exe</div>
@@ -35,7 +36,7 @@ VST3 discovery ─────────────────────�
 <h2>What isolation does</h2>
 <ul>
 <li><strong>Single Host runtime:</strong> third-party VST3 DSP and vendor GUI run in <code>obs-safe-vst3-host.exe</code>.</li>
-<li><strong>Rack runtime:</strong> Rack VST3 DSP, Rack Editor and vendor-editor ownership live in <code>obs-safe-vst3-rack-host.exe</code>.</li>
+<li><strong>Rack runtime:</strong> Rack VST3 DSP, Rack Editor, persistence work and vendor-editor ownership live in <code>obs-safe-vst3-rack-host.exe</code>.</li>
 <li><strong>Scanning:</strong> normal candidate probing is performed outside OBS.</li>
 <li><strong>Recovery:</strong> helper health, state restoration and bounded restart behavior are explicit product concerns.</li>
 </ul>
@@ -44,11 +45,35 @@ VST3 discovery ─────────────────────�
 <p>The realtime OBS side is designed around bounded work. If a valid processed wet block is late, invalid or unavailable, the product keeps the original dry/pass-through audio instead of deliberately waiting without bound.</p>
 <p>During a live show, losing an effect is preferable to intentionally stalling the broadcast audio callback.</p>
 
-<h2>State, Rack snapshots and presets</h2>
-<p>The Single Host persists VST3 state for recovery. The Rack adds a working Session Snapshot model and named reusable presets. Missing Rack plug-ins can remain pass-through placeholders, and a failed/corrupt preset load is not allowed to replace the current working Rack.</p>
+<h2>Durable working-Rack recall</h2>
+<p>v0.6.1 gives each OBS VST3 Rack filter its own durable working-session state. This is separate from named reusable Rack presets: the user does not need to create a preset merely to preserve the Rack they were actively using before closing OBS.</p>
+<p>The working session stores topology, bypass state and VST3 component/controller state using CRC-protected atomic writes with a last-known-good recovery path.</p>
+
+<h2>DSP-safe state capture</h2>
+<p>Vendor state capture is control-plane work, but third-party VST3 implementations are not all safe to call concurrently with realtime <code>process()</code>. v0.6.1 therefore establishes a bounded capture frontier before calling vendor <code>getState</code>.</p>
+<ul>
+<li>new Rack vendor processing calls fail dry while capture is active;</li>
+<li>the control owner waits only for already-running vendor calls to leave;</li>
+<li>the Rack DSP path does not wait on a control mutex;</li>
+<li>filesystem and state serialization work remain outside the OBS audio callback.</li>
+</ul>
+
+<h2>Dry-first restore</h2>
+<p>A saved Rack may contain third-party plug-ins whose open/state-restore time is slow or variable. The helper therefore becomes safely available with a dry/empty generation first. The saved chain materializes on the control owner and replaces the working generation only when the complete restored chain is coherent.</p>
+<p>This avoids turning aggregate vendor restore time into an OBS/Rack startup deadline.</p>
+
+<h2>Split controller/processor VST3 state</h2>
+<p>Some VST3 plug-ins keep their native editor/controller and processor as distinct components. A preset title can appear restored while the processor parameters are stale if controller edits never reach processor state. The Rack uses a bounded control-to-DSP bridge for native editor edits and supports controller-wide resync when a plug-in reports parameter values changed.</p>
+<p>Before state capture, accepted controller edits must cross that processor frontier so the saved state represents the actual sound, not just controller metadata.</p>
+
+<h2>Storage failure is not hidden</h2>
+<p>If the per-Rack durable storage path cannot be created or resolved, the product does not present a normal writable Rack as successfully persistent. It stays dry and reports <strong>Needs Attention</strong>. This prevents a storage failure from becoming silent state loss on the next restart.</p>
+
+<h2>Named presets remain independent</h2>
+<p>Named Rack presets continue to provide reusable user-managed chains. Missing Rack plug-ins can remain pass-through placeholders, and a failed/corrupt preset load is not allowed to replace the current working Rack.</p>
 
 <h2>Bounded shutdown</h2>
-<p>v0.6.0 includes explicit Rack helper shutdown hardening so a hung isolated helper is not allowed to hold OBS shutdown indefinitely. This is part of the same product principle: an out-of-process VST3 failure must remain bounded at the OBS boundary.</p>
+<p>v0.6.1 retains explicit Rack helper shutdown hardening so a hung isolated helper is not allowed to hold OBS shutdown indefinitely. This is part of the same product principle: an out-of-process VST3 failure must remain bounded at the OBS boundary.</p>
 
 <h2>Can this promise OBS will never crash?</h2>
 <p><strong>No.</strong> Windows, OBS itself, drivers, hardware faults and other native components remain outside this project's control. The defensible claim is architectural: third-party VST3 runtime and vendor UI code are deliberately kept outside the OBS process.</p>
@@ -58,13 +83,14 @@ VST3 discovery ─────────────────────�
 <div class="notice">Only install VST3 plug-ins from vendors you trust. Process isolation here is designed for crash/hang containment and bounded recovery—not for safely running untrusted malware.</div>
 
 <h2>Release confidence</h2>
-<p>The public Windows pipeline rebuilds against pinned OBS/libobs, runs automated tests and scanner smoke, validates the package and Smart Installer, and publishes SHA-256 checksums beside the binaries. Rack integration also has focused serial-processing, safety, topology, recovery, editor, vendor-UI and preset regression gates.</p>
+<p>The v0.6.1 runtime candidate passed the project's P0/P1, R0, R1, R2, R3, CI and Compatibility Test Build gates on one exact source head before merge. Real OBS testing then verified repeated restart recall using changed settings from commercial split-component VST3 effects.</p>
+<p>The public Windows pipeline rebuilds against pinned OBS/libobs, runs automated tests and scanner smoke, validates the package and Smart Installer, and publishes SHA-256 checksums beside the binaries.</p>
 <p>Automated tests cannot prove every commercial plug-in on every Windows machine, so compatibility claims remain conservative and real-machine evidence remains important.</p>
 
 <h2>Unsigned Windows package</h2>
 <p>The current package is not commercially Authenticode-signed. Windows may show <strong>Unknown publisher</strong> or a SmartScreen reputation warning.</p>
 <p>Do not disable Windows security globally. Download only from the official GitHub Releases page and compare against <code>SHA256SUMS.txt</code> when you want an additional integrity check.</p>
-<div class="code">Get-FileHash .\OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe -Algorithm SHA256</div>
+<div class="code">Get-FileHash .\OBS-Safe-VST3-Host-v0.6.1-Setup-x64.exe -Algorithm SHA256</div>
 
 <div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Official release</a><a class="btn secondary" href="install.html">Install guide</a><a class="btn secondary" href="compatibility.html">Compatibility</a><a class="btn secondary" href="https://github.com/masarray/obs-vst3/blob/main/SECURITY.md">Security policy</a></div>
 </div></section>
