@@ -120,8 +120,7 @@ inline void draw_segment_meter(ImDrawList* draw,
                         ImGui::ColorConvertFloat4ToU32(metal_recess()), 5.0f);
 
     for (int index = 0; index < kSegments; ++index) {
-        const int from_bottom = index;
-        const float y1 = bottom - (segment_h + kGap) * static_cast<float>(from_bottom + 1) + kGap;
+        const float y1 = bottom - (segment_h + kGap) * static_cast<float>(index + 1) + kGap;
         const float y2 = y1 + segment_h;
         const bool active = index < lit;
         const float segment_db = kMeterFloorDb +
@@ -156,6 +155,7 @@ inline bool draw_metal_fader(const char* id,
                              float bottom,
                              float width)
 {
+    const ImVec2 saved_cursor = ImGui::GetCursorScreenPos();
     ImGui::SetCursorScreenPos(ImVec2(x - width * 0.5f, top));
     ImGui::InvisibleButton(id, ImVec2(width, bottom - top));
     const bool hovered = ImGui::IsItemHovered();
@@ -210,6 +210,7 @@ inline bool draw_metal_fader(const char* id,
 
     if (hovered)
         ImGui::SetTooltip("%s %.1f dB\nDrag · wheel fine adjust · double-click reset", label, db);
+    ImGui::SetCursorScreenPos(saved_cursor);
     return changed;
 }
 
@@ -299,6 +300,7 @@ inline void render_aligned_master_surface()
     draw_centered_value(draw, (out_l_x + out_r_x) * 0.5f, control_bottom + 29.0f,
                         std::max(hardware_meter.out_l, hardware_meter.out_r), hardware_meter.valid);
 
+    ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(ImVec2(width, 259.0f));
 }
 
