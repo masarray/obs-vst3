@@ -7,7 +7,11 @@
 #include "rack/rack_preset_management.hpp"
 #include "rack/rack_preset_ui_contract.hpp"
 #include "rack/rack_session_snapshot.hpp"
+#include "rack/rack_session_runtime.hpp"
 #include "rack/rack_hosted_plugin.hpp"
 #endif
 
-#include "rack/main_r3_4.cpp"
+// Angle brackets are intentional: the shipping target puts its generated
+// R3-4 include root before the checked-in source tree, so persistence wiring
+// can be qualified without mutating the already-proven R3-4 fixture source.
+#include <rack/main_r3_4.cpp>
