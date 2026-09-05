@@ -1,6 +1,6 @@
 # VST3 Rack — Architecture, Evidence & Execution Index
 
-This folder records the architecture and engineering evidence behind the isolated **VST3 Rack** that enters the public stable Windows package in **v0.6.0**.
+This folder records the architecture and engineering evidence behind the isolated **VST3 Rack** shipped in the public stable Windows package. The Rack entered stable in **v0.6.0** and receives durable working-session recall plus state-safety hardening in **v0.6.1**.
 
 For public product information, start with:
 
@@ -13,12 +13,14 @@ The ticket/ADR files in this folder preserve the staged engineering history. Old
 
 ## Current status
 
-- Public release target: **v0.6.0 stable**.
-- Qualified pre-release integration baseline: `660c83c6c67fbc4643401140c0bf09c31a1111c7`.
-- Final Rack integration: PR #97.
+- Public release target: **v0.6.1 stable**.
+- Qualified v0.6.1 runtime source head: `ce5eb052c97076df735b95b55328f76e222475ee`.
+- Runtime hardening merged in PR #109 as `f91847744a1c824c255666b4a2f9e34b28db3905`.
 - Parent/evidence ledger: [GitHub issue #56](https://github.com/masarray/obs-vst3/issues/56).
-- R3-4 preset UX, shutdown hardening, Rack Editor product polish and close/reopen lifecycle hardening are integrated.
-- Focused Rack gates, CI and Compatibility Test Build passed on the final candidate recorded in PR #97.
+- Durable per-OBS-Rack working-session recall, DSP-safe state capture, dry-first restore and split-component VST3 state synchronization are integrated.
+- Rack foreground activation, vendor-editor icon polish, shutdown hardening and editor close/reopen lifecycle hardening are integrated.
+- P0/P1, R0, R1, R2, R3, CI and Compatibility Test Build passed on the qualified v0.6.1 runtime candidate recorded in PR #109.
+- Public v0.6.1 release preparation re-runs an exact-head aggregate release-candidate gate before the release marker is advanced to `main`.
 
 See [`CURRENT_STATUS.md`](CURRENT_STATUS.md) for exact qualification runs and the stable release scope.
 
@@ -42,7 +44,8 @@ obs-safe-vst3-rack-host.exe
 │                                      │
 │ Rack control plane                   │
 │  immutable chain generations         │
-│  Session Snapshot / recovery         │
+│  durable working-session snapshot    │
+│  named presets / LKG recovery        │
 │                                      │
 │ Rack DSP worker                      │
 │  A -> B -> C -> ... -> N             │
@@ -51,7 +54,7 @@ obs-safe-vst3-rack-host.exe
 
 Core law: **VST3 DSP, vendor GUI and Rack graphical UI dependencies stay outside `obs64.exe`.**
 
-## Stable v0.6.0 shape
+## Stable v0.6.1 shape
 
 The Rack is graphical, but the DSP topology remains a focused serial effects lane:
 
@@ -59,7 +62,7 @@ The Rack is graphical, but the DSP topology remains a focused serial effects lan
 INPUT -> Slot 1 -> Slot 2 -> ... -> Slot N -> OUTPUT
 ```
 
-v0.6.0 includes:
+v0.6.1 includes:
 
 - separate Rack helper and protocol;
 - serial multi-effect processing;
@@ -67,12 +70,17 @@ v0.6.0 includes:
 - add / replace / remove / reorder / bypass;
 - graphical helper-owned Rack Editor;
 - native vendor editor orchestration;
-- Session Snapshot recovery;
-- named Rack presets;
+- automatic durable working-Rack recall across normal OBS restarts;
+- CRC-protected atomic session snapshots with last-known-good recovery;
+- DSP-safe state capture without a realtime-required control mutex;
+- dry-first persisted-chain restore followed by atomic whole-generation publication;
+- split controller/processor VST3 parameter synchronization before state capture;
+- named Rack presets for reusable chains;
+- missing-plug-in placeholders that preserve saved definitions;
 - fail-dry behavior;
 - bounded shutdown and editor lifecycle hardening.
 
-Not in v0.6.0:
+Not in v0.6.1:
 
 - arbitrary graph/patchbay routing;
 - sidechain;
@@ -97,6 +105,6 @@ Recommended order for understanding the design:
 9. [`THREAD_HANDOFF.md`](THREAD_HANDOFF.md) — historical execution handoff format
 10. [`CURRENT_STATUS.md`](CURRENT_STATUS.md) — current pointer
 
-## Development rule after v0.6.0
+## Development rule after v0.6.1
 
 Future Rack work must preserve the public stable contracts rather than treating the shipped Rack as disposable prototype code. Regressions found in real use should become permanent deterministic tests at the highest stable seam that reproduces them.
