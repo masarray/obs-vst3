@@ -158,11 +158,12 @@ public:
         return true;
     }
 
-    // Control-thread service point after native vendor message pumping. Some
-    // plug-ins load a preset by updating controller values and issuing only
+    // Called by the native-editor manager on the same control owner immediately
+    // after vendor Win32 messages are pumped. Some plug-ins load an internal
+    // preset by updating controller values and issuing only
     // restartComponent(kParamValuesChanged), rather than performEdit for every
     // parameter. Mirror that controller snapshot into the same DSP queue.
-    void service_controller_callbacks() noexcept
+    void service_component_handler_callbacks() noexcept override
     {
         if (!using_internal_handler_)
             return;
@@ -212,16 +213,16 @@ public:
     bool process(const ProcessBlockView& block) noexcept
     {
         std::size_t drained = 0;
-        bool queued_ok = drain_controller_edits(drained);
+        const bool queued_ok = drain_controller_edits(drained);
         const bool processed = HostedPlugin::process(block);
         finish_controller_delivery(drained, queued_ok && processed);
         return queued_ok && processed &&
                !controller_delivery_failed_.load(std::memory_order_acquire);
     }
 
-    // The Rack DSP loop calls this from its 100 ms idle wake as well. That means
-    // a last-second GUI change can still reach the processor and therefore its
-    // getState() snapshot even when OBS is not currently sending audio blocks.
+    // Optional DSP-owner seam for an idle flush. Normal Rack audio blocks already
+    // drain the queue through process(); keeping this operation separate avoids
+    // ever calling VST3 ProcessData mutation from the vendor/control thread.
     bool flush_pending_controller_edits() noexcept
     {
         std::size_t drained = 0;
@@ -236,11 +237,11 @@ public:
                !controller_delivery_failed_.load(std::memory_order_acquire);
     }
 
-    // State capture runs on the Rack control owner. Wait only for the bounded
-    // control->DSP bridge, never for arbitrary vendor work. The DSP thread keeps
-    // servicing edits on real blocks and on its idle wake. Failing this barrier
-    // is preferable to serializing a known mixed controller/component state.
-    bool synchronize_controller_edits_for_snapshot(std::string& error) noexcept
+    // State capture is a control-plane transaction. Before getState(), require
+    // every accepted editor update (including a preset-wide restart resync) to
+    // have crossed the DSP-owned inputParameterChanges frontier. This prevents a
+    // snapshot containing a current preset title but stale/default processor DSP.
+    bool synchronize_component_handler_state(std::string& error) noexcept override
     {
         if (!using_internal_handler_)
             return true;
@@ -248,7 +249,7 @@ public:
         const auto deadline = std::chrono::steady_clock::now() +
                               std::chrono::milliseconds(300);
         for (;;) {
-            service_controller_callbacks();
+            service_component_handler_callbacks();
 
             if (controller_delivery_failed_.load(std::memory_order_acquire)) {
                 error = "Rack VST3 controller edit delivery failed before state capture";
