@@ -7,7 +7,11 @@
 #include "rack/rack_preset_management.hpp"
 #include "rack/rack_preset_ui_contract.hpp"
 #include "rack/rack_session_snapshot.hpp"
+#include "rack/rack_session_runtime.hpp"
 #include "rack/rack_hosted_plugin.hpp"
 #endif
 
-#include "rack/main_r3_4.cpp"
+// The persistence wrapper includes the qualified R3-4 implementation in the
+// same translation unit, renames only its product entrypoint, then layers the
+// OBS-session restore/autosave lifecycle on top of those proven primitives.
+#include "rack/main_r3_4_persistent.cpp"

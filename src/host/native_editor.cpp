@@ -11,6 +11,7 @@ namespace safevst3 {
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"ObsSafeVst3NativeEditorWindow";
+constexpr int kObsCompanionIconResourceId = 101;
 
 std::string win_error(const char* what)
 {
@@ -78,6 +79,12 @@ bool NativeEditorWindow::ensure_window_class(std::string& error)
     wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = &NativeEditorWindow::window_proc;
     wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hIcon = reinterpret_cast<HICON>(LoadImageW(
+        wc.hInstance, MAKEINTRESOURCEW(kObsCompanionIconResourceId), IMAGE_ICON,
+        32, 32, LR_DEFAULTCOLOR | LR_SHARED));
+    wc.hIconSm = reinterpret_cast<HICON>(LoadImageW(
+        wc.hInstance, MAKEINTRESOURCEW(kObsCompanionIconResourceId), IMAGE_ICON,
+        16, 16, LR_DEFAULTCOLOR | LR_SHARED));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = kWindowClassName;

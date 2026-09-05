@@ -21,6 +21,7 @@ using namespace Steinberg::Vst;
 static const FUID kProcessorUid(0x13C07981, 0xA3E34AB4, 0xB86D9380, 0x17E35D42);
 static const FUID kControllerUid(0x5227BC17, 0x44E04C01, 0x8B94CF4B, 0xF0B9D2A1);
 constexpr ParamID kGainParameterId = 100;
+constexpr ParamID kPresetTriggerParameterId = 101;
 constexpr auto kPluginName = "SafeVST3 R3-3 Vendor Editor Fixture";
 constexpr SpeakerArrangement kArrangement = SpeakerArr::kStereo;
 constexpr uint32 kLatencySamples = 32;
@@ -211,6 +212,26 @@ public:
 
     tresult PLUGIN_API process(ProcessData& data) override
     {
+        // A split-component VST3 receives editor/automation changes through the
+        // host's inputParameterChanges bridge. This fixture intentionally keeps
+        // controller and processor state separate so R3-3 can catch hosts that
+        // update only the GUI/controller while leaving DSP state at defaults.
+        if (data.inputParameterChanges) {
+            const int32 queue_count = data.inputParameterChanges->getParameterCount();
+            for (int32 queue_index = 0; queue_index < queue_count; ++queue_index) {
+                IParamValueQueue* queue =
+                    data.inputParameterChanges->getParameterData(queue_index);
+                if (!queue || queue->getParameterId() != kGainParameterId ||
+                    queue->getPointCount() <= 0)
+                    continue;
+                int32 sample_offset = 0;
+                ParamValue value = gain_;
+                if (queue->getPoint(queue->getPointCount() - 1,
+                                    sample_offset, value) == kResultTrue)
+                    gain_ = std::clamp(value, 0.0, 1.0);
+            }
+        }
+
         if (data.numSamples == 0)
             return kResultOk;
         if (data.numSamples < 0 || data.numInputs != 1 || data.numOutputs != 1 ||
@@ -248,13 +269,48 @@ public:
             return result;
         parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5,
                                 ParameterInfo::kCanAutomate, kGainParameterId);
+        parameters.addParameter(STR16("Preset Trigger"), nullptr, 0, 0.5,
+                                ParameterInfo::kIsHidden, kPresetTriggerParameterId);
         return kResultOk;
+    }
+
+    tresult PLUGIN_API setComponentHandler(IComponentHandler* handler) override
+    {
+        component_handler_ = handler;
+        return EditController::setComponentHandler(handler);
+    }
+
+    tresult PLUGIN_API setParamNormalized(ParamID tag, ParamValue value) override
+    {
+        const tresult result = EditController::setParamNormalized(tag, value);
+        if (result != kResultTrue || !native_view_created_ || !component_handler_)
+            return result;
+
+        if (tag == kPresetTriggerParameterId) {
+            // Model an internal vendor preset load. The controller updates many
+            // values privately, then asks the host to resynchronize all parameter
+            // values with the processor rather than emitting performEdit per knob.
+            (void)EditController::setParamNormalized(kGainParameterId, value);
+            (void)component_handler_->restartComponent(kParamValuesChanged);
+            return result;
+        }
+
+        if (tag == kGainParameterId) {
+            // Model a normal native GUI edit: the controller changes locally then
+            // asks the host to forward that value to the processor component.
+            (void)component_handler_->beginEdit(tag);
+            (void)component_handler_->performEdit(tag, value);
+            (void)component_handler_->endEdit(tag);
+        }
+        return result;
     }
 
     IPlugView* PLUGIN_API createView(FIDString name) override
     {
-        if (name && std::strcmp(name, ViewType::kEditor) == 0)
+        if (name && std::strcmp(name, ViewType::kEditor) == 0) {
+            native_view_created_ = true;
             return new FixturePlugView();
+        }
         return nullptr;
     }
 
@@ -265,6 +321,10 @@ public:
             return kResultFalse;
         return setParamNormalized(kGainParameterId, std::clamp(value, 0.0, 1.0));
     }
+
+private:
+    IComponentHandler* component_handler_ = nullptr;
+    bool native_view_created_ = false;
 };
 
 } // namespace safevst3::r3_3_fixture

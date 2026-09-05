@@ -76,7 +76,20 @@ public:
     void close() noexcept;
     bool process(const ProcessBlockView& block) noexcept;
 
-    bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
+    // Optional control-owner/DSP-owner hooks. The base Single host does not need
+    // them; RackHostedPlugin overrides them so a separately compiled native
+    // editor manager can service vendor callbacks, the Rack DSP thread can flush
+    // accepted GUI edits even while audio is idle, and state capture can wait
+    // until controller edits have reached processor/component state.
+    virtual void service_component_handler_callbacks() noexcept {}
+    virtual bool flush_component_handler_edits() noexcept { return true; }
+    virtual bool synchronize_component_handler_state(std::string& error) noexcept
+    {
+        (void)error;
+        return true;
+    }
+
+    virtual bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
     bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
     bool refresh_latency_after_restart(std::string& error);
     bool reconfigure_io_after_restart(IoLayout& layout,

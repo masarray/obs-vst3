@@ -35,6 +35,13 @@ public:
                std::string& error,
                std::stop_token cancel = {});
 
+    bool start(const std::filesystem::path& helper,
+               std::uint32_t sample_rate,
+               std::uint32_t channels,
+               const std::filesystem::path& session_file,
+               std::string& error,
+               std::stop_token cancel = {});
+
     void stop() noexcept;
     void abort() noexcept;
     bool running() const noexcept;
@@ -45,6 +52,16 @@ public:
                  double deadline_fraction) noexcept;
 
     bool open_editor() noexcept;
+    bool save_session(DWORD timeout_ms = 750) noexcept;
+
+    bool last_session_save_succeeded() const noexcept
+    {
+        return region_ &&
+            InterlockedCompareExchange(
+                &region_->session_save_result, 0, 0) ==
+                static_cast<long>(rack::RackSessionSaveResult::Ok);
+    }
+
     RackBridgeStatus status() const noexcept;
 
     std::uint64_t deadline_misses() const noexcept
@@ -59,6 +76,8 @@ private:
         std::wstring response_event;
         std::wstring ready_event;
         std::wstring ui_open_event;
+        std::wstring session_save_event;
+        std::wstring session_saved_event;
     };
 
     static std::wstring quote(const std::wstring& value);
@@ -73,6 +92,8 @@ private:
     HANDLE response_event_ = nullptr;
     HANDLE ready_event_ = nullptr;
     HANDLE ui_open_event_ = nullptr;
+    HANDLE session_save_event_ = nullptr;
+    HANDLE session_saved_event_ = nullptr;
     PROCESS_INFORMATION process_{};
     rack::RackSharedAudioRegion* region_ = nullptr;
     Names names_{};

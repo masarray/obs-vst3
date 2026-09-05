@@ -50,6 +50,16 @@ enum class RackTopologyResult : long {
     GenerationBusy = 4,
 };
 
+// OBS save uses a separate named-event handshake from realtime Rack processing.
+// Completion and outcome are intentionally distinct: the helper always signals
+// completion, while this status lets the OBS control callback report an actual
+// capture/write failure immediately instead of misclassifying it as a timeout.
+enum class RackSessionSaveResult : long {
+    Idle = 0,
+    Ok = 1,
+    Failed = 2,
+};
+
 enum class RackBreadcrumbPhase : long {
     None = 0,
     Load = 1,
@@ -82,7 +92,7 @@ struct alignas(64) RackSharedAudioRegion {
     std::uint32_t sequence = 0;
     std::uint32_t frames = 0;
     std::uint32_t block_channels = 0;
-    std::uint32_t reserved1 = 0;
+    volatile long session_save_result = static_cast<long>(RackSessionSaveResult::Idle);
     volatile std::int64_t processed_chain_generation = 0;
 
     // R1-3 topology transaction. The requester writes one bounded ordered list

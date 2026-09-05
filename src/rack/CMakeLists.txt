@@ -63,6 +63,24 @@ set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
 file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
 
+# P9 keeps the checked-in R3-4 source authoritative, but the persistence wrapper
+# owns the shipping wmain. Generate an include-only R3-4 copy with only its final
+# entrypoint renamed; every internal Rack implementation remains byte-for-byte.
+set(_safevst3_r3_4_source "${CMAKE_CURRENT_LIST_DIR}/main_r3_4.cpp")
+file(READ "${_safevst3_r3_4_source}" _safevst3_r3_4_embed)
+set(_safevst3_r3_4_entry "int wmain(int argc, wchar_t** argv)")
+string(FIND "${_safevst3_r3_4_embed}" "${_safevst3_r3_4_entry}" _safevst3_r3_4_entry_pos)
+if(_safevst3_r3_4_entry_pos EQUAL -1)
+    message(FATAL_ERROR "P9 could not locate the qualified R3-4 entrypoint")
+endif()
+string(REPLACE
+    "${_safevst3_r3_4_entry}"
+    "int safevst3_r3_4_embedded_wmain(int argc, wchar_t** argv)"
+    _safevst3_r3_4_embed
+    "${_safevst3_r3_4_embed}"
+)
+file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_4.cpp" "${_safevst3_r3_4_embed}")
+
 # P6 instruments only the shipping helper copy of the qualified Rack DSP loop.
 # P5's authoritative final-output LUFS-I/dBTP remains intact; P6 adds real
 # session Input Trim / Output Fader gain, one-block ramps, and stereo L/R peak
@@ -232,12 +250,11 @@ string(REPLACE
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main.cpp" "${_safevst3_meter_main_embed}")
 
 # A Rack Editor close destroys the Win32/D3D/ImGui session while the owning
-# helper/window thread remains alive. Some Windows runners exposed a narrow
-# immediate-reopen race where transient session creation can fail once after
-# teardown. Preserve the qualified checked-in editor source and generate the
-# shipping translation unit with a bounded UI-thread-only recreation retry.
-# A successfully created session still blocks until normal user close and is
-# therefore never retried. DSP/control paths are unaffected.
+# helper/window thread remains alive. Shared Windows runners can expose a short
+# DXGI release/recreation window immediately after WM_CLOSE. Keep this recovery
+# entirely on the UI thread: allow teardown to settle briefly after a normal
+# close and retry transient session creation for a bounded ~1.2 seconds. DSP,
+# control and shutdown paths are unaffected.
 set(_safevst3_editor_source "${CMAKE_CURRENT_LIST_DIR}/rack_editor_window.cpp")
 file(READ "${_safevst3_editor_source}" _safevst3_editor_embed)
 set(_safevst3_editor_session_call "            run_window_session();")
@@ -246,12 +263,15 @@ if(_safevst3_editor_session_pos EQUAL -1)
     message(FATAL_ERROR "Rack editor lifecycle hardening could not locate the session call")
 endif()
 set(_safevst3_editor_session_retry [=[
-            for (int attempt = 0; attempt < 3; ++attempt) {
-                if (run_window_session())
+            for (int attempt = 0; attempt < 12; ++attempt) {
+                if (run_window_session()) {
+                    if (!stop_requested.load(std::memory_order_acquire))
+                        Sleep(150);
                     break;
+                }
                 if (stop_requested.load(std::memory_order_acquire))
                     break;
-                Sleep(50);
+                Sleep(100);
             }
 ]=])
 string(REPLACE

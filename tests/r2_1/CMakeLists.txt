@@ -66,3 +66,15 @@ add_test(
         -DSNAPSHOT_SOURCE=${SAFEVST3_ROOT}/src/rack/rack_session_snapshot.cpp
         -P ${CMAKE_CURRENT_LIST_DIR}/rack_session_snapshot_source_contract.cmake
 )
+add_test(
+    NAME r2-1-obs-rack-working-session-persistence-contract
+    COMMAND ${CMAKE_COMMAND}
+        -DRACK_FILTER=${SAFEVST3_ROOT}/src/obs-plugin/rack_filter.cpp
+        -DRACK_BRIDGE_HEADER=${SAFEVST3_ROOT}/src/platform/windows/win_rack_bridge.hpp
+        -DRACK_BRIDGE_SOURCE=${SAFEVST3_ROOT}/src/platform/windows/win_rack_bridge.cpp
+        -DRACK_SESSION_RUNTIME=${SAFEVST3_ROOT}/src/rack/rack_session_runtime.hpp
+        -DRACK_PERSISTENT_ENTRY=${SAFEVST3_ROOT}/src/rack/main_r3_4_persistent.cpp
+        -DRACK_PROTOCOL=${SAFEVST3_ROOT}/src/rack/rack_protocol.hpp
+        -DRACK_HOSTED_PLUGIN=${SAFEVST3_ROOT}/src/rack/rack_hosted_plugin.hpp
+        -P ${CMAKE_CURRENT_LIST_DIR}/rack_obs_session_persistence_contract.cmake
+)
