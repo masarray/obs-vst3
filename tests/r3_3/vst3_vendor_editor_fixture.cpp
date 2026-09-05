@@ -211,6 +211,26 @@ public:
 
     tresult PLUGIN_API process(ProcessData& data) override
     {
+        // A split-component VST3 receives editor/automation changes through the
+        // host's inputParameterChanges bridge. This fixture intentionally keeps
+        // controller and processor state separate so R3-3 can catch hosts that
+        // update only the GUI/controller while leaving DSP state at defaults.
+        if (data.inputParameterChanges) {
+            const int32 queue_count = data.inputParameterChanges->getParameterCount();
+            for (int32 queue_index = 0; queue_index < queue_count; ++queue_index) {
+                IParamValueQueue* queue =
+                    data.inputParameterChanges->getParameterData(queue_index);
+                if (!queue || queue->getParameterId() != kGainParameterId ||
+                    queue->getPointCount() <= 0)
+                    continue;
+                int32 sample_offset = 0;
+                ParamValue value = gain_;
+                if (queue->getPoint(queue->getPointCount() - 1,
+                                    sample_offset, value) == kResultTrue)
+                    gain_ = std::clamp(value, 0.0, 1.0);
+            }
+        }
+
         if (data.numSamples == 0)
             return kResultOk;
         if (data.numSamples < 0 || data.numInputs != 1 || data.numOutputs != 1 ||
@@ -251,10 +271,32 @@ public:
         return kResultOk;
     }
 
+    tresult PLUGIN_API setComponentHandler(IComponentHandler* handler) override
+    {
+        component_handler_ = handler;
+        return EditController::setComponentHandler(handler);
+    }
+
+    tresult PLUGIN_API setParamNormalized(ParamID tag, ParamValue value) override
+    {
+        const tresult result = EditController::setParamNormalized(tag, value);
+        if (result == kResultTrue && native_view_created_ && component_handler_ &&
+            tag == kGainParameterId) {
+            // Model a real vendor GUI edit: the controller changes locally then
+            // asks the host to forward that value to the processor component.
+            (void)component_handler_->beginEdit(tag);
+            (void)component_handler_->performEdit(tag, value);
+            (void)component_handler_->endEdit(tag);
+        }
+        return result;
+    }
+
     IPlugView* PLUGIN_API createView(FIDString name) override
     {
-        if (name && std::strcmp(name, ViewType::kEditor) == 0)
+        if (name && std::strcmp(name, ViewType::kEditor) == 0) {
+            native_view_created_ = true;
             return new FixturePlugView();
+        }
         return nullptr;
     }
 
@@ -265,6 +307,10 @@ public:
             return kResultFalse;
         return setParamNormalized(kGainParameterId, std::clamp(value, 0.0, 1.0));
     }
+
+private:
+    IComponentHandler* component_handler_ = nullptr;
+    bool native_view_created_ = false;
 };
 
 } // namespace safevst3::r3_3_fixture
