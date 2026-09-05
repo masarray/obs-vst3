@@ -267,13 +267,16 @@ target_link_libraries(obs-safe-vst3-rack-host PRIVATE
 )
 target_compile_definitions(obs-safe-vst3-rack-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-if(BUILD_TESTING)
+if(SAFEVST3_BUILD_TESTS)
     add_executable(safevst3-rack-broadcast-meter-contract
         "${SAFEVST3_RACK_ROOT}/tests/p1_rack_editor/broadcast_meter_contract.cpp")
     target_include_directories(safevst3-rack-broadcast-meter-contract PRIVATE
         "${SAFEVST3_RACK_ROOT}/src")
     add_test(NAME safevst3-rack-broadcast-meter-contract
              COMMAND safevst3-rack-broadcast-meter-contract)
+    # Any qualified Rack build also compiles the numerical BS.1770/dBTP probe,
+    # so focused R3/compatibility jobs cannot silently skip the new meter core.
+    add_dependencies(obs-safe-vst3-rack-host safevst3-rack-broadcast-meter-contract)
 endif()
 
 if(TARGET obs-safe-vst3-scanner)
