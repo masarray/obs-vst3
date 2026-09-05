@@ -2,12 +2,10 @@
 
 // Reuse every qualified R3-4 implementation detail in this translation unit,
 // but give the shipping product entrypoint a persistence-aware lifecycle.
-// Fixture runs still use the byte-for-byte legacy entrypoint below.
-#define run_r3_4_product safevst3_r3_4_legacy_product
-#define wmain safevst3_r3_4_legacy_wmain
-#include "rack/main_r3_4.cpp"
-#undef wmain
-#undef run_r3_4_product
+// The shipping CMake target provides a generated R3-4 include whose only
+// difference is a renamed legacy wmain, so this file can own the real product
+// entrypoint without preprocessor collisions.
+#include <rack/main_r3_4.cpp>
 
 namespace {
 
@@ -38,7 +36,7 @@ bool restore_working_rack_session(
     DynamicRackState candidate{};
     MissingPresetStateStore candidate_missing{};
     if (!materialize_preset_candidate(
-            working, candidate, candidate_missing, region, error)) {
+            working, region, candidate, candidate_missing, error)) {
         // materialize_preset_candidate owns candidate cleanup on every failure.
         if (!error.empty())
             std::cerr << "Rack session materialize: " << error << '\n';
@@ -61,7 +59,7 @@ bool restore_working_rack_session(
     publish_dynamic_projection(region, state, chain_generation);
 
     std::cerr << "Rack session restored from "
-              << (source == safevst3::rack::RackSessionLoadSource::Primary
+              << (source == safevst3::rack::RackSessionLoadSource::Current
                       ? "primary"
                       : "last-known-good")
               << " snapshot with " << state.slot_count << " slot(s)\n";
