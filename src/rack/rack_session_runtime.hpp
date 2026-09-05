@@ -13,8 +13,13 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace safevst3::rack {
+
+inline constexpr wchar_t kRackSessionFileEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_FILE";
+inline constexpr wchar_t kRackSessionSaveEventEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_SAVE_EVENT";
+inline constexpr wchar_t kRackSessionSavedEventEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_SAVED_EVENT";
 
 inline std::array<std::uint8_t, 16> rack_session_id_for_path(
     const std::filesystem::path& path) noexcept
@@ -42,6 +47,21 @@ inline std::array<std::uint8_t, 16> rack_session_id_for_path(
     if (!nonzero)
         id[0] = 1;
     return id;
+}
+
+inline std::wstring rack_session_environment_value(const wchar_t* name)
+{
+    if (!name || !*name)
+        return {};
+    const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+    if (required == 0)
+        return {};
+    std::vector<wchar_t> buffer(static_cast<std::size_t>(required));
+    const DWORD written = GetEnvironmentVariableW(
+        name, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (written == 0 || written >= buffer.size())
+        return {};
+    return std::wstring(buffer.data(), written);
 }
 
 class RackSessionRuntime {
@@ -80,6 +100,24 @@ public:
         rack_id_ = rack_session_id_for_path(path_);
         next_generation_ = 1;
         return true;
+    }
+
+    bool open_from_environment(std::string& error) noexcept
+    {
+        const std::wstring path = rack_session_environment_value(kRackSessionFileEnv);
+        const std::wstring save = rack_session_environment_value(kRackSessionSaveEventEnv);
+        const std::wstring saved = rack_session_environment_value(kRackSessionSavedEventEnv);
+        if (path.empty() && save.empty() && saved.empty()) {
+            close();
+            error.clear();
+            return true;
+        }
+        if (path.empty() || save.empty() || saved.empty()) {
+            close();
+            error = "Rack session environment is incomplete";
+            return false;
+        }
+        return open(std::filesystem::path(path), save, saved, error);
     }
 
     void close() noexcept
