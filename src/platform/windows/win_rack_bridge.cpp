@@ -5,13 +5,18 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <cwchar>
 #include <sstream>
+#include <vector>
 
 namespace safevst3 {
 namespace {
 constexpr ULONGLONG kRackHelperStartupTimeoutMs = 5000;
 constexpr DWORD kRackHelperGracefulShutdownTimeoutMs = 250;
 constexpr DWORD kRackHelperForcedShutdownWaitMs = 250;
+constexpr wchar_t kSessionFileEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_FILE";
+constexpr wchar_t kSessionSaveEventEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_SAVE_EVENT";
+constexpr wchar_t kSessionSavedEventEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_SAVED_EVENT";
 
 std::string win_error(const char* what)
 {
@@ -19,6 +24,57 @@ std::string win_error(const char* what)
     std::ostringstream os;
     os << what << " failed (Win32 error " << code << ')';
     return os.str();
+}
+
+bool environment_entry_has_key(const wchar_t* entry, const wchar_t* key) noexcept
+{
+    if (!entry || !key || entry[0] == L'=')
+        return false;
+    const wchar_t* equals = std::wcschr(entry, L'=');
+    if (!equals)
+        return false;
+    const std::size_t entry_key_length = static_cast<std::size_t>(equals - entry);
+    const std::size_t key_length = std::wcslen(key);
+    return entry_key_length == key_length &&
+           _wcsnicmp(entry, key, key_length) == 0;
+}
+
+void append_environment_entry(std::vector<wchar_t>& block,
+                              const wchar_t* key,
+                              const std::wstring& value)
+{
+    if (!key || !*key)
+        return;
+    const std::wstring entry = std::wstring(key) + L"=" + value;
+    block.insert(block.end(), entry.begin(), entry.end());
+    block.push_back(L'\0');
+}
+
+std::vector<wchar_t> make_child_environment(
+    const std::filesystem::path& session_file,
+    const std::wstring& save_event,
+    const std::wstring& saved_event)
+{
+    std::vector<wchar_t> block;
+    LPWCH inherited = GetEnvironmentStringsW();
+    if (inherited) {
+        for (const wchar_t* cursor = inherited; *cursor; ) {
+            const std::size_t length = std::wcslen(cursor);
+            if (!environment_entry_has_key(cursor, kSessionFileEnv) &&
+                !environment_entry_has_key(cursor, kSessionSaveEventEnv) &&
+                !environment_entry_has_key(cursor, kSessionSavedEventEnv)) {
+                block.insert(block.end(), cursor, cursor + length + 1);
+            }
+            cursor += length + 1;
+        }
+        FreeEnvironmentStringsW(inherited);
+    }
+
+    append_environment_entry(block, kSessionFileEnv, session_file.wstring());
+    append_environment_entry(block, kSessionSaveEventEnv, save_event);
+    append_environment_entry(block, kSessionSavedEventEnv, saved_event);
+    block.push_back(L'\0');
+    return block;
 }
 }
 
@@ -46,7 +102,8 @@ WinRackBridge::Names WinRackBridge::make_names()
     ss << L"Local\\obs-safe-vst3-rack-" << pid << L'-' << tick << L'-' << serial;
     const std::wstring base = ss.str();
     return {base + L"-map", base + L"-req", base + L"-rsp",
-            base + L"-ready", base + L"-ui-open"};
+            base + L"-ready", base + L"-ui-open",
+            base + L"-session-save", base + L"-session-saved"};
 }
 
 std::uint64_t WinRackBridge::qpc_now() noexcept
@@ -77,6 +134,16 @@ bool WinRackBridge::process_alive() const noexcept
 bool WinRackBridge::start(const std::filesystem::path& helper,
                           std::uint32_t sample_rate,
                           std::uint32_t channels,
+                          std::string& error,
+                          std::stop_token cancel)
+{
+    return start(helper, sample_rate, channels, std::filesystem::path{}, error, cancel);
+}
+
+bool WinRackBridge::start(const std::filesystem::path& helper,
+                          std::uint32_t sample_rate,
+                          std::uint32_t channels,
+                          const std::filesystem::path& session_file,
                           std::string& error,
                           std::stop_token cancel)
 {
@@ -124,24 +191,46 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
     response_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.response_event.c_str());
     ready_event_ = CreateEventW(nullptr, TRUE, FALSE, names_.ready_event.c_str());
     ui_open_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.ui_open_event.c_str());
-    if (!request_event_ || !response_event_ || !ready_event_ || !ui_open_event_) {
+    if (!session_file.empty()) {
+        session_save_event_ = CreateEventW(
+            nullptr, FALSE, FALSE, names_.session_save_event.c_str());
+        session_saved_event_ = CreateEventW(
+            nullptr, FALSE, FALSE, names_.session_saved_event.c_str());
+    }
+    if (!request_event_ || !response_event_ || !ready_event_ || !ui_open_event_ ||
+        (!session_file.empty() && (!session_save_event_ || !session_saved_event_))) {
         error = win_error("CreateEventW(Rack)");
         stop();
         return false;
     }
 
-    std::wstring command = quote(helper.wstring()) +
+    const std::wstring command = quote(helper.wstring()) +
         L" --mapping " + quote(names_.mapping) +
         L" --request-event " + quote(names_.request_event) +
         L" --response-event " + quote(names_.response_event) +
         L" --ready-event " + quote(names_.ready_event) +
         L" --ui-open-event " + quote(names_.ui_open_event);
 
+    std::vector<wchar_t> child_environment;
+    LPVOID environment = nullptr;
+    DWORD creation_flags = CREATE_NO_WINDOW | CREATE_SUSPENDED;
+    if (!session_file.empty()) {
+        child_environment = make_child_environment(
+            session_file, names_.session_save_event, names_.session_saved_event);
+        if (child_environment.empty()) {
+            error = "Could not build Rack helper session environment";
+            stop();
+            return false;
+        }
+        environment = child_environment.data();
+        creation_flags |= CREATE_UNICODE_ENVIRONMENT;
+    }
+
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     std::wstring mutable_command = command;
     if (!CreateProcessW(helper.c_str(), mutable_command.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
+                        creation_flags, environment,
                         helper.parent_path().c_str(), &startup, &process_)) {
         error = win_error("CreateProcessW(Rack)");
         stop();
@@ -242,11 +331,14 @@ void WinRackBridge::stop() noexcept
     process_ = {};
     if (region_) UnmapViewOfFile(region_);
     region_ = nullptr;
+    if (session_saved_event_) CloseHandle(session_saved_event_);
+    if (session_save_event_) CloseHandle(session_save_event_);
     if (ui_open_event_) CloseHandle(ui_open_event_);
     if (ready_event_) CloseHandle(ready_event_);
     if (response_event_) CloseHandle(response_event_);
     if (request_event_) CloseHandle(request_event_);
     if (mapping_) CloseHandle(mapping_);
+    session_saved_event_ = session_save_event_ = nullptr;
     ui_open_event_ = ready_event_ = response_event_ = request_event_ = mapping_ = nullptr;
     names_ = {};
     pending_request_generation_ = 0;
@@ -361,6 +453,21 @@ bool WinRackBridge::process(float* const* channels,
 bool WinRackBridge::open_editor() noexcept
 {
     return running() && ui_open_event_ && SetEvent(ui_open_event_) != FALSE;
+}
+
+bool WinRackBridge::save_session(DWORD timeout_ms) noexcept
+{
+    if (!running() || !session_save_event_ || !session_saved_event_ ||
+        !process_.hProcess)
+        return false;
+
+    (void)ResetEvent(session_saved_event_);
+    if (!SetEvent(session_save_event_))
+        return false;
+
+    HANDLE waits[] = {session_saved_event_, process_.hProcess};
+    const DWORD wait = WaitForMultipleObjects(2, waits, FALSE, timeout_ms);
+    return wait == WAIT_OBJECT_0;
 }
 
 RackBridgeStatus WinRackBridge::status() const noexcept

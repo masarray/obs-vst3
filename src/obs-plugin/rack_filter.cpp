@@ -5,6 +5,7 @@
 #include "platform/windows/win_rack_bridge.hpp"
 
 #include <obs.h>
+#include <obs-module.h>
 #include <media-io/audio-io.h>
 
 #include <atomic>
@@ -15,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -25,11 +27,13 @@ constexpr char kRackSummary[] = "rack_summary";
 constexpr char kRackStatus[] = "rack_status";
 constexpr char kRackOpen[] = "rack_open";
 constexpr unsigned kDestroyDrainAttempts = 100;
+constexpr DWORD kObsSaveSessionTimeoutMs = 1000;
 
 struct RackFilter {
     obs_source_t* context = nullptr;
     std::unique_ptr<WinRackBridge> bridge;
     std::mutex bridge_mutex;
+    std::filesystem::path session_path;
     std::uint32_t sample_rate = 0;
     std::uint32_t channels = 0;
     std::atomic<bool> shutting_down{false};
@@ -84,6 +88,36 @@ std::filesystem::path rack_helper_path()
     return dir.empty() ? std::filesystem::path{} : dir / "obs-safe-vst3-rack-host.exe";
 }
 
+std::filesystem::path rack_session_path(obs_source_t* context)
+{
+    if (!context)
+        return {};
+    const char* uuid = obs_source_get_uuid(context);
+    if (!uuid || !*uuid)
+        return {};
+
+    char* config = obs_module_config_path("rack-sessions");
+    if (!config)
+        return {};
+    std::filesystem::path directory = std::filesystem::u8path(config);
+    bfree(config);
+
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+    if (ec)
+        return {};
+
+    std::string safe_uuid;
+    for (const char ch : std::string(uuid)) {
+        if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') || ch == '-' || ch == '_')
+            safe_uuid.push_back(ch);
+    }
+    if (safe_uuid.empty())
+        return {};
+    return directory / std::filesystem::u8path(safe_uuid + ".rns");
+}
+
 bool start_rack_bridge(RackFilter& filter)
 {
     const auto helper = rack_helper_path();
@@ -94,7 +128,11 @@ bool start_rack_bridge(RackFilter& filter)
 
     auto bridge = std::make_unique<WinRackBridge>();
     std::string error;
-    if (!bridge->start(helper, filter.sample_rate, filter.channels, error)) {
+    const bool started = filter.session_path.empty()
+        ? bridge->start(helper, filter.sample_rate, filter.channels, error)
+        : bridge->start(helper, filter.sample_rate, filter.channels,
+                        filter.session_path, error);
+    if (!started) {
         filter.startup_error = error.empty() ? "Rack helper could not start" : error;
         return false;
     }
@@ -113,6 +151,7 @@ void* rack_create(obs_data_t*, obs_source_t* context)
 {
     auto filter = std::make_unique<RackFilter>();
     filter->context = context;
+    filter->session_path = rack_session_path(context);
 
     obs_audio_info audio_info{};
     if (obs_get_audio_info(&audio_info)) {
@@ -128,6 +167,20 @@ void* rack_create(obs_data_t*, obs_source_t* context)
     }
 
     return filter.release();
+}
+
+void rack_save(void* data, obs_data_t*)
+{
+    auto* filter = static_cast<RackFilter*>(data);
+    if (!filter || filter->shutting_down.load(std::memory_order_acquire))
+        return;
+
+    std::lock_guard lock(filter->bridge_mutex);
+    if (!filter->bridge || !filter->bridge->running() || filter->session_path.empty())
+        return;
+
+    if (!filter->bridge->save_session(kObsSaveSessionTimeoutMs))
+        blog(LOG_WARNING, "[OBS Safe VST3 Rack] timed out while saving the latest Rack session state");
 }
 
 void rack_destroy(void* data)
@@ -258,6 +311,7 @@ obs_source_info make_source_info()
     info.destroy = rack_destroy;
     info.get_properties = rack_properties;
     info.filter_audio = rack_filter_audio;
+    info.save = rack_save;
     return info;
 }
 
