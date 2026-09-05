@@ -2,6 +2,96 @@
 
 All notable public product changes are documented here. Release artifacts are published on the [GitHub Releases](https://github.com/masarray/obs-vst3/releases) page.
 
+## v0.6.1 — 2026-09-05
+
+### Headline
+
+**Durable working-Rack recall and safer split-component VST3 state persistence.**
+
+v0.6.1 is a stable reliability update for the v0.6 Rack line. It is based on repeated real OBS restart testing and keeps the current serial Rack product scope unchanged.
+
+### Rack persistence
+
+- Every OBS **VST3 Rack** filter now gets a stable durable working-session path derived from its OBS source UUID.
+- The current Rack chain is recalled automatically after OBS restarts; users do not need to create a named preset merely to preserve the active working Rack.
+- Topology and bypass changes autosave immediately.
+- OBS scene-collection serialization requests a bounded fresh VST3 component/controller state capture from the isolated Rack helper.
+- Snapshot writes remain CRC-protected, atomic and last-known-good capable.
+- Missing plug-ins continue to survive as pass-through placeholders with their saved state retained.
+- If durable Rack storage cannot be established, the Rack remains dry and reports **Needs Attention** instead of silently operating without persistence.
+
+### State-safety hardening
+
+- Rack VST3 state capture now uses a bounded DSP-safe frontier before vendor `getState` calls.
+- The realtime Rack path never waits on a control mutex; capture conflicts degrade to dry/pass-through behavior.
+- Slow persisted chains restore dry-first, then publish the complete restored generation atomically after successful materialization.
+- Save handshakes acknowledge both success and completed failure so capture/write errors are not misreported as timeouts.
+- Native editor changes from split controller/processor VST3s are forwarded to processor state through a bounded control-to-DSP parameter bridge.
+- `restartComponent(kParamValuesChanged)` can trigger a controller-wide parameter resync for vendor preset loads that do not emit individual `performEdit` calls.
+- State capture waits for accepted controller edits to reach processor/component state before serialization.
+
+### Windows Rack/editor polish
+
+- **Open Rack** grants the isolated helper a foreground activation opportunity so the Rack normally opens in front of OBS after the user clicks it.
+- Native vendor editor host windows use the embedded project companion icon instead of the generic Windows application icon.
+
+### Qualification
+
+The final v0.6.1 runtime candidate `ce5eb052c97076df735b95b55328f76e222475ee` passed:
+
+- P0 Rack Shutdown;
+- P1 Rack Editor Polish;
+- R0-1 Process Seam Characterization;
+- R0-2 HostedPlugin Characterization;
+- R1-1 Rack Serial Tracer;
+- R1-2 Rack Safety Tracer;
+- R1-3 Rack Topology Tracer;
+- R1-4 Rack Recovery Tracer;
+- R2-1 Rack Session Snapshot;
+- R3-0 Rack Editor Bridge;
+- R3-1 OBS Rack Launcher;
+- R3-2 Rack Slot Browser;
+- R3-3 Rack Vendor Editor;
+- R3-4 Rack Preset UX;
+- CI;
+- Compatibility Test Build.
+
+Representative real OBS validation changed commercial split-component VST3 settings across three successive OBS sessions and confirmed that the latest full DSP state—not only preset/controller metadata—returned after each restart.
+
+The runtime candidate was merged in PR #109 as `f91847744a1c824c255666b4a2f9e34b28db3905`. The public v0.6.1 release marker is a documentation/version descendant of that qualified runtime change.
+
+### Stable scope
+
+Supported in this release:
+
+- Windows x64;
+- OBS Studio 29.1+ compatibility floor;
+- VST3 audio effects;
+- mono/stereo Float32 processing;
+- Single Host and serial VST3 Rack;
+- isolated graphical Rack Editor;
+- native vendor UIs;
+- automatic working-Rack recall;
+- named Rack presets;
+- bounded fail-dry behavior.
+
+Still outside the current stable scope:
+
+- free-form graph routing;
+- sidechain / advanced multi-bus routing;
+- MIDI or VST3 instruments;
+- arbitrary multichannel layouts;
+- Float64 fallback;
+- macOS/Linux runtime packages.
+
+### Upgrade
+
+Use the v0.6.1 Smart Installer from GitHub Releases. It installs the Single Host, Rack Host and scanner into the selected OBS root and remembers that validated target for later updates.
+
+Current packages are not commercially Authenticode-signed. Windows can therefore display **Unknown publisher** or a SmartScreen reputation warning. Download only from this repository and use `SHA256SUMS.txt` when you want an additional integrity check.
+
+---
+
 ## v0.6.0 — 2026-09-04
 
 ### Headline
