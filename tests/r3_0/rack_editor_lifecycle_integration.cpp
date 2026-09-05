@@ -14,6 +14,14 @@ using safevst3::rack::RackProcessResult;
 using safevst3::rack::RackSharedAudioRegion;
 using safevst3::rack::ui::kRackEditorWindowClassName;
 
+// Editor creation is a non-realtime Win32/D3D control-path operation. Shared
+// GitHub Windows runners can occasionally spend more than five seconds inside
+// D3D device/swap-chain recreation while many matrix jobs are active. Keep the
+// audio/shutdown bounds strict, but give visible editor creation enough room to
+// distinguish a genuine lifecycle failure from runner scheduling/driver jitter.
+constexpr DWORD kEditorOpenTimeoutMs = 15000;
+constexpr DWORD kEditorCloseTimeoutMs = 5000;
+
 std::wstring widen(const std::string& value)
 {
     if (value.empty())
@@ -166,7 +174,7 @@ bool run_test(const char* helper_utf8, const char* plugin_a_utf8, const char* pl
                  "helper/session restore must start with Rack editor hidden");
 
     SetEvent(h.ui_open);
-    HWND first_window = wait_for_editor(true, 5000);
+    HWND first_window = wait_for_editor(true, kEditorOpenTimeoutMs);
     ok &= expect(first_window != nullptr, "OpenRack control event must create/show editor");
     ok &= process_block(h, 1, 101);
     ok &= expect(h.region->committed_chain_generation == 1,
@@ -174,14 +182,14 @@ bool run_test(const char* helper_utf8, const char* plugin_a_utf8, const char* pl
 
     if (first_window)
         PostMessageW(first_window, WM_CLOSE, 0, 0);
-    ok &= expect(wait_for_editor(false, 5000) == nullptr,
+    ok &= expect(wait_for_editor(false, kEditorCloseTimeoutMs) == nullptr,
                  "closing Rack editor must tear down only editor window");
     ok &= process_block(h, 2, 102);
     ok &= expect(h.region->committed_chain_generation == 1,
                  "closing editor must not alter Rack generation");
 
     SetEvent(h.ui_open);
-    HWND reopened_window = wait_for_editor(true, 5000);
+    HWND reopened_window = wait_for_editor(true, kEditorOpenTimeoutMs);
     ok &= expect(reopened_window != nullptr, "Rack editor must reopen after close");
     if (reopened_window) {
         SetEvent(h.ui_open);
