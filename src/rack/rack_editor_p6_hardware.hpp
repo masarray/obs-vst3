@@ -347,17 +347,13 @@ inline void draw_centered_text(ImDrawList* draw,
 {
     if (!text)
         return;
-    ImVec2 size{};
-    if (font)
-        size = font->CalcTextSizeA(font->FontSize, FLT_MAX, 0.0f, text);
-    else
-        size = ImGui::CalcTextSize(text);
 
     if (font)
-        draw->AddText(font, font->FontSize,
-                      ImVec2(x - size.x * 0.5f, y), color, text);
-    else
-        draw->AddText(ImVec2(x - size.x * 0.5f, y), color, text);
+        ImGui::PushFont(font);
+    const ImVec2 size = ImGui::CalcTextSize(text);
+    draw->AddText(ImVec2(x - size.x * 0.5f, y), color, text);
+    if (font)
+        ImGui::PopFont();
 }
 
 inline void draw_centered_value(ImDrawList* draw,
