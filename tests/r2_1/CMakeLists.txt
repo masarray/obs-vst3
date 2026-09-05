@@ -74,5 +74,7 @@ add_test(
         -DRACK_BRIDGE_SOURCE=${SAFEVST3_ROOT}/src/platform/windows/win_rack_bridge.cpp
         -DRACK_SESSION_RUNTIME=${SAFEVST3_ROOT}/src/rack/rack_session_runtime.hpp
         -DRACK_PERSISTENT_ENTRY=${SAFEVST3_ROOT}/src/rack/main_r3_4_persistent.cpp
+        -DRACK_PROTOCOL=${SAFEVST3_ROOT}/src/rack/rack_protocol.hpp
+        -DRACK_HOSTED_PLUGIN=${SAFEVST3_ROOT}/src/rack/rack_hosted_plugin.hpp
         -P ${CMAKE_CURRENT_LIST_DIR}/rack_obs_session_persistence_contract.cmake
 )
