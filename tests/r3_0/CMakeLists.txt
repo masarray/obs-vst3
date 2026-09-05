@@ -27,15 +27,20 @@ add_executable(r3-0-rack-editor-contract
 target_include_directories(r3-0-rack-editor-contract PRIVATE "${SAFEVST3_ROOT}/src")
 target_compile_definitions(r3-0-rack-editor-contract PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-# P5 numerical broadcast-meter reference is part of focused Rack Editor
+# Numerical broadcast/master references are part of focused Rack Editor
 # qualification even though this fixture intentionally disables the root-wide
-# SAFEVST3_BUILD_TESTS matrix. This prevents LUFS-I/dBTP code from being present
-# but unexecuted in the exact helper build used by R3-0.
+# SAFEVST3_BUILD_TESTS matrix.
 add_executable(r3-0-broadcast-meter-contract
     "${SAFEVST3_ROOT}/tests/p1_rack_editor/broadcast_meter_contract.cpp"
 )
 target_include_directories(r3-0-broadcast-meter-contract PRIVATE "${SAFEVST3_ROOT}/src")
 target_compile_definitions(r3-0-broadcast-meter-contract PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+add_executable(r3-0-master-gain-contract
+    "${SAFEVST3_ROOT}/tests/p1_rack_editor/master_gain_contract.cpp"
+)
+target_include_directories(r3-0-master-gain-contract PRIVATE "${SAFEVST3_ROOT}/src")
+target_compile_definitions(r3-0-master-gain-contract PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 smtg_add_vst3plugin(r3-0-gain-a-fixture
     "${SAFEVST3_ROOT}/tests/r1_1/vst3_gain_a_fixture.cpp"
@@ -57,6 +62,7 @@ target_compile_definitions(r3-0-rack-editor-lifecycle PRIVATE WIN32_LEAN_AND_MEA
 add_dependencies(r3-0-rack-editor-lifecycle
     obs-safe-vst3-rack-host
     r3-0-broadcast-meter-contract
+    r3-0-master-gain-contract
     r3-0-gain-a-fixture
     r3-0-gain-b-fixture
 )
@@ -64,6 +70,7 @@ add_dependencies(r3-0-rack-editor-lifecycle
 enable_testing()
 add_test(NAME r3-0-rack-editor-contract COMMAND r3-0-rack-editor-contract)
 add_test(NAME r3-0-broadcast-meter-contract COMMAND r3-0-broadcast-meter-contract)
+add_test(NAME r3-0-master-gain-contract COMMAND r3-0-master-gain-contract)
 add_test(
     NAME r3-0-rack-editor-lifecycle
     COMMAND $<TARGET_FILE:r3-0-rack-editor-lifecycle>
