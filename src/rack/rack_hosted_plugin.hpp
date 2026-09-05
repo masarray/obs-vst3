@@ -210,8 +210,15 @@ public:
     // RackGenerationSlot is RackHostedPlugin* in the shipping translation unit,
     // so this hides HostedPlugin::process there. Only the DSP thread drains the
     // controller queue and mutates HostedPlugin's inputParameterChanges object.
+    // A state capture never waits on the DSP thread: it raises an atomic gate,
+    // so a block that arrives during getState simply fails dry while the control
+    // owner waits for any already-running vendor call to leave.
     bool process(const ProcessBlockView& block) noexcept
     {
+        DspVendorCallGuard vendor_call(*this);
+        if (!vendor_call.entered())
+            return false;
+
         std::size_t drained = 0;
         const bool queued_ok = drain_controller_edits(drained);
         const bool processed = HostedPlugin::process(block);
@@ -220,11 +227,16 @@ public:
                !controller_delivery_failed_.load(std::memory_order_acquire);
     }
 
-    // The Rack DSP loop calls this on its bounded idle wake too. Therefore a GUI
-    // edit made while OBS is not currently delivering an audio block still
-    // reaches the processor before a close/save snapshot is serialized.
+    // The Rack DSP loop may call this on a bounded idle wake. If state capture is
+    // in progress, defer the flush without treating that deferral as a plug-in
+    // failure. The accepted edits remain in the SPSC bridge for the next DSP
+    // frontier after capture completes.
     bool flush_component_handler_edits() noexcept override
     {
+        DspVendorCallGuard vendor_call(*this);
+        if (!vendor_call.entered())
+            return true;
+
         std::size_t drained = 0;
         const bool queued_ok = drain_controller_edits(drained);
         if (drained == 0)
@@ -276,14 +288,66 @@ public:
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error) override
     {
         snapshot = {};
+
+        // First let the normal DSP owner consume all accepted controller edits.
+        // The command worker owns the vendor message pump, so once this returns
+        // there is no new UI edit source until capture itself is finished.
         if (!synchronize_component_handler_state(error))
             return false;
+
+        capture_requested_.store(true, std::memory_order_release);
+        struct CaptureGateReset final {
+            std::atomic<bool>& requested;
+            ~CaptureGateReset() { requested.store(false, std::memory_order_release); }
+        } reset{capture_requested_};
+
+        // A DSP call that started before the gate was published is allowed to
+        // finish. New DSP calls observe the gate and fail dry instead of waiting.
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(300);
+        while (dsp_vendor_calls_.load(std::memory_order_acquire) != 0) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                error = "Timed out waiting for a DSP-safe Rack state capture frontier";
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
         return HostedPlugin::capture_state(snapshot, error);
     }
 
 private:
     static constexpr std::size_t kControllerEditQueueCapacity =
         static_cast<std::size_t>(kMaxParameters) * 4u;
+
+    class DspVendorCallGuard final {
+    public:
+        explicit DspVendorCallGuard(RackHostedPlugin& owner) noexcept
+            : owner_(owner)
+        {
+            if (owner_.capture_requested_.load(std::memory_order_acquire))
+                return;
+
+            owner_.dsp_vendor_calls_.fetch_add(1, std::memory_order_acq_rel);
+            if (owner_.capture_requested_.load(std::memory_order_acquire)) {
+                owner_.dsp_vendor_calls_.fetch_sub(1, std::memory_order_release);
+                return;
+            }
+            entered_ = true;
+        }
+
+        ~DspVendorCallGuard()
+        {
+            if (entered_)
+                owner_.dsp_vendor_calls_.fetch_sub(1, std::memory_order_release);
+        }
+
+        bool entered() const noexcept { return entered_; }
+
+    private:
+        RackHostedPlugin& owner_;
+        bool entered_ = false;
+    };
 
     void reset_controller_bridge() noexcept
     {
@@ -296,6 +360,8 @@ private:
         force_controller_resync_.store(false, std::memory_order_relaxed);
         controller_delivery_failed_.store(false, std::memory_order_relaxed);
         unhandled_restart_flags_.store(0, std::memory_order_relaxed);
+        capture_requested_.store(false, std::memory_order_relaxed);
+        dsp_vendor_calls_.store(0, std::memory_order_relaxed);
         controller_resync_active_ = false;
         controller_resync_index_ = 0;
     }
@@ -332,6 +398,8 @@ private:
     std::atomic<bool> force_controller_resync_{false};
     std::atomic<bool> controller_delivery_failed_{false};
     std::atomic<std::uint32_t> unhandled_restart_flags_{0};
+    std::atomic<bool> capture_requested_{false};
+    std::atomic<std::uint32_t> dsp_vendor_calls_{0};
     std::size_t controller_resync_index_ = 0;
     bool controller_resync_active_ = false;
     bool using_internal_handler_ = true;
