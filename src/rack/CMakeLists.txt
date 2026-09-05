@@ -306,13 +306,13 @@ add_executable(obs-safe-vst3-rack-host
     "${SAFEVST3_RACK_ROOT}/src/host/native_editor.cpp"
 )
 
-# P7 is the screenshot-driven luxury polish layer on top of the qualified P6
-# hardware surface. It preserves P6 DSP/metering contracts while locking stable
-# geometry, reserved Rack scrollbar space and no-dim pending transitions.
+# P8 is the minimal-noise luxury overlay on top of qualified P7. It keeps the
+# stable no-flicker topology transition while making each slot LED/name the
+# primary controls and refining the master hardware surface.
 set_source_files_properties(
     "${_safevst3_editor_generated}"
     PROPERTIES
-        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p7_luxury.hpp"
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p8_refined.hpp"
 )
 
 target_include_directories(obs-safe-vst3-rack-host BEFORE PRIVATE
