@@ -43,6 +43,19 @@ bool restore_working_rack_session(
         return false;
     }
 
+    // Bootstrap is deliberately dry-first. The parent may already have admitted
+    // realtime blocks against the initial empty generation while slow commercial
+    // VST3s are opening/restoring here. Build the complete saved Rack only in the
+    // currently unpublished generation, then publish it atomically at a block
+    // frontier. Never overwrite a generation the DSP may still be reading.
+    const std::uint32_t current_index =
+        store.published_index.load(std::memory_order_acquire);
+    const std::uint32_t next_index = current_index ^ 1u;
+    if (!wait_until_generation_unreachable(store, next_index, region)) {
+        std::cerr << "Rack session restore: unpublished generation remained busy\n";
+        return false;
+    }
+
     state = std::move(candidate);
     missing_states = std::move(candidate_missing);
     runtime.adopt_loaded(snapshot);
@@ -51,11 +64,9 @@ bool restore_working_rack_session(
     if (chain_generation == 0 ||
         chain_generation == std::numeric_limits<std::uint64_t>::max())
         chain_generation = 1;
-    build_active_generation(store.generations[0], state, chain_generation);
-    store.generations[1] = RackChainGeneration{};
-    store.readers[0].store(0, std::memory_order_relaxed);
-    store.readers[1].store(0, std::memory_order_relaxed);
-    store.published_index.store(0, std::memory_order_release);
+
+    build_active_generation(store.generations[next_index], state, chain_generation);
+    store.published_index.store(next_index, std::memory_order_release);
     publish_dynamic_projection(region, state, chain_generation);
 
     std::cerr << "Rack session restored from "
@@ -127,8 +138,14 @@ int run_r3_4_persistent_product(const Options& options)
 
     safevst3::rack::RackSessionRuntime session_runtime;
     std::string session_error;
-    if (!session_runtime.open_from_environment(session_error) && !session_error.empty())
-        std::cerr << "Rack session runtime: " << session_error << '\n';
+    if (!session_runtime.open_from_environment(session_error)) {
+        if (!session_error.empty())
+            std::cerr << "Rack session runtime: " << session_error << '\n';
+        InterlockedExchange(&endpoint.region->host_status,
+                            static_cast<long>(RackHostStatus::Error));
+        SetEvent(endpoint.ready);
+        return 5;
+    }
 
     GenerationStore store;
     initialize_empty_generation_store(store);
@@ -173,42 +190,33 @@ int run_r3_4_persistent_product(const Options& options)
         });
 
     // Catalog/preset data has no VST controller thread affinity and may be
-    // published before the helper is Ready. The working Rack snapshot is
-    // deliberately published by the control worker after session restore.
+    // published before Ready. Publish the initial empty Rack too: slow saved
+    // plug-ins restore behind this coherent dry generation and swap in only when
+    // the whole working session is materialized.
     {
         std::lock_guard lock(catalog_runtime.mutex);
         editor.publish_catalog(catalog_runtime.catalog.snapshot());
     }
     editor.publish_presets(build_preset_ui_snapshot(preset_runtime));
-
-    std::mutex bootstrap_mutex;
-    std::condition_variable bootstrap_cv;
-    bool bootstrap_complete = false;
+    publish_dynamic_projection(
+        *endpoint.region, state, store.generations[0].number);
+    editor.publish_snapshot(build_dynamic_ui_snapshot(
+        state, store.generations[0].number));
 
     std::thread command_worker([&] {
-        // P9 control-thread bootstrap: a restored VST3 controller must be
-        // created, initialized, state-restored, later saved, and asked to
-        // create its native editor from the same Rack control thread. Before
-        // this fix session materialization ran on the helper main thread while
-        // OpenVendorEditor ran here; strict vendor controllers then appeared
-        // Ready/audio-active but rejected or ignored native GUI creation after
-        // an OBS restart.
+        // P9 control-thread bootstrap: a restored VST3 controller is created,
+        // initialized, state-restored, later saved, and asked to create its
+        // native editor from this same Rack control owner. Restoration can take
+        // longer than the parent's helper startup budget, so it happens after a
+        // dry/Ready generation has already been published.
         const bool restored = restore_working_rack_session(
             session_runtime, state, missing_states, store, *endpoint.region);
-        if (!restored)
-            publish_dynamic_projection(
-                *endpoint.region, state, store.generations[0].number);
-
-        const std::uint32_t initial_index =
-            store.published_index.load(std::memory_order_acquire);
-        editor.publish_snapshot(build_dynamic_ui_snapshot(
-            state, store.generations[initial_index].number));
-
-        {
-            std::lock_guard bootstrap_lock(bootstrap_mutex);
-            bootstrap_complete = true;
+        if (restored) {
+            const std::uint32_t initial_index =
+                store.published_index.load(std::memory_order_acquire);
+            editor.publish_snapshot(build_dynamic_ui_snapshot(
+                state, store.generations[initial_index].number));
         }
-        bootstrap_cv.notify_one();
 
         while (!command_queue.stopping() &&
                InterlockedCompareExchange(
@@ -216,12 +224,20 @@ int run_r3_4_persistent_product(const Options& options)
             vendor_editors.pump_messages();
 
             // OBS save/scene-collection serialization requests a fresh snapshot
-            // of every VST3 component/controller state. This stays completely
-            // off the realtime audio callback and is bounded by the parent.
+            // of every VST3 component/controller state. Capture stays off the
+            // OBS audio callback; the RackHostedPlugin establishes its own
+            // bounded DSP-safe state frontier. Completion is signaled on both
+            // success and failure, with a separate status in shared memory.
             if (session_runtime.take_save_request()) {
-                if (persist_working_rack_session(
-                        session_runtime, state, missing_states, "OBS save"))
-                    session_runtime.signal_save_complete();
+                const bool saved = persist_working_rack_session(
+                    session_runtime, state, missing_states, "OBS save");
+                InterlockedExchange(
+                    &endpoint.region->session_save_result,
+                    static_cast<long>(saved
+                        ? safevst3::rack::RackSessionSaveResult::Ok
+                        : safevst3::rack::RackSessionSaveResult::Failed));
+                MemoryBarrier();
+                session_runtime.signal_save_complete();
             }
 
             RackPresetUiCommand preset_command{};
@@ -284,14 +300,10 @@ int run_r3_4_persistent_product(const Options& options)
         vendor_editors.pump_messages();
     });
 
-    // Do not advertise Ready or start DSP until the control thread has rebuilt
-    // the persisted Rack. This preserves the old startup guarantee while also
-    // preserving VST3 controller/native-editor thread ownership.
-    {
-        std::unique_lock bootstrap_lock(bootstrap_mutex);
-        bootstrap_cv.wait(bootstrap_lock, [&] { return bootstrap_complete; });
-    }
-
+    // Ready means the isolated helper and a coherent dry generation are usable,
+    // not that every saved third-party module has already finished restoring.
+    // This prevents a healthy eight-slot Rack from being killed by the fixed
+    // helper-start timeout while preserving whole-generation publication.
     InterlockedExchange(&endpoint.region->host_status,
                         static_cast<long>(RackHostStatus::Ready));
     MemoryBarrier();
