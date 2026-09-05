@@ -63,6 +63,109 @@ set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
 file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
 
+# P5 instruments only the shipping helper copy of the qualified Rack DSP loop.
+# P4 keeps bounded sample-peak telemetry; P5 adds final-output BS.1770 LUFS-I and
+# 4x true-peak reconstruction. The checked-in R1/R2 source remains unchanged.
+set(_safevst3_meter_main_source "${CMAKE_CURRENT_LIST_DIR}/main.cpp")
+file(READ "${_safevst3_meter_main_source}" _safevst3_meter_main_embed)
+
+set(_safevst3_meter_include_anchor "#include \"rack/rack_protocol.hpp\"\n")
+string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_include_anchor}" _safevst3_meter_include_pos)
+if(_safevst3_meter_include_pos EQUAL -1)
+    message(FATAL_ERROR "P5 meter instrumentation could not locate Rack protocol include")
+endif()
+string(REPLACE
+    "${_safevst3_meter_include_anchor}"
+    "#include \"rack/rack_protocol.hpp\"\n#include \"rack/rack_meter_telemetry.hpp\"\n#include \"rack/rack_broadcast_loudness.hpp\"\n"
+    _safevst3_meter_main_embed
+    "${_safevst3_meter_main_embed}"
+)
+
+set(_safevst3_meter_valid_anchor [=[
+            continue;
+        }
+
+        std::uint32_t generation_index = 0;
+]=])
+string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_valid_anchor}" _safevst3_meter_valid_pos)
+if(_safevst3_meter_valid_pos EQUAL -1)
+    message(FATAL_ERROR "P5 meter instrumentation could not locate validated DSP block seam")
+endif()
+set(_safevst3_meter_valid_replace [=[
+            continue;
+        }
+
+        const float input_meter_peak = safevst3::rack::ui::rack_meter_block_peak(
+            rack_input, channels, frames);
+
+        std::uint32_t generation_index = 0;
+]=])
+string(REPLACE
+    "${_safevst3_meter_valid_anchor}"
+    "${_safevst3_meter_valid_replace}"
+    _safevst3_meter_main_embed
+    "${_safevst3_meter_main_embed}"
+)
+
+set(_safevst3_meter_failure_anchor [=[
+        if (!block_ok) {
+            copy_original_dry(*endpoint.region, channels, frames);
+            release_generation(store, generation_index);
+            publish_result(*endpoint.region, endpoint.response, request_generation, block_result);
+            continue;
+        }
+]=])
+string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_failure_anchor}" _safevst3_meter_failure_pos)
+if(_safevst3_meter_failure_pos EQUAL -1)
+    message(FATAL_ERROR "P5 meter instrumentation could not locate fail-dry seam")
+endif()
+set(_safevst3_meter_failure_replace [=[
+        if (!block_ok) {
+            copy_original_dry(*endpoint.region, channels, frames);
+            safevst3::rack::ui::g_rack_meter_telemetry.publish(
+                sequence, input_meter_peak, input_meter_peak);
+            safevst3::rack::ui::g_rack_broadcast_loudness.process(
+                rack_input, channels, frames, endpoint.region->sample_rate, sequence);
+            release_generation(store, generation_index);
+            publish_result(*endpoint.region, endpoint.response, request_generation, block_result);
+            continue;
+        }
+]=])
+string(REPLACE
+    "${_safevst3_meter_failure_anchor}"
+    "${_safevst3_meter_failure_replace}"
+    _safevst3_meter_main_embed
+    "${_safevst3_meter_main_embed}"
+)
+
+set(_safevst3_meter_success_anchor [=[
+        clear_rack_breadcrumb(*endpoint.region);
+        copy_current_output(*endpoint.region, current, channels, frames);
+        release_generation(store, generation_index);
+]=])
+string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_success_anchor}" _safevst3_meter_success_pos)
+if(_safevst3_meter_success_pos EQUAL -1)
+    message(FATAL_ERROR "P5 meter instrumentation could not locate successful output seam")
+endif()
+set(_safevst3_meter_success_replace [=[
+        clear_rack_breadcrumb(*endpoint.region);
+        copy_current_output(*endpoint.region, current, channels, frames);
+        const float output_meter_peak = safevst3::rack::ui::rack_meter_block_peak(
+            current, channels, frames);
+        safevst3::rack::ui::g_rack_meter_telemetry.publish(
+            sequence, input_meter_peak, output_meter_peak);
+        safevst3::rack::ui::g_rack_broadcast_loudness.process(
+            current, channels, frames, endpoint.region->sample_rate, sequence);
+        release_generation(store, generation_index);
+]=])
+string(REPLACE
+    "${_safevst3_meter_success_anchor}"
+    "${_safevst3_meter_success_replace}"
+    _safevst3_meter_main_embed
+    "${_safevst3_meter_main_embed}"
+)
+file(WRITE "${_safevst3_r3_2_embed_root}/rack/main.cpp" "${_safevst3_meter_main_embed}")
+
 # A Rack Editor close destroys the Win32/D3D/ImGui session while the owning
 # helper/window thread remains alive. Some Windows runners exposed a narrow
 # immediate-reopen race where transient session creation can fail once after
@@ -92,12 +195,43 @@ string(REPLACE
     _safevst3_editor_embed
     "${_safevst3_editor_embed}"
 )
+
+# The Rack helper is visibly a child/companion application of OBS. The EXE owns
+# its icon resource and the generated Win32 class explicitly supplies both large
+# and small variants so title bar/taskbar/Explorer do not fall back to a blank
+# generic application icon.
+set(_safevst3_editor_icon_anchor [=[
+        wc.hInstance = instance;
+        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+]=])
+string(FIND "${_safevst3_editor_embed}" "${_safevst3_editor_icon_anchor}" _safevst3_editor_icon_pos)
+if(_safevst3_editor_icon_pos EQUAL -1)
+    message(FATAL_ERROR "P3 Rack icon wiring could not locate Win32 class icon seam")
+endif()
+set(_safevst3_editor_icon_replace [=[
+        wc.hInstance = instance;
+        wc.hIcon = reinterpret_cast<HICON>(LoadImageW(
+            instance, MAKEINTRESOURCEW(101), IMAGE_ICON, 32, 32,
+            LR_DEFAULTCOLOR | LR_SHARED));
+        wc.hIconSm = reinterpret_cast<HICON>(LoadImageW(
+            instance, MAKEINTRESOURCEW(101), IMAGE_ICON, 16, 16,
+            LR_DEFAULTCOLOR | LR_SHARED));
+        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+]=])
+string(REPLACE
+    "${_safevst3_editor_icon_anchor}"
+    "${_safevst3_editor_icon_replace}"
+    _safevst3_editor_embed
+    "${_safevst3_editor_embed}"
+)
+
 set(_safevst3_editor_generated "${CMAKE_CURRENT_BINARY_DIR}/rack_editor_window_release.cpp")
 file(WRITE "${_safevst3_editor_generated}" "${_safevst3_editor_embed}")
 
 add_executable(obs-safe-vst3-rack-host
     "${CMAKE_CURRENT_LIST_DIR}/main_r3_2_hosted.cpp"
     "${_safevst3_editor_generated}"
+    "${CMAKE_CURRENT_LIST_DIR}/rack_host.rc"
     "${CMAKE_CURRENT_LIST_DIR}/rack_plugin_catalog.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_preset_library.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/rack_preset_management.cpp"
@@ -107,12 +241,12 @@ add_executable(obs-safe-vst3-rack-host
     "${SAFEVST3_RACK_ROOT}/src/host/native_editor.cpp"
 )
 
-# P1 product skin is compile-time isolated to the generated Rack Editor source.
-# The qualified helper/DSP/control implementation never sees the visual macros.
+# P5 layers the premium broadcast console on top of the already-qualified P4
+# live peak meter. UI reads only atomic telemetry; DSP never calls ImGui.
 set_source_files_properties(
     "${_safevst3_editor_generated}"
     PROPERTIES
-        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p1_skin.hpp"
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p5_broadcast.hpp"
 )
 
 target_include_directories(obs-safe-vst3-rack-host BEFORE PRIVATE
@@ -132,6 +266,19 @@ target_link_libraries(obs-safe-vst3-rack-host PRIVATE
     safevst3_process_context_policy
 )
 target_compile_definitions(obs-safe-vst3-rack-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+if(SAFEVST3_BUILD_TESTS)
+    add_executable(safevst3-rack-broadcast-meter-contract
+        "${SAFEVST3_RACK_ROOT}/tests/p1_rack_editor/broadcast_meter_contract.cpp")
+    target_include_directories(safevst3-rack-broadcast-meter-contract PRIVATE
+        "${SAFEVST3_RACK_ROOT}/src")
+    add_test(NAME safevst3-rack-broadcast-meter-contract
+             COMMAND safevst3-rack-broadcast-meter-contract)
+    # Any qualified Rack build also compiles the numerical BS.1770/dBTP probe,
+    # so focused R3/compatibility jobs cannot silently skip the new meter core.
+    add_dependencies(obs-safe-vst3-rack-host safevst3-rack-broadcast-meter-contract)
+endif()
+
 if(TARGET obs-safe-vst3-scanner)
     add_dependencies(obs-safe-vst3-rack-host obs-safe-vst3-scanner)
 endif()
