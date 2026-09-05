@@ -220,10 +220,10 @@ public:
                !controller_delivery_failed_.load(std::memory_order_acquire);
     }
 
-    // Optional DSP-owner seam for an idle flush. Normal Rack audio blocks already
-    // drain the queue through process(); keeping this operation separate avoids
-    // ever calling VST3 ProcessData mutation from the vendor/control thread.
-    bool flush_pending_controller_edits() noexcept
+    // The Rack DSP loop calls this on its bounded idle wake too. Therefore a GUI
+    // edit made while OBS is not currently delivering an audio block still
+    // reaches the processor before a close/save snapshot is serialized.
+    bool flush_component_handler_edits() noexcept override
     {
         std::size_t drained = 0;
         const bool queued_ok = drain_controller_edits(drained);
@@ -271,6 +271,14 @@ public:
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+    }
+
+    bool capture_state(PluginStateSnapshot& snapshot, std::string& error) override
+    {
+        snapshot = {};
+        if (!synchronize_component_handler_state(error))
+            return false;
+        return HostedPlugin::capture_state(snapshot, error);
     }
 
 private:
