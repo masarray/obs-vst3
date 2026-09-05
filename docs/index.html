@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071019">
   <title>VST3 for OBS Studio — Safe Single Host + VST3 Rack</title>
-  <meta name="description" content="Use modern VST3 audio effects in OBS Studio on Windows with an isolated Single Host or serial multi-effect VST3 Rack, native vendor GUIs, presets and fail-dry recovery.">
+  <meta name="description" content="Use modern VST3 audio effects in OBS Studio on Windows with an isolated Single Host or serial multi-effect VST3 Rack, automatic working-Rack recall, native vendor GUIs, presets and fail-dry recovery.">
   <meta name="author" content="MasArray">
   <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/">
@@ -13,11 +13,11 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="OBS Safe VST3 Host">
   <meta property="og:title" content="VST3 for OBS Studio — Safe Single Host + VST3 Rack">
-  <meta property="og:description" content="Modern VST3 effects in OBS with isolated helpers, a graphical serial Rack, native vendor GUIs, presets and recovery.">
+  <meta property="og:description" content="Modern VST3 effects in OBS with isolated helpers, durable Rack recall, native vendor GUIs, presets and bounded recovery.">
   <meta property="og:url" content="https://masarray.github.io/obs-vst3/">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="OBS Safe VST3 Host v0.6.0">
-  <meta name="twitter:description" content="Single VST3 hosting and an isolated serial VST3 Rack for OBS Studio on Windows.">
+  <meta name="twitter:title" content="OBS Safe VST3 Host v0.6.1">
+  <meta name="twitter:description" content="Single VST3 hosting and an isolated serial VST3 Rack with automatic working-state recall for OBS Studio on Windows.">
   <script type="application/ld+json">
   {
     "@context":"https://schema.org",
@@ -26,8 +26,8 @@
     "alternateName":["VST3 for OBS","OBS VST3 Plugin","OBS VST3 Rack"],
     "applicationCategory":"MultimediaApplication",
     "operatingSystem":"Windows 10, Windows 11",
-    "softwareVersion":"0.6.0",
-    "description":"An OBS Studio plug-in providing an isolated Single VST3 Host and a graphical serial multi-effect VST3 Rack for Windows.",
+    "softwareVersion":"0.6.1",
+    "description":"An OBS Studio plug-in providing an isolated Single VST3 Host and a graphical serial multi-effect VST3 Rack with durable working-state recall for Windows.",
     "url":"https://masarray.github.io/obs-vst3/",
     "downloadUrl":"https://github.com/masarray/obs-vst3/releases/latest",
     "softwareRequirements":"OBS Studio 29.1 or later; Windows x64",
@@ -47,7 +47,7 @@
       <a href="safety.html">Safety</a>
       <a href="roadmap.html">Roadmap</a>
       <a href="install.html">Install</a>
-      <a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.0</a>
+      <a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.1</a>
     </nav>
   </div>
 </header>
@@ -56,11 +56,11 @@
   <section class="hero">
     <div class="wrap heroGrid">
       <div>
-        <div class="eyebrow"><span class="pulse"></span> Public stable v0.6.0 · Windows x64 · OBS 29.1+</div>
+        <div class="eyebrow"><span class="pulse"></span> Public stable v0.6.1 · Windows x64 · OBS 29.1+</div>
         <h1><span class="gradient">Modern VST3 audio in OBS.</span> One effect or a complete isolated Rack.</h1>
-        <p class="lead">Use current studio VST3 effects through a native OBS workflow. Keep third-party VST3 DSP and vendor UI code outside <code>obs64.exe</code>, open real vendor interfaces, build serial effect chains, save Rack presets and keep a bounded fail-dry path for live use.</p>
+        <p class="lead">Use current studio VST3 effects through a native OBS workflow. Keep third-party VST3 DSP and vendor UI code outside <code>obs64.exe</code>, build serial effect chains, reopen real vendor interfaces, and let the Rack recall its latest working state automatically across normal OBS restarts.</p>
         <div class="actions">
-          <a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.0 stable</a>
+          <a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.1 stable</a>
           <a class="btn secondary" href="install.html">Installation guide</a>
         </div>
         <div class="trustline">
@@ -76,7 +76,7 @@
           <div class="field"><label>Rack status</label><div class="control"><span>Ready · isolated helper</span><span>✓</span></div></div>
           <div class="field"><label>Serial chain</label><div class="control"><span>EQ → Compressor → Limiter</span><span>3 FX</span></div></div>
           <div class="openBtn">Open Rack Editor</div>
-          <div class="status"><i></i><span>Session snapshot · presets · vendor UI</span></div>
+          <div class="status"><i></i><span>Durable recall · presets · vendor UI</span></div>
         </div>
       </div>
     </div>
@@ -87,7 +87,7 @@
       <div class="sectionHead">
         <div class="kicker">Two workflows</div>
         <h2>Keep the simple path simple. Use the Rack when the chain grows.</h2>
-        <p>v0.6.0 ships both product surfaces in the same Windows package.</p>
+        <p>v0.6.1 ships both product surfaces in the same Windows package.</p>
       </div>
       <div class="grid3">
         <article class="card"><div class="icon">1FX</div><h3>VST 3.x Plug-in</h3><p>The proven one-effect workflow: automatic discovery, real vendor GUI, state persistence, isolated scanner/runtime and bounded recovery.</p></article>
@@ -100,14 +100,29 @@
   <section>
     <div class="wrap">
       <div class="sectionHead">
-        <div class="kicker">Stable Rack v0.6.0</div>
-        <h2>A professional serial Rack, not a DAW-sized node graph.</h2>
+        <div class="kicker">v0.6.1 stable</div>
+        <h2>Your working Rack now survives normal OBS restarts automatically.</h2>
+        <p>Named presets are still available for reusable chains, but normal session continuity no longer depends on remembering to create one.</p>
+      </div>
+      <div class="grid3">
+        <article class="card"><div class="icon">SAVE</div><h3>Durable working state</h3><p>Each OBS Rack owns a CRC-protected, atomic working-session snapshot with last-known-good recovery for topology, bypass and VST3 state.</p></article>
+        <article class="card"><div class="icon">DRY</div><h3>Dry-first restore</h3><p>Slow third-party chains restore behind a usable dry path and publish only when the complete restored generation is coherent.</p></article>
+        <article class="card"><div class="icon">DSP</div><h3>State matches the sound</h3><p>Split controller/processor VST3 editor changes are synchronized into processor state before capture, improving full DSP recall after restart.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="sectionHead">
+        <div class="kicker">Stable serial Rack</div>
+        <h2>A professional signal lane, not a DAW-sized node graph.</h2>
         <p>The Rack is deliberately focused on the workflow most streamers need: an ordered lane of audio effects with fast access to each native plug-in interface.</p>
       </div>
       <div class="grid3">
         <article class="card"><div class="icon">CHAIN</div><h3>Build the lane</h3><p>Add, replace, remove, reorder and bypass effects while stable slot identity and coherent topology publication protect the runtime contract.</p></article>
         <article class="card"><div class="icon">UI</div><h3>Real plug-in interfaces</h3><p>The Rack Editor is isolated, and native vendor windows remain helper-owned rather than being injected into OBS.</p></article>
-        <article class="card"><div class="icon">SAVE</div><h3>Recall your sound</h3><p>Session Snapshot handles working-state recovery while named Rack presets provide independent reusable chains with save, load, rename, update and delete.</p></article>
+        <article class="card"><div class="icon">PRESET</div><h3>Reusable presets</h3><p>Save, load, rename, update and delete named Rack presets independently of the automatic working-session recall.</p></article>
       </div>
     </div>
   </section>
@@ -124,7 +139,7 @@
           <div class="tick"><span>✓</span><div><b>Separate helpers.</b> Single Host and Rack each use isolated helper-process boundaries.</div></div>
           <div class="tick"><span>✓</span><div><b>Isolated scanning.</b> Candidate probing is kept outside OBS.</div></div>
           <div class="tick"><span>✓</span><div><b>Bounded realtime behavior.</b> An unavailable wet result falls back to original dry/pass-through audio.</div></div>
-          <div class="tick"><span>✓</span><div><b>Recovery and persistence.</b> State checkpoints, Rack snapshots and bounded restart behavior are first-class product concerns.</div></div>
+          <div class="tick"><span>✓</span><div><b>DSP-safe state capture.</b> Rack persistence does not require the realtime path to wait on a control mutex.</div></div>
         </div>
         <div class="notice">Crash isolation is not a malware sandbox and is not a promise that Windows, OBS, drivers or hardware can never fail. Only install VST3 plug-ins from vendors you trust. <a href="safety.html">Read the exact boundary →</a></div>
       </div>
@@ -136,12 +151,13 @@
       <div class="sectionHead">
         <div class="kicker">Release confidence</div>
         <h2>Public binaries come from a repeatable release pipeline.</h2>
-        <p>The final Rack integration candidate passed focused Rack regressions, main CI and Compatibility Test Build. The public release pipeline rebuilds against pinned OBS/libobs, runs Windows tests and scanner smoke, validates packaging and the Smart Installer, and publishes SHA-256 checksums beside the binaries.</p>
+        <p>The v0.6.1 runtime candidate passed focused Rack regressions, main CI and Compatibility Test Build on one exact source head. Real OBS testing then confirmed the latest working Rack and full VST3 DSP state across repeated restarts. The public release pipeline rebuilds against pinned OBS/libobs, validates packaging and the Smart Installer, and publishes SHA-256 checksums beside the binaries.</p>
       </div>
       <div class="compat">
         <div class="row"><div>Single VST3 Host</div><div><span class="yes">Stable</span></div></div>
-        <div class="row"><div>Serial VST3 Rack + graphical editor</div><div><span class="yes">Stable in v0.6.0</span></div></div>
-        <div class="row"><div>Rack presets / vendor UI / Session Snapshot</div><div><span class="yes">Included</span></div></div>
+        <div class="row"><div>Serial VST3 Rack + graphical editor</div><div><span class="yes">Stable</span></div></div>
+        <div class="row"><div>Automatic working-Rack recall</div><div><span class="yes">Included in v0.6.1</span></div></div>
+        <div class="row"><div>Named Rack presets / vendor UI</div><div><span class="yes">Included</span></div></div>
         <div class="row"><div>Sidechain / free-form routing / MIDI</div><div><span class="warnTxt">Future</span></div></div>
         <div class="row"><div>Commercial Authenticode signing</div><div><span class="warnTxt">Not currently signed</span> · verify official release source and checksums.</div></div>
       </div>
