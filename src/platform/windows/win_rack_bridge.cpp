@@ -5,13 +5,18 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <cwchar>
 #include <sstream>
+#include <vector>
 
 namespace safevst3 {
 namespace {
 constexpr ULONGLONG kRackHelperStartupTimeoutMs = 5000;
 constexpr DWORD kRackHelperGracefulShutdownTimeoutMs = 250;
 constexpr DWORD kRackHelperForcedShutdownWaitMs = 250;
+constexpr wchar_t kSessionFileEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_FILE";
+constexpr wchar_t kSessionSaveEventEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_SAVE_EVENT";
+constexpr wchar_t kSessionSavedEventEnv[] = L"OBS_SAFE_VST3_RACK_SESSION_SAVED_EVENT";
 
 std::string win_error(const char* what)
 {
@@ -19,6 +24,57 @@ std::string win_error(const char* what)
     std::ostringstream os;
     os << what << " failed (Win32 error " << code << ')';
     return os.str();
+}
+
+bool environment_entry_has_key(const wchar_t* entry, const wchar_t* key) noexcept
+{
+    if (!entry || !key || entry[0] == L'=')
+        return false;
+    const wchar_t* equals = std::wcschr(entry, L'=');
+    if (!equals)
+        return false;
+    const std::size_t entry_key_length = static_cast<std::size_t>(equals - entry);
+    const std::size_t key_length = std::wcslen(key);
+    return entry_key_length == key_length &&
+           _wcsnicmp(entry, key, key_length) == 0;
+}
+
+void append_environment_entry(std::vector<wchar_t>& block,
+                              const wchar_t* key,
+                              const std::wstring& value)
+{
+    if (!key || !*key)
+        return;
+    const std::wstring entry = std::wstring(key) + L"=" + value;
+    block.insert(block.end(), entry.begin(), entry.end());
+    block.push_back(L'\0');
+}
+
+std::vector<wchar_t> make_child_environment(
+    const std::filesystem::path& session_file,
+    const std::wstring& save_event,
+    const std::wstring& saved_event)
+{
+    std::vector<wchar_t> block;
+    LPWCH inherited = GetEnvironmentStringsW();
+    if (inherited) {
+        for (const wchar_t* cursor = inherited; *cursor; ) {
+            const std::size_t length = std::wcslen(cursor);
+            if (!environment_entry_has_key(cursor, kSessionFileEnv) &&
+                !environment_entry_has_key(cursor, kSessionSaveEventEnv) &&
+                !environment_entry_has_key(cursor, kSessionSavedEventEnv)) {
+                block.insert(block.end(), cursor, cursor + length + 1);
+            }
+            cursor += length + 1;
+        }
+        FreeEnvironmentStringsW(inherited);
+    }
+
+    append_environment_entry(block, kSessionFileEnv, session_file.wstring());
+    append_environment_entry(block, kSessionSaveEventEnv, save_event);
+    append_environment_entry(block, kSessionSavedEventEnv, saved_event);
+    block.push_back(L'\0');
+    return block;
 }
 }
 
@@ -148,23 +204,33 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
         return false;
     }
 
-    std::wstring command = quote(helper.wstring()) +
+    const std::wstring command = quote(helper.wstring()) +
         L" --mapping " + quote(names_.mapping) +
         L" --request-event " + quote(names_.request_event) +
         L" --response-event " + quote(names_.response_event) +
         L" --ready-event " + quote(names_.ready_event) +
         L" --ui-open-event " + quote(names_.ui_open_event);
+
+    std::vector<wchar_t> child_environment;
+    LPVOID environment = nullptr;
+    DWORD creation_flags = CREATE_NO_WINDOW | CREATE_SUSPENDED;
     if (!session_file.empty()) {
-        command += L" --session-file " + quote(session_file.wstring()) +
-                   L" --session-save-event " + quote(names_.session_save_event) +
-                   L" --session-saved-event " + quote(names_.session_saved_event);
+        child_environment = make_child_environment(
+            session_file, names_.session_save_event, names_.session_saved_event);
+        if (child_environment.empty()) {
+            error = "Could not build Rack helper session environment";
+            stop();
+            return false;
+        }
+        environment = child_environment.data();
+        creation_flags |= CREATE_UNICODE_ENVIRONMENT;
     }
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     std::wstring mutable_command = command;
     if (!CreateProcessW(helper.c_str(), mutable_command.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
+                        creation_flags, environment,
                         helper.parent_path().c_str(), &startup, &process_)) {
         error = win_error("CreateProcessW(Rack)");
         stop();
