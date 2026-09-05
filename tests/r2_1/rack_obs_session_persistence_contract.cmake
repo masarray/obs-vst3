@@ -54,4 +54,14 @@ require_text("${ENTRY_TEXT}" "session_runtime.take_save_request()" "OBS save req
 require_text("${ENTRY_TEXT}" "topology change" "immediate topology autosave")
 require_text("${ENTRY_TEXT}" "preset load" "preset-load working Rack autosave")
 
+# Restored plug-ins must be instantiated on the same non-realtime Rack control
+# worker that later owns native vendor editor creation and controller-state
+# capture. Strict VST3 controllers can reject GUI calls when initialization was
+# performed on the helper main thread and OpenVendorEditor arrives on another
+# thread after OBS restart.
+require_text("${ENTRY_TEXT}" "P9 control-thread bootstrap" "restored VST controller thread-affinity bootstrap")
+require_text("${ENTRY_TEXT}" "std::thread command_worker" "dedicated Rack control worker")
+require_text("${ENTRY_TEXT}" "bootstrap_cv.wait" "Ready waits for control-thread restore")
+require_text("${ENTRY_TEXT}" "restore_working_rack_session(\n            session_runtime" "session materialization executes inside control worker")
+
 message(STATUS "P9 OBS Rack working-session persistence contract passed")
