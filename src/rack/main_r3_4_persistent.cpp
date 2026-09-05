@@ -39,9 +39,9 @@ bool restore_working_rack_session(
     MissingPresetStateStore candidate_missing{};
     if (!materialize_preset_candidate(
             working, candidate, candidate_missing, region, error)) {
+        // materialize_preset_candidate owns candidate cleanup on every failure.
         if (!error.empty())
             std::cerr << "Rack session materialize: " << error << '\n';
-        close_dynamic_state(candidate, std::vector<RetiredDynamicPlugin>{});
         return false;
     }
 
