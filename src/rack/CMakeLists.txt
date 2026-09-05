@@ -63,21 +63,20 @@ set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
 file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
 
-# P4 live metering instruments only the shipping helper copy of the qualified
-# Rack DSP loop. It does not change the checked-in R1/R2 test source. The DSP
-# path performs two bounded peak scans per valid block and publishes only to
-# lock-free atomics; the UI is allowed to drop telemetry frames freely.
+# P5 instruments only the shipping helper copy of the qualified Rack DSP loop.
+# P4 keeps bounded sample-peak telemetry; P5 adds final-output BS.1770 LUFS-I and
+# 4x true-peak reconstruction. The checked-in R1/R2 source remains unchanged.
 set(_safevst3_meter_main_source "${CMAKE_CURRENT_LIST_DIR}/main.cpp")
 file(READ "${_safevst3_meter_main_source}" _safevst3_meter_main_embed)
 
 set(_safevst3_meter_include_anchor "#include \"rack/rack_protocol.hpp\"\n")
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_include_anchor}" _safevst3_meter_include_pos)
 if(_safevst3_meter_include_pos EQUAL -1)
-    message(FATAL_ERROR "P4 meter instrumentation could not locate Rack protocol include")
+    message(FATAL_ERROR "P5 meter instrumentation could not locate Rack protocol include")
 endif()
 string(REPLACE
     "${_safevst3_meter_include_anchor}"
-    "#include \"rack/rack_protocol.hpp\"\n#include \"rack/rack_meter_telemetry.hpp\"\n"
+    "#include \"rack/rack_protocol.hpp\"\n#include \"rack/rack_meter_telemetry.hpp\"\n#include \"rack/rack_broadcast_loudness.hpp\"\n"
     _safevst3_meter_main_embed
     "${_safevst3_meter_main_embed}"
 )
@@ -90,7 +89,7 @@ set(_safevst3_meter_valid_anchor [=[
 ]=])
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_valid_anchor}" _safevst3_meter_valid_pos)
 if(_safevst3_meter_valid_pos EQUAL -1)
-    message(FATAL_ERROR "P4 meter instrumentation could not locate validated DSP block seam")
+    message(FATAL_ERROR "P5 meter instrumentation could not locate validated DSP block seam")
 endif()
 set(_safevst3_meter_valid_replace [=[
             continue;
@@ -118,13 +117,15 @@ set(_safevst3_meter_failure_anchor [=[
 ]=])
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_failure_anchor}" _safevst3_meter_failure_pos)
 if(_safevst3_meter_failure_pos EQUAL -1)
-    message(FATAL_ERROR "P4 meter instrumentation could not locate fail-dry seam")
+    message(FATAL_ERROR "P5 meter instrumentation could not locate fail-dry seam")
 endif()
 set(_safevst3_meter_failure_replace [=[
         if (!block_ok) {
             copy_original_dry(*endpoint.region, channels, frames);
             safevst3::rack::ui::g_rack_meter_telemetry.publish(
                 sequence, input_meter_peak, input_meter_peak);
+            safevst3::rack::ui::g_rack_broadcast_loudness.process(
+                rack_input, channels, frames, endpoint.region->sample_rate, sequence);
             release_generation(store, generation_index);
             publish_result(*endpoint.region, endpoint.response, request_generation, block_result);
             continue;
@@ -144,7 +145,7 @@ set(_safevst3_meter_success_anchor [=[
 ]=])
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_success_anchor}" _safevst3_meter_success_pos)
 if(_safevst3_meter_success_pos EQUAL -1)
-    message(FATAL_ERROR "P4 meter instrumentation could not locate successful output seam")
+    message(FATAL_ERROR "P5 meter instrumentation could not locate successful output seam")
 endif()
 set(_safevst3_meter_success_replace [=[
         clear_rack_breadcrumb(*endpoint.region);
@@ -153,6 +154,8 @@ set(_safevst3_meter_success_replace [=[
             current, channels, frames);
         safevst3::rack::ui::g_rack_meter_telemetry.publish(
             sequence, input_meter_peak, output_meter_peak);
+        safevst3::rack::ui::g_rack_broadcast_loudness.process(
+            current, channels, frames, endpoint.region->sample_rate, sequence);
         release_generation(store, generation_index);
 ]=])
 string(REPLACE
@@ -238,13 +241,12 @@ add_executable(obs-safe-vst3-rack-host
     "${SAFEVST3_RACK_ROOT}/src/host/native_editor.cpp"
 )
 
-# P4 product skin layers live metering on top of the P3/P2 presentation and is
-# compile-time isolated to the generated Rack Editor source. Meter values are
-# read from lock-free telemetry; no UI lock is taken from the audio thread.
+# P5 layers the premium broadcast console on top of the already-qualified P4
+# live peak meter. UI reads only atomic telemetry; DSP never calls ImGui.
 set_source_files_properties(
     "${_safevst3_editor_generated}"
     PROPERTIES
-        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p4_live_meter.hpp"
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p5_broadcast.hpp"
 )
 
 target_include_directories(obs-safe-vst3-rack-host BEFORE PRIVATE
@@ -264,6 +266,16 @@ target_link_libraries(obs-safe-vst3-rack-host PRIVATE
     safevst3_process_context_policy
 )
 target_compile_definitions(obs-safe-vst3-rack-host PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+if(BUILD_TESTING)
+    add_executable(safevst3-rack-broadcast-meter-contract
+        "${SAFEVST3_RACK_ROOT}/tests/p1_rack_editor/broadcast_meter_contract.cpp")
+    target_include_directories(safevst3-rack-broadcast-meter-contract PRIVATE
+        "${SAFEVST3_RACK_ROOT}/src")
+    add_test(NAME safevst3-rack-broadcast-meter-contract
+             COMMAND safevst3-rack-broadcast-meter-contract)
+endif()
+
 if(TARGET obs-safe-vst3-scanner)
     add_dependencies(obs-safe-vst3-rack-host obs-safe-vst3-scanner)
 endif()
