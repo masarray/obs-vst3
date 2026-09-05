@@ -134,11 +134,6 @@ int run_r3_4_persistent_product(const Options& options)
     initialize_empty_generation_store(store);
     DynamicRackState state;
     MissingPresetStateStore missing_states;
-    const bool restored = restore_working_rack_session(
-        session_runtime, state, missing_states, store, *endpoint.region);
-    if (!restored)
-        publish_dynamic_projection(
-            *endpoint.region, state, store.generations[0].number);
 
     CatalogRuntime catalog_runtime;
     const std::filesystem::path cache = safevst3::rack::ui::rack_catalog_cache_path();
@@ -177,17 +172,44 @@ int run_r3_4_persistent_product(const Options& options)
             return preset_failed_ack(command, preset_runtime);
         });
 
-    const std::uint32_t initial_index =
-        store.published_index.load(std::memory_order_acquire);
-    editor.publish_snapshot(build_dynamic_ui_snapshot(
-        state, store.generations[initial_index].number));
+    // Catalog/preset data has no VST controller thread affinity and may be
+    // published before the helper is Ready. The working Rack snapshot is
+    // deliberately published by the control worker after session restore.
     {
         std::lock_guard lock(catalog_runtime.mutex);
         editor.publish_catalog(catalog_runtime.catalog.snapshot());
     }
     editor.publish_presets(build_preset_ui_snapshot(preset_runtime));
 
+    std::mutex bootstrap_mutex;
+    std::condition_variable bootstrap_cv;
+    bool bootstrap_complete = false;
+
     std::thread command_worker([&] {
+        // P9 control-thread bootstrap: a restored VST3 controller must be
+        // created, initialized, state-restored, later saved, and asked to
+        // create its native editor from the same Rack control thread. Before
+        // this fix session materialization ran on the helper main thread while
+        // OpenVendorEditor ran here; strict vendor controllers then appeared
+        // Ready/audio-active but rejected or ignored native GUI creation after
+        // an OBS restart.
+        const bool restored = restore_working_rack_session(
+            session_runtime, state, missing_states, store, *endpoint.region);
+        if (!restored)
+            publish_dynamic_projection(
+                *endpoint.region, state, store.generations[0].number);
+
+        const std::uint32_t initial_index =
+            store.published_index.load(std::memory_order_acquire);
+        editor.publish_snapshot(build_dynamic_ui_snapshot(
+            state, store.generations[initial_index].number));
+
+        {
+            std::lock_guard bootstrap_lock(bootstrap_mutex);
+            bootstrap_complete = true;
+        }
+        bootstrap_cv.notify_one();
+
         while (!command_queue.stopping() &&
                InterlockedCompareExchange(
                    &endpoint.region->shutdown_requested, 0, 0) == 0) {
@@ -261,6 +283,14 @@ int run_r3_4_persistent_product(const Options& options)
         vendor_editors.close_all();
         vendor_editors.pump_messages();
     });
+
+    // Do not advertise Ready or start DSP until the control thread has rebuilt
+    // the persisted Rack. This preserves the old startup guarantee while also
+    // preserving VST3 controller/native-editor thread ownership.
+    {
+        std::unique_lock bootstrap_lock(bootstrap_mutex);
+        bootstrap_cv.wait(bootstrap_lock, [&] { return bootstrap_complete; });
+    }
 
     InterlockedExchange(&endpoint.region->host_status,
                         static_cast<long>(RackHostStatus::Ready));
