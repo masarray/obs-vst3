@@ -15,6 +15,7 @@ namespace safevst3::rack::ui {
 struct RackVendorEditorManager::Impl {
     struct Entry {
         RackSlotId slot_id = 0;
+        HostedPlugin* plugin = nullptr;
         std::unique_ptr<NativeEditorWindow> window;
     };
 
@@ -73,6 +74,7 @@ bool RackVendorEditorManager::open(RackSlotId slot_id,
             error = "Rack vendor editor entry is invalid";
             return false;
         }
+        existing->plugin = &plugin;
         return existing->window->open(plugin.edit_controller(), title, error);
     }
 
@@ -87,6 +89,7 @@ bool RackVendorEditorManager::open(RackSlotId slot_id,
         return false;
 
     entry->slot_id = slot_id;
+    entry->plugin = &plugin;
     entry->window = std::move(window);
     return true;
 }
@@ -101,6 +104,7 @@ void RackVendorEditorManager::close(RackSlotId slot_id) noexcept
     if (entry->window)
         entry->window->close();
     entry->window.reset();
+    entry->plugin = nullptr;
     entry->slot_id = 0;
 }
 
@@ -112,6 +116,7 @@ void RackVendorEditorManager::close_all() noexcept
         if (entry.window)
             entry.window->close();
         entry.window.reset();
+        entry.plugin = nullptr;
         entry.slot_id = 0;
     }
 }
@@ -122,6 +127,18 @@ void RackVendorEditorManager::pump_messages() noexcept
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
+    }
+
+    // restartComponent(kParamValuesChanged) is a control-owner notification,
+    // commonly emitted after an internal vendor preset is loaded. Service it
+    // only after the vendor message batch has settled so the controller can be
+    // snapshotted coherently; RackHostedPlugin then forwards those values to
+    // the processor through its bounded control->DSP bridge.
+    if (impl_) {
+        for (auto& entry : impl_->entries) {
+            if (entry.slot_id != 0 && entry.plugin)
+                entry.plugin->service_component_handler_callbacks();
+        }
     }
 }
 
