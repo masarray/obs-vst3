@@ -63,6 +63,24 @@ set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
 file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
 
+# P9 keeps the checked-in R3-4 source authoritative, but the persistence wrapper
+# owns the shipping wmain. Generate an include-only R3-4 copy with only its final
+# entrypoint renamed; every internal Rack implementation remains byte-for-byte.
+set(_safevst3_r3_4_source "${CMAKE_CURRENT_LIST_DIR}/main_r3_4.cpp")
+file(READ "${_safevst3_r3_4_source}" _safevst3_r3_4_embed)
+set(_safevst3_r3_4_entry "int wmain(int argc, wchar_t** argv)")
+string(FIND "${_safevst3_r3_4_embed}" "${_safevst3_r3_4_entry}" _safevst3_r3_4_entry_pos)
+if(_safevst3_r3_4_entry_pos EQUAL -1)
+    message(FATAL_ERROR "P9 could not locate the qualified R3-4 entrypoint")
+endif()
+string(REPLACE
+    "${_safevst3_r3_4_entry}"
+    "int safevst3_r3_4_embedded_wmain(int argc, wchar_t** argv)"
+    _safevst3_r3_4_embed
+    "${_safevst3_r3_4_embed}"
+)
+file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_4.cpp" "${_safevst3_r3_4_embed}")
+
 # P6 instruments only the shipping helper copy of the qualified Rack DSP loop.
 # P5's authoritative final-output LUFS-I/dBTP remains intact; P6 adds real
 # session Input Trim / Output Fader gain, one-block ramps, and stereo L/R peak
