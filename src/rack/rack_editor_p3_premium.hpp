@@ -250,6 +250,7 @@ inline void SafeVst3P3EndChild()
 inline bool SafeVst3P3Button(const char* label, const ImVec2& size_arg = ImVec2(0, 0))
 {
     using namespace safevst3::rack::ui::p1;
+    using namespace safevst3::rack::ui::p3;
 
     const bool in_slot = slot_child_style_depth > 0;
     if (!in_slot)
