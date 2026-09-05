@@ -24,8 +24,8 @@ function Require-Text([string]$haystack, [string]$needle, [string]$description) 
 Require-Text $p2 'C:\\Windows\\Fonts\\segoeui.ttf' 'Segoe UI regular font'
 Require-Text $p2 'C:\\Windows\\Fonts\\seguisb.ttf' 'Segoe UI semibold font'
 Require-Text $p2 'ImGuiConfigFlags_NavEnableKeyboard' 'keyboard navigation'
-Require-Text $p3 'kPremiumSlotHeight = 74.0f' 'compact effect-strip baseline'
-Require-Text $p3 'kPremiumConsoleShare = 0.40f' 'master-console share'
+Require-Text $p3 'kPremiumSlotHeight = 74.0f' 'qualified prior compact effect-strip baseline'
+Require-Text $p3 'kPremiumConsoleShare = 0.40f' 'qualified prior master-console share'
 Require-Text $p3 'OPEN##premium-slot-ui' 'vendor-editor OPEN affordance'
 
 # P5 broadcast measurement stays authoritative beneath the P6 hardware surface.
@@ -36,22 +36,32 @@ Require-Text $loudness 'kAbsoluteGateLufs = -70.0' 'absolute loudness gate'
 Require-Text $loudness 'energy_to_lufs(absolute_mean) - 10.0' 'relative loudness gate'
 Require-Text $loudness 'kTruePeakTaps = 33' 'true-peak reconstruction kernel'
 
-# P6 hardware visual language: original metal surface, recessed meter wells,
-# aligned physical faders + segmented LEDs, and no generic GR track.
+# P6 luxury hardware visual language: contained recessed Rack well, compact
+# single-row strips, aligned physical faders + segmented LEDs, and no generic GR.
 Require-Text $p6 'draw_brushed_metal_backplate' 'brushed-metal chassis renderer'
+Require-Text $p6 'draw_recessed_rack_bay' 'contained recessed Rack well renderer'
 Require-Text $p6 'AddRectFilledMultiColor' 'satin/metal gradient rendering'
 Require-Text $p6 'draw_segment_meter' 'segmented emissive LED meters'
 Require-Text $p6 'draw_metal_fader' 'custom satin-metal fader'
 Require-Text $p6 'render_aligned_master_surface' 'single aligned master-control grid'
+Require-Text $p6 'kLuxurySlotHeight = 48.0f' 'compact one-row Rack strips'
+Require-Text $p6 'rack-p6-slot-well' 'inner Rack containment boundary'
+Require-Text $p6 'rack-p6-luxury-lane' 'left luxury chassis pane'
+Require-Text $p6 'SafeVst3P6BeginCombo' 'vertically aligned preset combo'
+Require-Text $p6 'SafeVst3P6InputTextWithHint' 'vertically aligned search/input frames'
+Require-Text $p6 'ImGui::AlignTextToFramePadding()' 'frame-aligned toolbar text'
 Require-Text $p6 '"##p6-input-fader"' 'real Input Trim control'
 Require-Text $p6 '"##p6-output-fader"' 'real Output Fader control'
+Require-Text $p6 'IsMouseDoubleClicked' 'double-click fader reset gesture'
+Require-Text $p6 'db = 0.0f' 'double-click reset target'
+Require-Text $p6 'fader_reset_lock' 'reset gesture cannot be overwritten by the same second click'
 Require-Text $p6 'input_left_peak_linear' 'stereo input L telemetry'
 Require-Text $p6 'output_right_peak_linear' 'stereo output R telemetry'
 Require-Text $p6 '"LUFS-I"' 'compact broadcast loudness label'
 Require-Text $p6 '"dBTP"' 'compact true-peak label'
 Require-Text $p6 'rack-p6-hardware-console' 'P6 hardware console surface'
 if ($p6.Contains('"GR"') -or $p6.Contains('Gain Reduction')) {
-    throw 'P6 regression: generic GR must not consume the main Rack surface'
+    throw 'P6 regression: generic gain-reduction meter must not consume the main Rack surface'
 }
 
 # Master gain controls are real DSP controls, lock-free, bounded and smoothed.
@@ -107,4 +117,4 @@ foreach ($source in @($p2, $p3, $p4, $p5, $p6)) {
     }
 }
 
-Write-Host 'P6 premium metal hardware + aligned Input/Output + stereo broadcast contract: PASS'
+Write-Host 'P6 luxury metal hardware + precise alignment + resettable master controls: PASS'
