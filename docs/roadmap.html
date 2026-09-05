@@ -4,25 +4,32 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071019">
   <title>Roadmap — OBS Safe VST3 Host</title>
-  <meta name="description" content="OBS Safe VST3 Host roadmap: stable Single Host and VST3 Rack today, with routing, sidechain, MIDI and broader platform work considered for future stages.">
+  <meta name="description" content="OBS Safe VST3 Host roadmap: stable Single Host and durable serial VST3 Rack today, with routing, sidechain, MIDI and broader platform work considered for future stages.">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/roadmap.html">
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.0</a></nav></div></header>
+<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.1</a></nav></div></header>
 <main>
-<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Product roadmap · synchronized with v0.6.0</div><h1>Stable Single Host. Stable serial Rack. Expand only without weakening the live-safety contract.</h1><p class="lead">The roadmap is intentionally staged. New breadth matters only if realtime behavior, recovery, OBS integration, packaging and user workflow remain dependable enough for live use.</p></div></section>
+<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Product roadmap · synchronized with v0.6.1</div><h1>Stable Single Host. Durable serial Rack. Expand only without weakening the live-safety contract.</h1><p class="lead">The roadmap is intentionally staged. New breadth matters only if realtime behavior, recovery, OBS integration, packaging and user workflow remain dependable enough for live use.</p></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Stage 1</div><h2>Safe VST3 Single Host — stable</h2><p>The focused one-effect filter remains the simplest way to use a modern VST3 effect in OBS.</p></div><div class="grid3">
 <article class="card"><div class="icon">1FX</div><h3>Simple workflow</h3><p>Installed discovery, one selected effect and direct access to its native vendor interface.</p></article>
 <article class="card"><div class="icon">ISO</div><h3>Isolation</h3><p>VST3 runtime and scanner stay outside the OBS process, with state persistence and bounded recovery.</p></article>
 <article class="card"><div class="icon">DRY</div><h3>Fail-dry</h3><p>A missing/late isolated wet result does not justify deliberately stalling OBS's realtime audio path.</p></article>
 </div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stage 2 · v0.6.0</div><h2>Safe VST3 Rack — stable</h2><p>v0.6.0 delivers the separate serial Rack as a public stable product surface.</p></div><div class="grid3">
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stage 2 · v0.6.1</div><h2>Safe VST3 Rack — stable and durable</h2><p>v0.6.0 introduced the public serial Rack; v0.6.1 hardens working-state recall and split-component VST3 state safety after repeated real OBS restart testing.</p></div><div class="grid3">
 <article class="card"><div class="icon">RACK</div><h3>Serial chain</h3><p>Multiple effects with stable slots, add/replace/remove/reorder and bypass.</p></article>
 <article class="card"><div class="icon">GUI</div><h3>Graphical editor</h3><p>A dedicated helper-owned Rack Editor with native vendor-editor orchestration.</p></article>
-<article class="card"><div class="icon">SAVE</div><h3>Recovery + presets</h3><p>Session Snapshot protects working-state recovery while named presets support reusable chains.</p></article>
+<article class="card"><div class="icon">SAVE</div><h3>Automatic recall + presets</h3><p>The current working Rack survives normal OBS restarts automatically, while named presets remain independent reusable chains.</p></article>
 </div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stage 3 · future</div><h2>Routing, sidechain and advanced audio buses</h2><p>Potential future work includes explicit routing, sidechain inputs, richer VST3 buses, parallel paths where justified, stronger multichannel handling and Float64 fallback. These are not v0.6.0 features.</p></div></div></section>
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Current Rack reliability contract</div><h2>Persistence must not weaken realtime safety.</h2></div><div class="ticks">
+<div class="tick"><span>✓</span><div>CRC-protected atomic working-session writes with last-known-good recovery.</div></div>
+<div class="tick"><span>✓</span><div>DSP-safe state capture without a realtime-required control mutex.</div></div>
+<div class="tick"><span>✓</span><div>Dry-first restore followed by atomic whole-generation publication.</div></div>
+<div class="tick"><span>✓</span><div>Split controller/processor VST3 edits synchronized before state capture.</div></div>
+<div class="tick"><span>✓</span><div>Storage failure is surfaced as Needs Attention rather than silent nonpersistent operation.</div></div>
+</div></div></section>
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stage 3 · future</div><h2>Routing, sidechain and advanced audio buses</h2><p>Potential future work includes explicit routing, sidechain inputs, richer VST3 buses, parallel paths where justified, stronger multichannel handling and Float64 fallback. These are not v0.6.1 features.</p></div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Stage 4 · future</div><h2>MIDI and VST3 instruments</h2><p>Instrument hosting needs a real event/timing model—MIDI input, event buses, note/controller timing, sustain/pitch/modulation, state recovery and low-latency monitoring. It is intentionally separate from today's effects-only product scope.</p></div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Long-term</div><h2>A professional OBS live-audio platform without becoming a DAW-sized default UI.</h2><p>Potential directions include scene-aware presets, macro control, richer diagnostics, compatibility intelligence, signed releases, broader platform support and live-performance features—only when the underlying reliability model is preserved.</p></div><div class="notice">Roadmap items are direction, not guaranteed dates. The project intentionally prefers evidence-backed releases over shipping feature count.</div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Release gate</div><h2>What “stable” should continue to mean</h2></div><div class="ticks">
