@@ -120,6 +120,16 @@ std::filesystem::path rack_session_path(obs_source_t* context)
 
 bool start_rack_bridge(RackFilter& filter)
 {
+    // A normal public Rack is zero-action persistent. Never present a writable
+    // Rack as Ready when OBS did not provide a stable UUID/config location: the
+    // user could tune a full chain successfully and lose it on the next restart.
+    // Stay dry and surface Needs Attention instead.
+    if (filter.session_path.empty()) {
+        filter.startup_error =
+            "Rack session storage is unavailable — durable recall is required";
+        return false;
+    }
+
     const auto helper = rack_helper_path();
     if (helper.empty() || !std::filesystem::exists(helper)) {
         filter.startup_error = "Rack helper executable is unavailable";
@@ -128,10 +138,8 @@ bool start_rack_bridge(RackFilter& filter)
 
     auto bridge = std::make_unique<WinRackBridge>();
     std::string error;
-    const bool started = filter.session_path.empty()
-        ? bridge->start(helper, filter.sample_rate, filter.channels, error)
-        : bridge->start(helper, filter.sample_rate, filter.channels,
-                        filter.session_path, error);
+    const bool started = bridge->start(
+        helper, filter.sample_rate, filter.channels, filter.session_path, error);
     if (!started) {
         filter.startup_error = error.empty() ? "Rack helper could not start" : error;
         return false;
@@ -179,8 +187,14 @@ void rack_save(void* data, obs_data_t*)
     if (!filter->bridge || !filter->bridge->running() || filter->session_path.empty())
         return;
 
-    if (!filter->bridge->save_session(kObsSaveSessionTimeoutMs))
-        blog(LOG_WARNING, "[OBS Safe VST3 Rack] timed out while saving the latest Rack session state");
+    const bool completed = filter->bridge->save_session(kObsSaveSessionTimeoutMs);
+    if (!completed) {
+        blog(LOG_WARNING,
+             "[OBS Safe VST3 Rack] bounded save handshake did not complete");
+    } else if (!filter->bridge->last_session_save_succeeded()) {
+        blog(LOG_WARNING,
+             "[OBS Safe VST3 Rack] Rack session capture/write failed; previous durable state was kept");
+    }
 }
 
 void rack_destroy(void* data)
