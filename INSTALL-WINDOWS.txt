@@ -1,4 +1,4 @@
-OBS Safe VST3 Host v0.6.0 — Windows x64
+OBS Safe VST3 Host v0.6.1 — Windows x64
 =========================================
 
 What this installs
@@ -17,7 +17,7 @@ Recommended install — Smart Setup.exe
 2. Download the latest stable release only from:
      https://github.com/masarray/obs-vst3/releases/latest
 3. Run:
-     OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe
+     OBS-Safe-VST3-Host-v0.6.1-Setup-x64.exe
 4. Select the OBS root folder that contains:
      bin\64bit\obs64.exe
 5. Click Install.
@@ -38,11 +38,37 @@ Multiple effects — VST3 Rack
 3. Add compatible VST3 effects in the graphical Rack Editor.
 4. Reorder, bypass, replace or remove slots as needed.
 5. Open a plug-in's native vendor editor when you need its detailed controls.
-6. Use Rack presets for reusable named chains.
+6. Close OBS normally. The latest working Rack is saved automatically.
+7. Reopen OBS. The Rack restores its latest working chain without requiring a
+   named preset.
+8. Use named Rack presets when you want reusable named chains or deliberate
+   recall points independent of the current working session.
 
-The Rack is a serial effects lane in v0.6.0. Free-form graph routing, sidechain,
+The Rack is a serial effects lane in v0.6.1. Free-form graph routing, sidechain,
 MIDI/instruments and arbitrary multichannel processing are not part of this
 release.
+
+Durable Rack recall in v0.6.1
+-----------------------------
+Each OBS VST3 Rack filter owns a durable working-session file derived from its
+OBS source UUID under the module configuration directory.
+
+The working session stores Rack topology, bypass state and VST3 component/
+controller state. Writes are CRC-protected and atomic, with last-known-good
+recovery. OBS scene-collection save/close requests a bounded fresh state capture
+from the isolated helper.
+
+State capture is coordinated at a DSP-safe frontier. The realtime path never
+waits on a control mutex: when a valid wet result cannot be produced safely, the
+Rack remains fail-dry/pass-through.
+
+Slow saved chains restore dry-first and publish the complete restored chain only
+when materialization is coherent. This avoids coupling OBS/Rack availability to
+the aggregate startup time of third-party plug-ins.
+
+If durable Rack storage cannot be established, the filter does not silently run
+as a writable nonpersistent Rack. It stays dry and reports Needs Attention so a
+storage problem cannot masquerade as a successful persistent session.
 
 Installed VST3 effects are discovered automatically. Install only VST3 plug-ins
 from vendors you trust.
@@ -64,7 +90,7 @@ Portable / manual install
 -------------------------
 Advanced users can use:
 
-  OBS-Safe-VST3-Host-v0.6.0-Windows-x64-Portable.zip
+  OBS-Safe-VST3-Host-v0.6.1-Windows-x64-Portable.zip
 
 Extract it directly into the OBS root. The package includes:
 
@@ -94,7 +120,7 @@ integrity check.
 
 Example:
 
-  Get-FileHash .\OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe -Algorithm SHA256
+  Get-FileHash .\OBS-Safe-VST3-Host-v0.6.1-Setup-x64.exe -Algorithm SHA256
 
 Current compatibility scope
 ---------------------------
@@ -107,10 +133,11 @@ Supported today:
 - Serial multi-effect VST3 Rack.
 - Graphical helper-owned Rack Editor.
 - Add / replace / remove / reorder / bypass Rack workflow.
+- Automatic working-Rack recall across normal OBS restarts.
+- Named Rack presets for reusable chains.
 - Installed VST3 discovery.
 - Native vendor VST3 editor when provided by the plug-in.
 - Single Host state persistence and recovery.
-- Rack Session Snapshot and named Rack presets.
 - Crash-isolated helper runtime and scanner.
 - Dry fail-open/pass-through audio and bounded recovery behavior.
 
