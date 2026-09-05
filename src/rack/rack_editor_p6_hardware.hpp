@@ -19,8 +19,6 @@ using namespace safevst3::rack::ui::p5;
 inline ImVec4 metal_top() noexcept { return ImVec4(0.075f, 0.086f, 0.087f, 1.0f); }
 inline ImVec4 metal_bottom() noexcept { return ImVec4(0.025f, 0.031f, 0.032f, 1.0f); }
 inline ImVec4 metal_recess() noexcept { return ImVec4(0.012f, 0.017f, 0.018f, 1.0f); }
-inline ImVec4 led_cyan() noexcept { return ImVec4(0.08f, 0.88f, 0.94f, 1.0f); }
-inline ImVec4 led_amber() noexcept { return ImVec4(1.00f, 0.60f, 0.08f, 1.0f); }
 
 struct HardwareMeterBallistics {
     float in_l = kMeterFloorDb;
@@ -86,6 +84,24 @@ inline void draw_brushed_metal_backplate()
     }
     draw->AddLine(ImVec2(p.x + 1.0f, p.y + 1.0f), ImVec2(q.x - 1.0f, p.y + 1.0f),
                   ImGui::ColorConvertFloat4ToU32(ImVec4(0.65f, 0.72f, 0.72f, 0.14f)), 1.0f);
+}
+
+inline void draw_recessed_rack_bay()
+{
+    draw_brushed_metal_backplate();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetWindowPos();
+    const ImVec2 s = ImGui::GetWindowSize();
+    const ImVec2 inset_min(p.x + 5.0f, p.y + 5.0f);
+    const ImVec2 inset_max(p.x + s.x - 5.0f, p.y + s.y - 5.0f);
+    draw->AddRectFilled(inset_min, inset_max,
+                        ImGui::ColorConvertFloat4ToU32(ImVec4(0.014f, 0.020f, 0.021f, 0.93f)), 7.0f);
+    draw->AddRect(inset_min, inset_max,
+                  ImGui::ColorConvertFloat4ToU32(ImVec4(0.24f, 0.28f, 0.28f, 0.28f)),
+                  7.0f, 0, 1.0f);
+    draw->AddLine(ImVec2(inset_min.x + 5.0f, inset_min.y + 1.0f),
+                  ImVec2(inset_max.x - 5.0f, inset_min.y + 1.0f),
+                  ImGui::ColorConvertFloat4ToU32(ImVec4(0.55f, 0.61f, 0.61f, 0.08f)), 1.0f);
 }
 
 inline ImU32 segment_color(float db, bool active) noexcept
@@ -388,8 +404,35 @@ inline void SafeVst3P6StyleColorsDark(ImGuiStyle* dst = nullptr)
 
 inline void SafeVst3P6TextUnformatted(const char* text, const char* text_end = nullptr)
 {
+    using namespace safevst3::rack::ui::p1;
     using namespace safevst3::rack::ui::p3;
     using namespace safevst3::rack::ui::p6;
+
+    if (!text_end && text && std::strcmp(text, "INPUT") == 0) {
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        if (available.x >= kPremiumSplitThreshold) {
+            const float right_width =
+                std::clamp(available.x * kPremiumConsoleShare, 285.0f, 360.0f);
+            const float left_width =
+                std::max(355.0f, available.x - right_width - kPremiumConsoleGap);
+            console_frame.pane_height = std::max(260.0f, available.y);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 9.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, metal_bottom());
+            ImGui::BeginChild("rack-p6-recessed-lane",
+                              ImVec2(left_width, console_frame.pane_height),
+                              ImGuiChildFlags_None);
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(2);
+            draw_recessed_rack_bay();
+            console_frame.split_started = true;
+        }
+
+        draw_section_label("SIGNAL CHAIN", "INPUT");
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        return;
+    }
 
     if (!text_end && text && std::strcmp(text, "OUTPUT TO OBS") == 0) {
         if (console_frame.split_started) {
