@@ -12,12 +12,13 @@ OBS Safe VST3 Host focuses on one product promise: **make modern VST3 audio effe
 4. **Failure degrades gracefully.** An unavailable wet path should fail to dry/pass-through rather than deliberately stall the broadcast path.
 5. **Simple stays simple.** The Single Host remains available even as Rack features grow.
 6. **Compatibility claims stay evidence-based.** Prefer reproducible qualification and clear diagnostics over vendor-name special cases.
+7. **Working state must survive normal OBS lifecycle.** Users should not need to create a named preset just to preserve the Rack they were actively using.
 
 ---
 
 ## Stage 1 — Safe VST3 Single Host — Stable
 
-**Status: public stable since v0.5.0; retained in v0.6.0**
+**Status: public stable since v0.5.0; retained in v0.6.1**
 
 The Single Host is the focused one-effect workflow.
 
@@ -37,13 +38,13 @@ The Single Host remains the recommended path when one EQ, compressor, denoiser, 
 
 ---
 
-## Stage 2 — Safe VST3 Rack — Stable in v0.6.0
+## Stage 2 — Safe VST3 Rack — Stable, hardened in v0.6.1
 
-**Status: public stable in v0.6.0**
+**Status: introduced as public stable in v0.6.0; durable recall/state-safety hardening shipped in v0.6.1**
 
 The Rack turns multiple VST3 audio effects into one isolated serial processing lane while remaining a separate OBS product surface and helper process.
 
-Delivered in v0.6.0:
+Current stable capabilities:
 
 - separate OBS **VST3 Rack** filter;
 - separate Rack helper executable and protocol;
@@ -53,10 +54,14 @@ Delivered in v0.6.0:
 - per-slot bypass / enable workflow;
 - graphical helper-owned Rack Editor;
 - native vendor editor orchestration;
-- coherent Session Snapshot recovery;
+- automatic durable per-OBS-Rack working-session recall;
+- CRC-protected atomic snapshot + last-known-good recovery;
 - named Rack preset save/load/rename/update/delete;
 - pass-through placeholders for missing VST3 slots;
 - bounded handling of invalid preset loads;
+- DSP-safe VST3 state capture without a realtime-required control mutex;
+- dry-first asynchronous restore followed by atomic whole-generation publication;
+- split controller/processor VST3 parameter synchronization before state capture;
 - fail-dry behavior when a valid Rack result is unavailable;
 - bounded helper shutdown and editor close/reopen hardening.
 
@@ -82,7 +87,7 @@ OBS output
 
 ### Remaining Rack hardening
 
-Future Rack work may deepen diagnostics, quarantine/recovery behavior, stress qualification and compatibility intelligence without weakening the stable v0.6.0 product contract.
+Future Rack work may deepen diagnostics, quarantine/recovery behavior, stress qualification and compatibility intelligence without weakening the stable v0.6.1 product contract.
 
 ---
 
