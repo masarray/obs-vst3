@@ -452,7 +452,18 @@ bool WinRackBridge::process(float* const* channels,
 
 bool WinRackBridge::open_editor() noexcept
 {
-    return running() && ui_open_event_ && SetEvent(ui_open_event_) != FALSE;
+    if (!running() || !ui_open_event_ || !process_.hProcess)
+        return false;
+
+    // The click originates inside the foreground OBS process but the Rack UI
+    // is owned by the isolated helper process. Explicitly grant that child one
+    // foreground activation opportunity before signaling its open/foreground
+    // event, otherwise Windows may legally create the Rack behind OBS.
+    const DWORD helper_pid = GetProcessId(process_.hProcess);
+    if (helper_pid != 0)
+        (void)AllowSetForegroundWindow(helper_pid);
+
+    return SetEvent(ui_open_event_) != FALSE;
 }
 
 bool WinRackBridge::save_session(DWORD timeout_ms) noexcept
