@@ -46,7 +46,8 @@ WinRackBridge::Names WinRackBridge::make_names()
     ss << L"Local\\obs-safe-vst3-rack-" << pid << L'-' << tick << L'-' << serial;
     const std::wstring base = ss.str();
     return {base + L"-map", base + L"-req", base + L"-rsp",
-            base + L"-ready", base + L"-ui-open"};
+            base + L"-ready", base + L"-ui-open",
+            base + L"-session-save", base + L"-session-saved"};
 }
 
 std::uint64_t WinRackBridge::qpc_now() noexcept
@@ -77,6 +78,16 @@ bool WinRackBridge::process_alive() const noexcept
 bool WinRackBridge::start(const std::filesystem::path& helper,
                           std::uint32_t sample_rate,
                           std::uint32_t channels,
+                          std::string& error,
+                          std::stop_token cancel)
+{
+    return start(helper, sample_rate, channels, std::filesystem::path{}, error, cancel);
+}
+
+bool WinRackBridge::start(const std::filesystem::path& helper,
+                          std::uint32_t sample_rate,
+                          std::uint32_t channels,
+                          const std::filesystem::path& session_file,
                           std::string& error,
                           std::stop_token cancel)
 {
@@ -124,7 +135,14 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
     response_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.response_event.c_str());
     ready_event_ = CreateEventW(nullptr, TRUE, FALSE, names_.ready_event.c_str());
     ui_open_event_ = CreateEventW(nullptr, FALSE, FALSE, names_.ui_open_event.c_str());
-    if (!request_event_ || !response_event_ || !ready_event_ || !ui_open_event_) {
+    if (!session_file.empty()) {
+        session_save_event_ = CreateEventW(
+            nullptr, FALSE, FALSE, names_.session_save_event.c_str());
+        session_saved_event_ = CreateEventW(
+            nullptr, FALSE, FALSE, names_.session_saved_event.c_str());
+    }
+    if (!request_event_ || !response_event_ || !ready_event_ || !ui_open_event_ ||
+        (!session_file.empty() && (!session_save_event_ || !session_saved_event_))) {
         error = win_error("CreateEventW(Rack)");
         stop();
         return false;
@@ -136,6 +154,11 @@ bool WinRackBridge::start(const std::filesystem::path& helper,
         L" --response-event " + quote(names_.response_event) +
         L" --ready-event " + quote(names_.ready_event) +
         L" --ui-open-event " + quote(names_.ui_open_event);
+    if (!session_file.empty()) {
+        command += L" --session-file " + quote(session_file.wstring()) +
+                   L" --session-save-event " + quote(names_.session_save_event) +
+                   L" --session-saved-event " + quote(names_.session_saved_event);
+    }
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -242,11 +265,14 @@ void WinRackBridge::stop() noexcept
     process_ = {};
     if (region_) UnmapViewOfFile(region_);
     region_ = nullptr;
+    if (session_saved_event_) CloseHandle(session_saved_event_);
+    if (session_save_event_) CloseHandle(session_save_event_);
     if (ui_open_event_) CloseHandle(ui_open_event_);
     if (ready_event_) CloseHandle(ready_event_);
     if (response_event_) CloseHandle(response_event_);
     if (request_event_) CloseHandle(request_event_);
     if (mapping_) CloseHandle(mapping_);
+    session_saved_event_ = session_save_event_ = nullptr;
     ui_open_event_ = ready_event_ = response_event_ = request_event_ = mapping_ = nullptr;
     names_ = {};
     pending_request_generation_ = 0;
@@ -361,6 +387,21 @@ bool WinRackBridge::process(float* const* channels,
 bool WinRackBridge::open_editor() noexcept
 {
     return running() && ui_open_event_ && SetEvent(ui_open_event_) != FALSE;
+}
+
+bool WinRackBridge::save_session(DWORD timeout_ms) noexcept
+{
+    if (!running() || !session_save_event_ || !session_saved_event_ ||
+        !process_.hProcess)
+        return false;
+
+    (void)ResetEvent(session_saved_event_);
+    if (!SetEvent(session_save_event_))
+        return false;
+
+    HANDLE waits[] = {session_saved_event_, process_.hProcess};
+    const DWORD wait = WaitForMultipleObjects(2, waits, FALSE, timeout_ms);
+    return wait == WAIT_OBJECT_0;
 }
 
 RackBridgeStatus WinRackBridge::status() const noexcept
