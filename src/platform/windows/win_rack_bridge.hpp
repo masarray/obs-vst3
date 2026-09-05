@@ -53,6 +53,15 @@ public:
 
     bool open_editor() noexcept;
     bool save_session(DWORD timeout_ms = 750) noexcept;
+
+    bool last_session_save_succeeded() const noexcept
+    {
+        return region_ &&
+            InterlockedCompareExchange(
+                &region_->session_save_result, 0, 0) ==
+                static_cast<long>(rack::RackSessionSaveResult::Ok);
+    }
+
     RackBridgeStatus status() const noexcept;
 
     std::uint64_t deadline_misses() const noexcept
