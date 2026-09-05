@@ -76,6 +76,18 @@ public:
     void close() noexcept;
     bool process(const ProcessBlockView& block) noexcept;
 
+    // Optional control-owner hooks. The base Single host does not need them;
+    // RackHostedPlugin overrides them so the separately compiled native-editor
+    // manager can service vendor restartComponent callbacks through the base
+    // HostedPlugin reference, and state capture can wait until controller edits
+    // have actually reached processor/component state.
+    virtual void service_component_handler_callbacks() noexcept {}
+    virtual bool synchronize_component_handler_state(std::string& error) noexcept
+    {
+        (void)error;
+        return true;
+    }
+
     bool capture_state(PluginStateSnapshot& snapshot, std::string& error);
     bool restore_state(const PluginStateSnapshot& snapshot, std::string& error);
     bool refresh_latency_after_restart(std::string& error);
