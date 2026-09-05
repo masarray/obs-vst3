@@ -21,6 +21,7 @@ using namespace Steinberg::Vst;
 static const FUID kProcessorUid(0x13C07981, 0xA3E34AB4, 0xB86D9380, 0x17E35D42);
 static const FUID kControllerUid(0x5227BC17, 0x44E04C01, 0x8B94CF4B, 0xF0B9D2A1);
 constexpr ParamID kGainParameterId = 100;
+constexpr ParamID kPresetTriggerParameterId = 101;
 constexpr auto kPluginName = "SafeVST3 R3-3 Vendor Editor Fixture";
 constexpr SpeakerArrangement kArrangement = SpeakerArr::kStereo;
 constexpr uint32 kLatencySamples = 32;
@@ -268,6 +269,8 @@ public:
             return result;
         parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5,
                                 ParameterInfo::kCanAutomate, kGainParameterId);
+        parameters.addParameter(STR16("Preset Trigger"), nullptr, 0, 0.5,
+                                ParameterInfo::kIsHidden, kPresetTriggerParameterId);
         return kResultOk;
     }
 
@@ -280,9 +283,20 @@ public:
     tresult PLUGIN_API setParamNormalized(ParamID tag, ParamValue value) override
     {
         const tresult result = EditController::setParamNormalized(tag, value);
-        if (result == kResultTrue && native_view_created_ && component_handler_ &&
-            tag == kGainParameterId) {
-            // Model a real vendor GUI edit: the controller changes locally then
+        if (result != kResultTrue || !native_view_created_ || !component_handler_)
+            return result;
+
+        if (tag == kPresetTriggerParameterId) {
+            // Model an internal vendor preset load. The controller updates many
+            // values privately, then asks the host to resynchronize all parameter
+            // values with the processor rather than emitting performEdit per knob.
+            (void)EditController::setParamNormalized(kGainParameterId, value);
+            (void)component_handler_->restartComponent(kParamValuesChanged);
+            return result;
+        }
+
+        if (tag == kGainParameterId) {
+            // Model a normal native GUI edit: the controller changes locally then
             // asks the host to forward that value to the processor component.
             (void)component_handler_->beginEdit(tag);
             (void)component_handler_->performEdit(tag, value);
