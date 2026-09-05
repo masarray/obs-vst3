@@ -56,9 +56,11 @@ The final v0.6.1 runtime candidate `ce5eb052c97076df735b95b55328f76e222475ee` pa
 - CI;
 - Compatibility Test Build.
 
-Representative real OBS validation changed commercial split-component VST3 settings across three successive OBS sessions and confirmed that the latest full DSP state—not only preset/controller metadata—returned after each restart.
+Representative real OBS Rack validation changed commercial split-component VST3 settings across three successive OBS sessions and confirmed that the latest full DSP state—not only preset/controller metadata—returned after each restart.
 
-The runtime candidate was merged in PR #109 as `f91847744a1c824c255666b4a2f9e34b28db3905`. The public v0.6.1 release marker is a documentation/version descendant of that qualified runtime change.
+The **Single VST3 Host** was also validated through repeated full OBS close/reopen cycles with settings deliberately changed in each session. The most recent VST3 state returned after every restart, confirming that users do not need to reconfigure the Single Host after normal OBS restarts.
+
+The runtime candidate was merged in PR #109 as `f91847744a1c824c255666b4a2f9e34b28db3905`. The public v0.6.1 release marker is a documentation/version descendant of that qualified runtime change and is protected by the exact-head release-candidate gate before publication.
 
 ### Stable scope
 
