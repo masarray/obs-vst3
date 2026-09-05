@@ -11,7 +11,7 @@
 #include "rack/rack_hosted_plugin.hpp"
 #endif
 
-// Angle brackets are intentional: the shipping target puts its generated
-// R3-4 include root before the checked-in source tree, so persistence wiring
-// can be qualified without mutating the already-proven R3-4 fixture source.
-#include <rack/main_r3_4.cpp>
+// The persistence wrapper includes the qualified R3-4 implementation in the
+// same translation unit, renames only its product entrypoint, then layers the
+// OBS-session restore/autosave lifecycle on top of those proven primitives.
+#include "rack/main_r3_4_persistent.cpp"
