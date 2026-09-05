@@ -1,0 +1,151 @@
+name: Release Candidate Exact-Head Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-matrix:
+    name: ${{ matrix.suite }}
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - UI-0
+          - P0
+          - P1
+          - R0-1
+          - R0-2
+          - R1-1
+          - R1-2
+          - R1-3
+          - R1-4
+          - R2-1
+          - R2-3
+          - R3-0
+          - R3-1
+          - R3-2
+          - R3-3
+          - R3-4
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Run exact focused qualification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Suite = '${{ matrix.suite }}'
+
+          function Invoke-CmakeSuite {
+            param(
+              [Parameter(Mandatory=$true)][string] $Source,
+              [Parameter(Mandatory=$true)][string] $Build,
+              [string[]] $Targets = @()
+            )
+            cmake -S $Source -B $Build -A x64
+            if ($LASTEXITCODE -ne 0) { throw "$Suite configure failed" }
+
+            if ($Targets.Count -gt 0) {
+              $Args = @('--build', $Build, '--config', 'Release', '--target') + $Targets + @('--parallel')
+              & cmake @Args
+            } else {
+              cmake --build $Build --config Release --parallel
+            }
+            if ($LASTEXITCODE -ne 0) { throw "$Suite build failed" }
+
+            ctest --test-dir $Build -C Release --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "$Suite tests failed" }
+          }
+
+          switch ($Suite) {
+            'UI-0' {
+              .\scripts\ui0-build-smoke.ps1 -BuildDir 'build/ui0' -Configuration Release
+              $Source = Get-Content 'tests\ui0\rack_ui_smoke.cpp' -Raw
+              $Cmake = Get-Content 'tests\ui0\CMakeLists.txt' -Raw
+              foreach ($Forbidden in @('vst3_engine', 'pluginterfaces/', 'public.sdk/', 'obs-module.h', 'libobs')) {
+                if ($Source.Contains($Forbidden) -or $Cmake.Contains($Forbidden)) {
+                  throw "UI-0 proof leaked forbidden dependency token: $Forbidden"
+                }
+              }
+              $Evidence = Get-Content 'build\ui0\ui0-evidence.json' -Raw | ConvertFrom-Json
+              if ($Evidence.imgui_commit -ne '01380c579715e62fb9a8d6ec0502c4ea83bfde6e') { throw 'Unexpected Dear ImGui commit' }
+              if ($Evidence.imgui_license -ne 'MIT') { throw 'Unexpected Dear ImGui license' }
+            }
+            'P0' {
+              .\tests\p0_shutdown\shutdown_contract.ps1
+              Invoke-CmakeSuite 'tests/p0_shutdown' 'build/p0-shutdown'
+            }
+            'P1' {
+              .\tests\p1_rack_editor\p1_visual_contract.ps1
+            }
+            'R0-1' {
+              Invoke-CmakeSuite 'tests/r0_1' 'build/r0-1' @('r0-1-vst3-engine-process-test')
+            }
+            'R0-2' {
+              Invoke-CmakeSuite 'tests/r0_2' 'build/r0-2' @('r0-2-hosted-plugin-characterization')
+            }
+            'R1-1' {
+              Invoke-CmakeSuite 'tests/r1_1' 'build/r1-1' @('r1-1-rack-serial-integration')
+            }
+            'R1-2' {
+              Invoke-CmakeSuite 'tests/r1_2' 'build/r1-2' @('r1-2-rack-safety-integration')
+            }
+            'R1-3' {
+              Invoke-CmakeSuite 'tests/r1_3' 'build/r1-3' @('r1-3-rack-topology-integration')
+            }
+            'R1-4' {
+              Invoke-CmakeSuite 'tests/r1_4' 'build/r1-4' @('r1-4-rack-recovery-integration')
+            }
+            'R2-1' {
+              Invoke-CmakeSuite 'tests/r2_1' 'build/r2-1' @('r2-1-rack-session-snapshot-integration')
+            }
+            'R2-3' {
+              Invoke-CmakeSuite 'tests/r2_3' 'build/r2-3'
+            }
+            'R3-0' {
+              Invoke-CmakeSuite 'tests/r3_0' 'build/r3-0' @('r3-0-rack-editor-lifecycle', 'r3-0-rack-editor-contract')
+              $Cmake = Get-Content 'src\rack\CMakeLists.txt' -Raw
+              $EditorHeader = Get-Content 'src\rack\rack_editor_window.hpp' -Raw
+              $EditorSource = Get-Content 'src\rack\rack_editor_window.cpp' -Raw
+              $SessionHeader = Get-Content 'src\rack\rack_session_snapshot.hpp' -Raw
+              $SessionSource = Get-Content 'src\rack\rack_session_snapshot.cpp' -Raw
+              if (-not $Cmake.Contains('01380c579715e62fb9a8d6ec0502c4ea83bfde6e')) { throw 'R3-0 UI-0 pin mismatch' }
+              foreach ($Forbidden in @('obs-module.h', 'OBS::libobs', '<QWidget', '<QObject', 'Qt6::')) {
+                if ($EditorHeader.Contains($Forbidden) -or $EditorSource.Contains($Forbidden)) { throw "Rack editor leaked forbidden dependency: $Forbidden" }
+              }
+              if ($SessionHeader.Contains('ui_open') -or $SessionSource.Contains('ui_open') -or $SessionHeader.Contains('editor_open') -or $SessionSource.Contains('editor_open')) { throw 'Transient editor state leaked into Session Snapshot' }
+              if ($EditorSource -notmatch 'ImGui_ImplWin32' -or $EditorSource -notmatch 'ImGui_ImplDX11') { throw 'Rack editor backend mismatch' }
+            }
+            'R3-1' {
+              Invoke-CmakeSuite 'tests/r3_1' 'build/r3-1' @('r3-1-rack-obs-bridge')
+            }
+            'R3-2' {
+              Invoke-CmakeSuite 'tests/r3_2' 'build/r3-2'
+            }
+            'R3-3' {
+              Invoke-CmakeSuite 'tests/r3_3' 'build/r3-3'
+            }
+            'R3-4' {
+              Invoke-CmakeSuite 'tests/r3_4' 'build/r3-4'
+            }
+            default { throw "Unknown qualification suite: $Suite" }
+          }
+
+      - name: Record exact source identity
+        shell: pwsh
+        run: |
+          "suite=${{ matrix.suite }}" >> $env:GITHUB_STEP_SUMMARY
+          "source=${{ github.sha }}" >> $env:GITHUB_STEP_SUMMARY
