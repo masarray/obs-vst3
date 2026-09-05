@@ -63,20 +63,59 @@ set(_safevst3_r3_2_embed_root "${CMAKE_CURRENT_BINARY_DIR}/r3_4_embed")
 file(MAKE_DIRECTORY "${_safevst3_r3_2_embed_root}/rack")
 file(WRITE "${_safevst3_r3_2_embed_root}/rack/main_r3_2.cpp" "${_safevst3_r3_2_embed}")
 
-# P5 instruments only the shipping helper copy of the qualified Rack DSP loop.
-# P4 keeps bounded sample-peak telemetry; P5 adds final-output BS.1770 LUFS-I and
-# 4x true-peak reconstruction. The checked-in R1/R2 source remains unchanged.
+# P6 instruments only the shipping helper copy of the qualified Rack DSP loop.
+# P5's authoritative final-output LUFS-I/dBTP remains intact; P6 adds real
+# session Input Trim / Output Fader gain, one-block ramps, and stereo L/R peak
+# telemetry. The checked-in qualified R1/R2 source remains unchanged.
 set(_safevst3_meter_main_source "${CMAKE_CURRENT_LIST_DIR}/main.cpp")
 file(READ "${_safevst3_meter_main_source}" _safevst3_meter_main_embed)
 
 set(_safevst3_meter_include_anchor "#include \"rack/rack_protocol.hpp\"\n")
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_include_anchor}" _safevst3_meter_include_pos)
 if(_safevst3_meter_include_pos EQUAL -1)
-    message(FATAL_ERROR "P5 meter instrumentation could not locate Rack protocol include")
+    message(FATAL_ERROR "P6 master instrumentation could not locate Rack protocol include")
 endif()
 string(REPLACE
     "${_safevst3_meter_include_anchor}"
-    "#include \"rack/rack_protocol.hpp\"\n#include \"rack/rack_meter_telemetry.hpp\"\n#include \"rack/rack_broadcast_loudness.hpp\"\n"
+    "#include \"rack/rack_protocol.hpp\"\n#include \"rack/rack_meter_telemetry.hpp\"\n#include \"rack/rack_broadcast_loudness.hpp\"\n#include \"rack/rack_master_controls.hpp\"\n"
+    _safevst3_meter_main_embed
+    "${_safevst3_meter_main_embed}"
+)
+
+set(_safevst3_master_setup_anchor [=[
+    RackBuffers buffers;
+    float* rack_input[kMaxChannels]{};
+    float* ping[kMaxChannels]{};
+    float* pong[kMaxChannels]{};
+
+    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+        rack_input[ch] = endpoint.region->input[ch];
+        ping[ch] = buffers.ping[ch].data();
+        pong[ch] = buffers.pong[ch].data();
+    }
+]=])
+string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_master_setup_anchor}" _safevst3_master_setup_pos)
+if(_safevst3_master_setup_pos EQUAL -1)
+    message(FATAL_ERROR "P6 master instrumentation could not locate Rack buffer setup")
+endif()
+set(_safevst3_master_setup_replace [=[
+    RackBuffers buffers;
+    float* rack_input[kMaxChannels]{};
+    float* trimmed[kMaxChannels]{};
+    float* ping[kMaxChannels]{};
+    float* pong[kMaxChannels]{};
+    safevst3::rack::ui::RackMasterGainSmoother master_gain_smoother{};
+
+    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+        rack_input[ch] = endpoint.region->input[ch];
+        trimmed[ch] = endpoint.region->output[ch];
+        ping[ch] = buffers.ping[ch].data();
+        pong[ch] = buffers.pong[ch].data();
+    }
+]=])
+string(REPLACE
+    "${_safevst3_master_setup_anchor}"
+    "${_safevst3_master_setup_replace}"
     _safevst3_meter_main_embed
     "${_safevst3_meter_main_embed}"
 )
@@ -89,20 +128,37 @@ set(_safevst3_meter_valid_anchor [=[
 ]=])
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_valid_anchor}" _safevst3_meter_valid_pos)
 if(_safevst3_meter_valid_pos EQUAL -1)
-    message(FATAL_ERROR "P5 meter instrumentation could not locate validated DSP block seam")
+    message(FATAL_ERROR "P6 master instrumentation could not locate validated DSP block seam")
 endif()
 set(_safevst3_meter_valid_replace [=[
             continue;
         }
 
-        const float input_meter_peak = safevst3::rack::ui::rack_meter_block_peak(
-            rack_input, channels, frames);
+        const safevst3::rack::ui::RackMasterControlSnapshot master_controls =
+            safevst3::rack::ui::g_rack_master_controls.snapshot();
+        safevst3::rack::ui::rack_apply_smoothed_gain(
+            rack_input, trimmed, channels, frames, master_controls.input_db,
+            master_gain_smoother.input_linear);
+        const safevst3::rack::ui::RackStereoPeaks input_meter_peaks =
+            safevst3::rack::ui::rack_meter_stereo_peaks(trimmed, channels, frames);
 
         std::uint32_t generation_index = 0;
 ]=])
 string(REPLACE
     "${_safevst3_meter_valid_anchor}"
     "${_safevst3_meter_valid_replace}"
+    _safevst3_meter_main_embed
+    "${_safevst3_meter_main_embed}"
+)
+
+set(_safevst3_master_current_anchor "        float** current = rack_input;")
+string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_master_current_anchor}" _safevst3_master_current_pos)
+if(_safevst3_master_current_pos EQUAL -1)
+    message(FATAL_ERROR "P6 master instrumentation could not locate Rack chain input pointer")
+endif()
+string(REPLACE
+    "${_safevst3_master_current_anchor}"
+    "        float** current = trimmed;"
     _safevst3_meter_main_embed
     "${_safevst3_meter_main_embed}"
 )
@@ -117,15 +173,22 @@ set(_safevst3_meter_failure_anchor [=[
 ]=])
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_failure_anchor}" _safevst3_meter_failure_pos)
 if(_safevst3_meter_failure_pos EQUAL -1)
-    message(FATAL_ERROR "P5 meter instrumentation could not locate fail-dry seam")
+    message(FATAL_ERROR "P6 master instrumentation could not locate fail-dry seam")
 endif()
 set(_safevst3_meter_failure_replace [=[
         if (!block_ok) {
-            copy_original_dry(*endpoint.region, channels, frames);
-            safevst3::rack::ui::g_rack_meter_telemetry.publish(
-                sequence, input_meter_peak, input_meter_peak);
+            // `trimmed` still holds the post-input-trim dry signal because plug-ins
+            // process only ping/pong. Keep the master Output Fader authoritative on
+            // fail-dry so a muted/attenuated Rack can never jump to full level.
+            safevst3::rack::ui::rack_apply_smoothed_gain(
+                trimmed, trimmed, channels, frames, master_controls.output_db,
+                master_gain_smoother.output_linear);
+            const safevst3::rack::ui::RackStereoPeaks output_meter_peaks =
+                safevst3::rack::ui::rack_meter_stereo_peaks(trimmed, channels, frames);
+            safevst3::rack::ui::g_rack_meter_telemetry.publish_stereo(
+                sequence, input_meter_peaks, output_meter_peaks);
             safevst3::rack::ui::g_rack_broadcast_loudness.process(
-                rack_input, channels, frames, endpoint.region->sample_rate, sequence);
+                trimmed, channels, frames, endpoint.region->sample_rate, sequence);
             release_generation(store, generation_index);
             publish_result(*endpoint.region, endpoint.response, request_generation, block_result);
             continue;
@@ -145,17 +208,19 @@ set(_safevst3_meter_success_anchor [=[
 ]=])
 string(FIND "${_safevst3_meter_main_embed}" "${_safevst3_meter_success_anchor}" _safevst3_meter_success_pos)
 if(_safevst3_meter_success_pos EQUAL -1)
-    message(FATAL_ERROR "P5 meter instrumentation could not locate successful output seam")
+    message(FATAL_ERROR "P6 master instrumentation could not locate successful output seam")
 endif()
 set(_safevst3_meter_success_replace [=[
         clear_rack_breadcrumb(*endpoint.region);
-        copy_current_output(*endpoint.region, current, channels, frames);
-        const float output_meter_peak = safevst3::rack::ui::rack_meter_block_peak(
-            current, channels, frames);
-        safevst3::rack::ui::g_rack_meter_telemetry.publish(
-            sequence, input_meter_peak, output_meter_peak);
+        safevst3::rack::ui::rack_apply_smoothed_gain(
+            current, trimmed, channels, frames, master_controls.output_db,
+            master_gain_smoother.output_linear);
+        const safevst3::rack::ui::RackStereoPeaks output_meter_peaks =
+            safevst3::rack::ui::rack_meter_stereo_peaks(trimmed, channels, frames);
+        safevst3::rack::ui::g_rack_meter_telemetry.publish_stereo(
+            sequence, input_meter_peaks, output_meter_peaks);
         safevst3::rack::ui::g_rack_broadcast_loudness.process(
-            current, channels, frames, endpoint.region->sample_rate, sequence);
+            trimmed, channels, frames, endpoint.region->sample_rate, sequence);
         release_generation(store, generation_index);
 ]=])
 string(REPLACE
@@ -241,12 +306,12 @@ add_executable(obs-safe-vst3-rack-host
     "${SAFEVST3_RACK_ROOT}/src/host/native_editor.cpp"
 )
 
-# P5 layers the premium broadcast console on top of the already-qualified P4
-# live peak meter. UI reads only atomic telemetry; DSP never calls ImGui.
+# P6 layers the original hardware-style master surface on P5. UI reads/writes
+# only lock-free master-control and metering atomics; DSP never calls ImGui.
 set_source_files_properties(
     "${_safevst3_editor_generated}"
     PROPERTIES
-        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p5_broadcast.hpp"
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_LIST_DIR}/rack_editor_p6_hardware.hpp"
 )
 
 target_include_directories(obs-safe-vst3-rack-host BEFORE PRIVATE
@@ -274,9 +339,19 @@ if(SAFEVST3_BUILD_TESTS)
         "${SAFEVST3_RACK_ROOT}/src")
     add_test(NAME safevst3-rack-broadcast-meter-contract
              COMMAND safevst3-rack-broadcast-meter-contract)
-    # Any qualified Rack build also compiles the numerical BS.1770/dBTP probe,
-    # so focused R3/compatibility jobs cannot silently skip the new meter core.
-    add_dependencies(obs-safe-vst3-rack-host safevst3-rack-broadcast-meter-contract)
+
+    add_executable(safevst3-rack-master-gain-contract
+        "${SAFEVST3_RACK_ROOT}/tests/p1_rack_editor/master_gain_contract.cpp")
+    target_include_directories(safevst3-rack-master-gain-contract PRIVATE
+        "${SAFEVST3_RACK_ROOT}/src")
+    add_test(NAME safevst3-rack-master-gain-contract
+             COMMAND safevst3-rack-master-gain-contract)
+
+    # Any qualified Rack build also compiles the numerical broadcast and master
+    # probes, so focused compatibility jobs cannot silently skip the cores.
+    add_dependencies(obs-safe-vst3-rack-host
+        safevst3-rack-broadcast-meter-contract
+        safevst3-rack-master-gain-contract)
 endif()
 
 if(TARGET obs-safe-vst3-scanner)
