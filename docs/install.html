@@ -3,26 +3,32 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071019">
-  <title>Install OBS Safe VST3 Host v0.6.0 on Windows</title>
-  <meta name="description" content="Install OBS Safe VST3 Host v0.6.0 and its VST3 Rack on OBS Studio for Windows x64 using the Smart Installer or portable ZIP.">
+  <title>Install OBS Safe VST3 Host v0.6.1 on Windows</title>
+  <meta name="description" content="Install OBS Safe VST3 Host v0.6.1 and its durable VST3 Rack on OBS Studio for Windows x64 using the Smart Installer or portable ZIP.">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/install.html">
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.0</a></nav></div></header>
+<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.1</a></nav></div></header>
 <main>
-<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Recommended installation · v0.6.0 stable</div><h1>Install once. Use the Single Host or the VST3 Rack.</h1><p class="lead">The Smart Installer validates your OBS root, installs the Single Host, Rack Host, scanner and locale files, remembers that target for later upgrades, and registers a normal Windows uninstaller.</p><div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Open GitHub Releases</a><a class="btn secondary" href="#manual">Portable/manual install</a></div></div></section>
+<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Recommended installation · v0.6.1 stable</div><h1>Install once. Use the Single Host or the VST3 Rack.</h1><p class="lead">The Smart Installer validates your OBS root, installs the Single Host, Rack Host, scanner and locale files, remembers that target for later upgrades, and registers a normal Windows uninstaller.</p><div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/releases/latest">Open GitHub Releases</a><a class="btn secondary" href="#manual">Portable/manual install</a></div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Smart Installer</div><h2>Recommended for nearly everyone</h2></div><div class="grid3">
 <article class="card"><div class="icon">1</div><h3>Close OBS</h3><p>Stop streaming/recording and close OBS Studio before replacing plug-in binaries.</p></article>
-<article class="card"><div class="icon">2</div><h3>Run Setup</h3><p>Download <code>OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe</code> only from this project's GitHub Releases page.</p></article>
+<article class="card"><div class="icon">2</div><h3>Run Setup</h3><p>Download <code>OBS-Safe-VST3-Host-v0.6.1-Setup-x64.exe</code> only from this project's GitHub Releases page.</p></article>
 <article class="card"><div class="icon">3</div><h3>Select OBS root</h3><p>Choose the folder containing <code>bin\64bit\obs64.exe</code>. Normal, custom and portable-mode roots use the same product layout.</p></article>
 </div><div class="notice" style="margin-top:20px">Windows may show <b>Unknown publisher</b> because the current package is not commercially Authenticode-signed. Do not disable Defender or SmartScreen globally. Use the official Releases page and verify <code>SHA256SUMS.txt</code> if you want an additional integrity check.</div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">After installation</div><h2>Choose the workflow that matches your chain</h2></div><div class="grid3">
 <article class="card"><div class="icon">1FX</div><h3>Single effect</h3><p>Audio source → Filters → + → <b>VST 3.x Plug-in</b>. Select an installed VST3 effect, then open its vendor interface.</p></article>
 <article class="card"><div class="icon">RACK</div><h3>Multiple effects</h3><p>Audio source → Filters → + → <b>VST3 Rack</b>. Open Rack, add effects, reorder/bypass them and open native vendor UIs when needed.</p></article>
-<article class="card"><div class="icon">SAVE</div><h3>Recall</h3><p>The Rack maintains working Session Snapshot state and also supports named presets for reusable chains.</p></article>
+<article class="card"><div class="icon">SAVE</div><h3>Automatic recall</h3><p>The latest working Rack is saved automatically for normal OBS restart continuity. Named presets remain independent reusable chains.</p></article>
 </div></div></section>
-<section id="manual"><div class="wrap"><div class="sectionHead"><div class="kicker">Portable package</div><h2>Manual installation for advanced users</h2><p>Download <code>OBS-Safe-VST3-Host-v0.6.0-Windows-x64-Portable.zip</code> and extract its contents directly into the OBS root.</p></div><div class="compat">
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">v0.6.1 Rack recall</div><h2>No named preset is required just to survive an OBS restart.</h2><p>Each VST3 Rack filter owns a durable working-session snapshot identified by its OBS source UUID. OBS save/close requests a bounded fresh state capture; the helper restores slow chains dry-first and publishes the complete restored generation only when it is coherent.</p></div><div class="ticks">
+<div class="tick"><span>✓</span><div><b>Topology + bypass + VST3 state.</b> The working chain is persisted as one coherent Rack session.</div></div>
+<div class="tick"><span>✓</span><div><b>Atomic + last-known-good.</b> CRC-protected session writes preserve a recovery copy.</div></div>
+<div class="tick"><span>✓</span><div><b>DSP-safe capture.</b> Realtime Rack processing does not wait on a control mutex while state is captured.</div></div>
+<div class="tick"><span>✓</span><div><b>Honest storage failure.</b> If durable session storage cannot be established, the Rack remains dry and reports Needs Attention.</div></div>
+</div></div></section>
+<section id="manual"><div class="wrap"><div class="sectionHead"><div class="kicker">Portable package</div><h2>Manual installation for advanced users</h2><p>Download <code>OBS-Safe-VST3-Host-v0.6.1-Windows-x64-Portable.zip</code> and extract its contents directly into the OBS root.</p></div><div class="compat">
 <div class="row"><div><code>obs-plugins\64bit\obs-safe-vst3.dll</code></div><div>OBS module</div></div>
 <div class="row"><div><code>obs-safe-vst3-host.exe</code></div><div>Single Host helper</div></div>
 <div class="row"><div><code>obs-safe-vst3-rack-host.exe</code></div><div>Rack runtime + graphical editor helper</div></div>
@@ -30,7 +36,7 @@
 <div class="row"><div><code>README-FIRST.txt</code></div><div>Package quick start</div></div>
 <div class="row"><div><code>UNINSTALL-MANUAL.cmd</code></div><div>Manual-package cleanup helper</div></div>
 </div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Verify a download</div><h2>Check SHA-256 when desired</h2><p>Every release includes <code>SHA256SUMS.txt</code>. In PowerShell:</p></div><div class="notice"><code>Get-FileHash .\OBS-Safe-VST3-Host-v0.6.0-Setup-x64.exe -Algorithm SHA256</code><br><br>Compare the resulting hash with the installer entry in the release's <code>SHA256SUMS.txt</code>.</div></div></section>
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Verify a download</div><h2>Check SHA-256 when desired</h2><p>Every release includes <code>SHA256SUMS.txt</code>. In PowerShell:</p></div><div class="notice"><code>Get-FileHash .\OBS-Safe-VST3-Host-v0.6.1-Setup-x64.exe -Algorithm SHA256</code><br><br>Compare the resulting hash with the installer entry in the release's <code>SHA256SUMS.txt</code>.</div></div></section>
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Need help?</div><h2>Keep troubleshooting reproducible</h2><p>Confirm your Windows architecture, OBS version, exact VST3 vendor/version, whether Single Host or Rack is affected, and include relevant OBS logs when opening a GitHub issue.</p></div><div class="actions"><a class="btn secondary" href="compatibility.html">Compatibility details</a><a class="btn secondary" href="safety.html">Safety model</a><a class="btn primary" href="https://github.com/masarray/obs-vst3/issues">GitHub issues</a></div></div></section>
 </main>
 <footer><div class="wrap">Download only from the official GitHub repository. Crash isolation is not a malware sandbox; use VST3 plug-ins from vendors you trust.</div></footer>
