@@ -16,6 +16,7 @@ namespace {
 constexpr wchar_t kNativeEditorClass[] = L"ObsSafeVst3NativeEditorWindow";
 constexpr std::uint32_t kFrames = 16;
 constexpr Steinberg::Vst::ParamID kGainParameterId = 100;
+constexpr Steinberg::Vst::ParamID kPresetTriggerParameterId = 101;
 
 bool require(bool condition, const char* message)
 {
@@ -101,17 +102,30 @@ int main(int argc, char** argv)
                  "native GUI edit must reach Rack processor inputParameterChanges"))
         return EXIT_FAILURE;
 
+    // Model a FabFilter-style internal preset load: controller values change as
+    // a group and the plug-in emits restartComponent(kParamValuesChanged) rather
+    // than one performEdit for every knob/band. The native-editor manager must
+    // service that callback, enqueue a controller snapshot, and DSP must follow.
+    if (!require(controller_a->setParamNormalized(kPresetTriggerParameterId, 0.35) ==
+                     Steinberg::kResultTrue,
+                 "simulated internal preset load must be accepted"))
+        return EXIT_FAILURE;
+    manager.pump_messages();
+    if (!require(process_oracle(plugin_a, 2, 0.35f),
+                 "preset-wide parameter restart must resynchronize Rack processor state"))
+        return EXIT_FAILURE;
+
     // The persisted component blob must contain the edited DSP value, not only
-    // controller-private UI state. Restore it into an independent instance and
-    // prove the processor still runs at 0.8 after the round trip.
+    // controller-private UI/preset state. Restore it into an independent instance
+    // and prove the processor still runs at 0.35 after the round trip.
     safevst3::PluginStateSnapshot edited_state{};
     error.clear();
     if (!require(plugin_a.capture_state(edited_state, error), error.c_str()))
         return EXIT_FAILURE;
     error.clear();
     if (!require(plugin_b.restore_state(edited_state, error), error.c_str()) ||
-        !require(process_oracle(plugin_b, 2, 0.8f),
-                 "captured component state must preserve native GUI edit"))
+        !require(process_oracle(plugin_b, 3, 0.35f),
+                 "captured component state must preserve preset-wide GUI edits"))
         return EXIT_FAILURE;
 
     error.clear();
@@ -130,7 +144,7 @@ int main(int argc, char** argv)
     manager.pump_messages();
     if (!require(manager.created(0x101) && !manager.visible(0x101),
                  "WM_CLOSE must hide Slot A while preserving its view") ||
-        !require(process_oracle(plugin_a, 3, 0.8f),
+        !require(process_oracle(plugin_a, 4, 0.35f),
                  "hiding vendor UI must not unload or destabilize edited DSP"))
         return EXIT_FAILURE;
 
@@ -148,7 +162,7 @@ int main(int argc, char** argv)
                  "explicit Slot B close must destroy only Slot B editor") ||
         !require(manager.created(0x101) && manager.visible(0x101),
                  "Slot A must remain open when Slot B closes") ||
-        !require(process_oracle(plugin_b, 4, 0.8f),
+        !require(process_oracle(plugin_b, 5, 0.35f),
                  "closing vendor UI must not unload restored plug-in state"))
         return EXIT_FAILURE;
 
