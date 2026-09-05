@@ -82,10 +82,13 @@ QUICK INSTALL
 
 CURRENT PRODUCT SHAPE
 - Single VST3 filter keeps the isolated helper/scanner/state/recovery workflow.
+- Single VST3 component/controller state is persisted across normal OBS restarts, so the latest plug-in settings return without repeated manual setup.
 - VST3 Rack is a separate OBS filter with its own helper executable and Rack protocol.
 - Rack Editor, Rack VST3 DSP and vendor editors stay outside obs64.exe.
 - Rack supports add, replace, remove, reorder and bypass in a serial effects lane.
-- Rack Session Snapshot protects working-state recovery; named Rack presets support reusable chains.
+- Each OBS Rack filter automatically preserves its current working chain, bypass state and VST3 component/controller state across normal OBS restarts; a named preset is not required for session continuity.
+- Rack working-session writes are CRC-protected and atomic with last-known-good recovery, while slow saved chains restore dry-first and publish only when the complete generation is coherent.
+- Named Rack presets remain available as independent reusable chains.
 - Missing Rack plug-ins can remain pass-through placeholders without destroying the saved definition.
 - A failed/corrupt preset load cannot replace the current working Rack.
 - Dry fail-open/pass-through audio remains active whenever a valid isolated wet result is unavailable in time.
