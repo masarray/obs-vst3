@@ -341,6 +341,112 @@ html[data-language="id"] .lang-id { display: inline !important; }
 .helpCard p { margin: 0; color: #7f919d; font-size: 11px; line-height: 1.65; }
 .helpCard a { display: inline-block; margin-top: 11px; color: #76d8e5; font-size: 10.5px; text-decoration: none; }
 
+/* Three-step public journey: keep detailed checkpoints, present them as 3 simple stages. */
+body.landing-page .heroCopy h1 > .lang-en,
+body.landing-page .heroCopy h1 > .lang-id,
+body.landing-page .heroCopy .lead > .lang-en,
+body.landing-page .heroCopy .lead > .lang-id { display: none !important; }
+
+body.landing-page .heroCopy h1::before,
+body.landing-page .heroCopy h1::after {
+  display: block;
+}
+body.landing-page .heroCopy h1::before {
+  content: "Use VST3 in OBS the Easy Way.";
+}
+body.landing-page .heroCopy h1::after {
+  content: "Just 3 Steps to Get It Working.";
+  background: linear-gradient(90deg, #91e8f2, #9badff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+html[data-language="id"] body.landing-page .heroCopy h1::before {
+  content: "Pakai VST3 di OBS dengan Mudah.";
+}
+html[data-language="id"] body.landing-page .heroCopy h1::after {
+  content: "Cukup 3 Langkah Sampai Berhasil.";
+}
+
+body.landing-page .heroCopy .lead::before {
+  content: "Enjoy professional audio quality with your favorite VST3 plug-ins directly in OBS.";
+}
+html[data-language="id"] body.landing-page .heroCopy .lead::before {
+  content: "Nikmati kualitas audio profesional dengan VST3 favorit Anda langsung di OBS.";
+}
+
+body.landing-page .heroValues > span > .lang-en,
+body.landing-page .heroValues > span > .lang-id,
+body.landing-page .heroActions .btn > .lang-en,
+body.landing-page .heroActions .btn > .lang-id { display: none !important; }
+body.landing-page .heroValues > span:nth-child(1)::before { content: "1. Download"; }
+body.landing-page .heroValues > span:nth-child(2)::before { content: "2. Follow 3 steps"; }
+body.landing-page .heroValues > span:nth-child(3)::before { content: "3. Enjoy your audio"; }
+body.landing-page .heroValues > span:nth-child(4) { display: none; }
+html[data-language="id"] body.landing-page .heroValues > span:nth-child(1)::before { content: "1. Unduh"; }
+html[data-language="id"] body.landing-page .heroValues > span:nth-child(2)::before { content: "2. Ikuti 3 langkah"; }
+html[data-language="id"] body.landing-page .heroValues > span:nth-child(3)::before { content: "3. Nikmati audionya"; }
+body.landing-page .heroActions .btn:first-child::before { content: "Free Download"; }
+body.landing-page .heroActions .btn:nth-child(2)::before { content: "See 3 Steps"; }
+html[data-language="id"] body.landing-page .heroActions .btn:first-child::before { content: "Download Gratis"; }
+html[data-language="id"] body.landing-page .heroActions .btn:nth-child(2)::before { content: "Lihat 3 Langkah"; }
+
+body.landing-page .successGuideHead h2 > .lang-en,
+body.landing-page .successGuideHead h2 > .lang-id,
+body.landing-page .successGuideHead > p > .lang-en,
+body.landing-page .successGuideHead > p > .lang-id { display: none !important; }
+body.landing-page .successGuideHead h2::before {
+  content: "Three simple steps from download to professional audio.";
+}
+body.landing-page .successGuideHead > p::before {
+  content: "Each main step has two small checkpoints, so the journey stays simple without skipping anything important.";
+}
+html[data-language="id"] body.landing-page .successGuideHead h2::before {
+  content: "Tiga langkah sederhana dari download sampai audio profesional.";
+}
+html[data-language="id"] body.landing-page .successGuideHead > p::before {
+  content: "Setiap langkah utama memiliki dua checkpoint kecil agar tetap simpel tanpa melewatkan hal penting.";
+}
+
+body.landing-page .guideStepNumber {
+  font-size: 0;
+}
+body.landing-page .guideStepNumber::before {
+  font-size: 12px;
+}
+body.landing-page .guideStep:nth-child(1) .guideStepNumber::before { content: "1A"; }
+body.landing-page .guideStep:nth-child(2) .guideStepNumber::before { content: "1B"; }
+body.landing-page .guideStep:nth-child(3) .guideStepNumber::before { content: "2A"; }
+body.landing-page .guideStep:nth-child(4) .guideStepNumber::before { content: "2B"; }
+body.landing-page .guideStep:nth-child(5) .guideStepNumber::before { content: "3A"; }
+body.landing-page .guideStep:nth-child(6) .guideStepNumber::before { content: "3B"; }
+
+body.landing-page .guideStep:nth-child(1)::before,
+body.landing-page .guideStep:nth-child(3)::before,
+body.landing-page .guideStep:nth-child(5)::before {
+  position: absolute;
+  top: -13px;
+  left: 82px;
+  z-index: 2;
+  padding: 5px 9px;
+  border: 1px solid rgba(100,216,232,.22);
+  border-radius: 999px;
+  background: #0d1720;
+  color: #84dce8;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  box-shadow: 0 7px 18px rgba(0,0,0,.18);
+}
+body.landing-page .guideStep:nth-child(1)::before { content: "STEP 1 · DOWNLOAD & INSTALL"; }
+body.landing-page .guideStep:nth-child(3)::before { content: "STEP 2 · CHOOSE & OPEN VST3"; }
+body.landing-page .guideStep:nth-child(5)::before { content: "STEP 3 · TEST & ENJOY"; }
+html[data-language="id"] body.landing-page .guideStep:nth-child(1)::before { content: "LANGKAH 1 · UNDUH & INSTAL"; }
+html[data-language="id"] body.landing-page .guideStep:nth-child(3)::before { content: "LANGKAH 2 · PILIH & BUKA VST3"; }
+html[data-language="id"] body.landing-page .guideStep:nth-child(5)::before { content: "LANGKAH 3 · TES & NIKMATI"; }
+body.landing-page .guideStep:nth-child(3),
+body.landing-page .guideStep:nth-child(5) { margin-top: 22px; }
+
 @media (max-width: 1040px) {
   .preflightGrid { grid-template-columns: repeat(3,1fr); }
   .preflightIntro { grid-column: 1 / -1; padding-right: 0; }
@@ -356,4 +462,10 @@ html[data-language="id"] .lang-id { display: inline !important; }
   .successFinish { grid-template-columns: auto 1fr; padding: 20px; }
   .successFinish .btn { grid-column: 1 / -1; width: 100%; }
   .successGuide { padding: 72px 0; }
+  body.landing-page .guideStep:nth-child(1)::before,
+  body.landing-page .guideStep:nth-child(3)::before,
+  body.landing-page .guideStep:nth-child(5)::before {
+    left: 18px;
+    top: -12px;
+  }
 }
