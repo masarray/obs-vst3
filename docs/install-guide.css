@@ -1,0 +1,466 @@
+/* P1 beginner install + guided recovery layer. */
+
+.installGuideHero {
+  position: relative;
+  overflow: hidden;
+  padding: 76px 0 56px;
+  border-bottom: 1px solid rgba(255,255,255,.055);
+  background:
+    radial-gradient(circle at 15% 18%, rgba(63,202,224,.10), transparent 30%),
+    radial-gradient(circle at 88% 20%, rgba(111,99,235,.09), transparent 27%),
+    linear-gradient(180deg, rgba(255,255,255,.012), transparent 70%);
+}
+
+.installHeroGrid {
+  display: grid;
+  grid-template-columns: minmax(0,1.08fr) minmax(340px,.92fr);
+  gap: clamp(34px,5vw,70px);
+  align-items: center;
+}
+
+.installGuideHero h1 {
+  max-width: 760px;
+  margin: 12px 0 18px;
+  font-size: clamp(2.7rem,5.3vw,4.6rem);
+  line-height: 1.01;
+  letter-spacing: -.05em;
+}
+
+.installGuideHero .lead { max-width: 720px; }
+
+.installHeroCard,
+.successCheckpoint,
+.symptomCard,
+.installStep,
+.advancedCard {
+  border: 1px solid rgba(255,255,255,.075);
+  background: rgba(8,15,23,.67);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+}
+
+.installHeroCard {
+  padding: 22px;
+  border-radius: 18px;
+}
+
+.installHeroCard > span {
+  color: #7eddea;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.installHeroCard h2 {
+  margin: 9px 0 11px;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.installHeroCard p {
+  margin: 0;
+  color: #8da0ad;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.installHeroChecks {
+  display: grid;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.installHeroChecks div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #cbd6dc;
+  font-size: 11.5px;
+}
+
+.installHeroChecks i,
+.successCheckpoint i {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(77,216,139,.11);
+  border: 1px solid rgba(77,216,139,.25);
+  color: #79e5a6;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.installPreflight {
+  padding: 36px 0;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  background: rgba(255,255,255,.012);
+}
+
+.installPreflightGrid {
+  display: grid;
+  grid-template-columns: 1.05fr repeat(3,minmax(0,1fr));
+  gap: 13px;
+}
+
+.installPreflightIntro {
+  padding: 15px 18px 15px 0;
+}
+
+.installPreflightIntro strong {
+  display: block;
+  margin-top: 8px;
+  color: #eff8fb;
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.installPreflightItem {
+  padding: 17px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 14px;
+  background: rgba(8,14,21,.48);
+}
+
+.installPreflightItem b {
+  display: block;
+  margin-bottom: 6px;
+  color: #e3ecf1;
+  font-size: 12px;
+}
+
+.installPreflightItem span {
+  color: #8495a1;
+  font-size: 10.8px;
+  line-height: 1.55;
+}
+
+.installJourney {
+  padding: 86px 0 92px;
+  background:
+    radial-gradient(circle at 13% 20%, rgba(53,188,218,.06), transparent 28%),
+    radial-gradient(circle at 90% 72%, rgba(101,97,224,.055), transparent 26%);
+}
+
+.installJourneyHead {
+  max-width: 760px;
+  margin: 0 auto 42px;
+  text-align: center;
+}
+
+.installJourneyHead h2 { margin: 9px 0 13px; }
+.installJourneyHead p { margin: 0; }
+
+.installSteps {
+  display: grid;
+  gap: 16px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.installStep {
+  display: grid;
+  grid-template-columns: 58px minmax(0,1fr) minmax(280px,.74fr);
+  gap: 20px;
+  align-items: center;
+  padding: 22px;
+  border-radius: 17px;
+}
+
+.installStepNumber {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(111,220,235,.18);
+  border-radius: 14px;
+  background: rgba(83,197,218,.055);
+  color: #7cdcea;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.installStep h3 {
+  margin: 0 0 8px;
+  color: #eff7fa;
+  font-size: 18px;
+}
+
+.installStep p {
+  margin: 0;
+  color: #8fa0ac;
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.stepExpected {
+  min-height: 88px;
+  padding: 14px 15px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px;
+  background: rgba(255,255,255,.018);
+}
+
+.stepExpected > span {
+  display: block;
+  margin-bottom: 7px;
+  color: #667983;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.stepExpected strong {
+  display: block;
+  color: #dce8ee;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.stepExpected small {
+  display: block;
+  margin-top: 6px;
+  color: #7f919d;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.pathPill,
+.uiLabelPill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid rgba(111,220,235,.14);
+  border-radius: 8px;
+  background: rgba(91,196,217,.055);
+  color: #cfeef3;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.stepActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 13px;
+}
+
+.successCheckpoint {
+  max-width: 980px;
+  margin: 24px auto 0;
+  padding: 24px;
+  border-color: rgba(76,218,139,.18);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(65,203,125,.07), rgba(8,15,23,.72));
+}
+
+.successCheckpointHead {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+}
+
+.successCheckpoint h3 {
+  margin: 0 0 7px;
+  font-size: 20px;
+}
+
+.successCheckpoint p {
+  margin: 0;
+  color: #90a39d;
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.successSignals {
+  display: grid;
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.successSignals div {
+  padding: 12px 13px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 11px;
+  background: rgba(0,0,0,.11);
+}
+
+.successSignals b {
+  display: block;
+  color: #dce9e2;
+  font-size: 10.8px;
+  margin-bottom: 4px;
+}
+
+.successSignals span {
+  color: #778d83;
+  font-size: 9.8px;
+  line-height: 1.45;
+}
+
+.recoverySection {
+  padding: 88px 0;
+  border-top: 1px solid rgba(255,255,255,.05);
+  background: rgba(255,255,255,.01);
+}
+
+.recoveryHead {
+  max-width: 780px;
+  margin-bottom: 34px;
+}
+
+.recoveryHead h2 { margin: 9px 0 13px; }
+
+.symptomGrid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 14px;
+}
+
+.symptomCard {
+  padding: 21px;
+  border-radius: 16px;
+}
+
+.symptomTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.symptomTop span {
+  color: #f0a873;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.symptomCard h3 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.symptomCard ol {
+  margin: 0;
+  padding-left: 18px;
+  color: #8ea0ac;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.symptomCard li + li { margin-top: 7px; }
+.symptomCard b { color: #dce7ec; }
+
+.stopRule {
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,.055);
+  color: #788a95;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.stopRule strong { color: #aebdc6; }
+
+.helpBundle {
+  margin-top: 18px;
+  padding: 20px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(89,185,207,.045), rgba(255,255,255,.012));
+}
+
+.helpBundle h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.helpBundle p {
+  max-width: 760px;
+  margin: 0;
+  color: #8799a5;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.helpFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.helpFacts span {
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 8px;
+  color: #a6b4bc;
+  font-size: 9.8px;
+  background: rgba(0,0,0,.11);
+}
+
+.advancedSection {
+  padding: 78px 0 90px;
+}
+
+.advancedGrid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 14px;
+}
+
+.advancedCard {
+  padding: 22px;
+  border-radius: 16px;
+}
+
+.advancedCard h3 { margin: 0 0 8px; }
+.advancedCard p { margin: 0; color: #8799a5; font-size: 11px; line-height: 1.65; }
+.advancedCard .actions { margin-top: 16px; }
+
+.installGuideFooter {
+  padding: 24px 0 34px;
+  border-top: 1px solid rgba(255,255,255,.05);
+  color: #6f808b;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+@media (max-width: 980px) {
+  .installHeroGrid,
+  .installPreflightGrid {
+    grid-template-columns: 1fr;
+  }
+  .installPreflightIntro { padding-right: 0; }
+  .installPreflightGrid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .installPreflightIntro { grid-column: 1 / -1; }
+  .installStep { grid-template-columns: 52px 1fr; }
+  .stepExpected { grid-column: 2; }
+}
+
+@media (max-width: 760px) {
+  .installGuideHero { padding-top: 56px; }
+  .installPreflightGrid,
+  .symptomGrid,
+  .successSignals,
+  .advancedGrid {
+    grid-template-columns: 1fr;
+  }
+  .installStep {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .installStepNumber { width: 42px; height: 42px; }
+  .stepExpected { grid-column: 1; }
+  .installJourney,
+  .recoverySection { padding-block: 68px; }
+}
