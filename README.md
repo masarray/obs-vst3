@@ -9,7 +9,7 @@
 [![CI](https://github.com/masarray/obs-vst3/actions/workflows/ci.yml/badge.svg)](https://github.com/masarray/obs-vst3/actions/workflows/ci.yml)
 [![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-22c55e)](LICENSE)
 
-> **Public stable: v0.6.1** · Single VST3 Host + isolated serial VST3 Rack · automatic working-Rack recall · graphical Rack Editor · native vendor GUIs · presets · fail-dry recovery
+> **Public stable: v0.6.1** · Single VST3 Host + isolated serial VST3 Rack · premium compact Rack Editor · Input Trim / Output Fader · LUFS-I + dBTP metering · automatic working-Rack recall · native vendor GUIs · presets · fail-dry recovery
 
 **Website:** https://masarray.github.io/obs-vst3/  
 **Downloads:** https://github.com/masarray/obs-vst3/releases/latest
@@ -21,7 +21,7 @@ OBS Studio's built-in VST filter does not provide VST3 hosting. Many current stu
 OBS Safe VST3 Host adds two OBS-native workflows on Windows:
 
 - **VST 3.x Plug-in** — a simple one-effect filter for the common case.
-- **VST3 Rack** — a separate isolated serial multi-effect chain with a dedicated graphical Rack Editor.
+- **VST3 Rack** — a separate isolated serial multi-effect chain with a dedicated graphical Rack Editor and broadcast-oriented master console.
 
 Third-party VST3 runtime code, vendor editors and plug-in scanning are deliberately kept outside the OBS process.
 
@@ -45,11 +45,32 @@ Every release also publishes `SHA256SUMS.txt` for integrity verification.
 
 ## What's new in v0.6.1
 
-v0.6.1 is a stable Rack reliability and recall update built from real OBS restart testing.
+v0.6.1 is the complete stable Rack refinement and reliability release built on the v0.6.0 serial-Rack foundation. It combines a compact broadcast-oriented Rack surface, real master gain controls and metering, flicker-free topology presentation, durable working-Rack recall and safer VST3 state persistence.
+
+### Premium broadcast Rack surface
+
+- Compact single-row effect strips reduce repeated UI noise and keep plug-in names readable.
+- The slot health LED doubles as the enable/bypass control.
+- Clicking a plug-in name opens its native vendor editor.
+- One compact slot-action control handles replace, insert, move and remove operations.
+- The Rack scrollbar reserves its layout gutter so adding effects does not shift row width, while remaining visually hidden until scrolling is needed.
+- Pending topology changes keep the last committed Rack snapshot visible instead of flashing whole controls or transient state text.
+- The Rack helper carries an OBS-companion Windows icon for taskbar, Explorer and title-bar identity.
+
+### Real master controls and broadcast metering
+
+- **Input Trim** sits before the serial VST3 chain and defaults to transparent `0.0 dB`.
+- **Output Fader** sits after the chain and also defaults to `0.0 dB`.
+- Both controls use lock-free transport and bounded one-block gain ramps to reduce zipper/click artifacts.
+- Output attenuation remains authoritative on fail-dry output, so a plug-in failure does not unexpectedly jump an intentionally reduced level back to full scale.
+- Stereo input/output peak meters reflect the signal around the Rack master path.
+- **LUFS-I** measures integrated loudness in an ITU-R BS.1770 / EBU R128-style gated measurement shape.
+- **dBTP** tracks reconstructed true peak with 4× quarter-sample interpolation and session-max hold.
+- LUFS-I and dBTP observe the final post-output-fader signal delivered to OBS.
 
 ### Durable working-Rack recall
 
-The Rack now keeps its latest working chain automatically per OBS Rack filter. Named Rack presets remain available for reusable chains, but they are **not required** just to survive an OBS restart.
+The Rack keeps its latest working chain automatically per OBS Rack filter. Named Rack presets remain available for reusable chains, but they are **not required** just to survive an OBS restart.
 
 - Rack topology, bypass state and VST3 component/controller state are saved to a per-Rack durable session.
 - OBS scene-collection serialization requests a bounded fresh state capture from the isolated Rack helper.
@@ -63,7 +84,7 @@ The Rack now keeps its latest working chain automatically per OBS Rack filter. N
 - The realtime Rack path never waits on a control mutex; a capture conflict fails dry instead.
 - Slow saved chains restore **dry-first**, then publish the complete restored generation atomically when ready.
 - Save completion reports success/failure explicitly rather than turning completed failures into misleading timeouts.
-- Split controller/processor VST3 plug-ins now forward native GUI edits and preset-wide parameter resyncs into processor state before capture, improving full DSP recall after restart.
+- Split controller/processor VST3 plug-ins forward native GUI edits and preset-wide parameter resyncs into processor state before capture, improving full DSP recall after restart.
 
 ### Windows Rack/editor polish
 
@@ -77,8 +98,10 @@ The Rack now keeps its latest working chain automatically per OBS Rack filter. N
 3. Click **Open Rack**.
 4. Add effects in the graphical Rack Editor.
 5. Reorder, bypass or open each vendor UI as needed.
-6. Close/reopen OBS normally; the latest working Rack is recalled automatically.
-7. Use named Rack presets only when you want reusable named chains or deliberate snapshots.
+6. Use **Input Trim** before the chain and **Output Fader** after the chain when level adjustment is needed.
+7. Watch final-output **LUFS-I** and **dBTP** for broadcast-oriented level awareness.
+8. Close/reopen OBS normally; the latest working Rack is recalled automatically.
+9. Use named Rack presets only when you want reusable named chains or deliberate snapshots.
 
 The Rack remains a serial effects lane by design. It is not a free-form node graph.
 
@@ -111,8 +134,11 @@ OBS Studio (obs64.exe)
         ▼
 obs-safe-vst3-rack-host.exe
         │
-        ├── graphical Rack Editor
+        ├── compact graphical Rack Editor
+        ├── Input Trim
         ├── VST3 A → VST3 B → ...
+        ├── Output Fader
+        ├── peak / LUFS-I / dBTP telemetry
         ├── vendor editor windows
         ├── durable working-session recall
         ├── named Rack presets
@@ -128,8 +154,13 @@ obs-safe-vst3-rack-host.exe
 | VST3 audio effects | ✅ Supported |
 | Single VST3 filter | ✅ Stable |
 | Serial multi-effect VST3 Rack | ✅ Stable |
-| Graphical isolated Rack Editor | ✅ Stable |
+| Compact isolated Rack Editor | ✅ Stable |
 | Add / replace / remove / reorder / bypass | ✅ |
+| Input Trim / Output Fader | ✅ Stable, real DSP controls |
+| Stereo input/output peak meters | ✅ |
+| LUFS-I integrated loudness | ✅ |
+| dBTP reconstructed true peak | ✅ |
+| Flicker-resistant topology transitions | ✅ |
 | Automatic working-Rack recall across OBS restarts | ✅ |
 | Native vendor editor | ✅ |
 | Installed plug-in discovery | ✅ |
@@ -145,7 +176,11 @@ A specific third-party effect can still expose vendor-specific behavior. This pr
 
 ## Qualification and release discipline
 
-The v0.6.1 runtime candidate was qualified on exact source head `ce5eb052c97076df735b95b55328f76e222475ee` before merge. P0/P1, R0, R1, R2, R3, main CI and Compatibility Test Build were green on that exact head. Compatibility qualification covered Windows tests, scanner smoke, supported OBS loader/ABI-floor checks, package construction, PE inspection, portable validation and canonical OBS-root installer smoke.
+The v0.6.1 runtime candidate was qualified on exact source head `ce5eb052c97076df735b95b55328f76e222475ee` before merge. That head includes the premium Rack UX/master-metering work and the durable persistence/state-safety changes. P0/P1, R0, R1, R2, R3, main CI and Compatibility Test Build were green on that exact head.
+
+Rack UI/master work also carries deterministic contracts covering compact slot interaction, stable layout during topology changes, lock-free telemetry/control transport, Input Trim / Output Fader behavior, BS.1770-style integrated loudness structure and reconstructed true-peak reference cases.
+
+Compatibility qualification covered Windows tests, scanner smoke, supported OBS loader/ABI-floor checks, package construction, PE inspection, portable validation and canonical OBS-root installer smoke.
 
 Real OBS validation included repeated full OBS restarts while changing Rack/VST3 settings across sessions; the latest working chain and full VST3 DSP state restored successfully. The runtime candidate was merged as PR #109. The v0.6.1 release marker is a documentation/version descendant of that qualified runtime change.
 
