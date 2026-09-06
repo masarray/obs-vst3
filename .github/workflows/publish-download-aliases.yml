@@ -32,7 +32,7 @@ jobs:
             exit 1
           fi
           if [[ "$prerelease" == "true" ]]; then
-            echo "Latest release $tag is a prerelease; stable aliases are not changed."
+            echo "Latest release $tag is a prerelease; stable aliases and public Pages are not changed."
             exit 0
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -72,7 +72,24 @@ jobs:
             dist/OBS-Safe-VST3-Host-Setup-x64.exe \
             dist/OBS-Safe-VST3-Host-Windows-x64-Portable.zip
 
-          echo "### Stable download aliases" >> "$GITHUB_STEP_SUMMARY"
+      - name: Checkout current public source
+        if: steps.release.outputs.tag != ''
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Sync GitHub Pages source branch
+        if: steps.release.outputs.tag != ''
+        env:
+          PAGES_BRANCH: docs/public-seo-v050
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git push origin HEAD:"refs/heads/${PAGES_BRANCH}" --force
+
+          echo "### Stable delivery synchronized" >> "$GITHUB_STEP_SUMMARY"
           echo "- Release: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`OBS-Safe-VST3-Host-Setup-x64.exe\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`OBS-Safe-VST3-Host-Windows-x64-Portable.zip\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Stable installer alias: \`OBS-Safe-VST3-Host-Setup-x64.exe\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Stable portable alias: \`OBS-Safe-VST3-Host-Windows-x64-Portable.zip\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- GitHub Pages source: \`$PAGES_BRANCH\` <- \`main\`" >> "$GITHUB_STEP_SUMMARY"
