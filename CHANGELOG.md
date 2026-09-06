@@ -6,9 +6,39 @@ All notable public product changes are documented here. Release artifacts are pu
 
 ### Headline
 
-**Durable working-Rack recall and safer split-component VST3 state persistence.**
+**Premium broadcast Rack UX, real master controls and metering, durable working-Rack recall, and safer split-component VST3 state persistence.**
 
-v0.6.1 is a stable reliability update for the v0.6 Rack line. It is based on repeated real OBS restart testing and keeps the current serial Rack product scope unchanged.
+v0.6.1 is the complete stable refinement release for the v0.6 Rack line. It combines the compact broadcast-oriented Rack surface from PRs #105/#107/#108 with the durable recall and VST3 state-safety work from PR #109, while keeping the product intentionally serial rather than expanding into graph routing.
+
+### Broadcast Rack UX and master console
+
+- The Rack Editor now uses a compact, hardware-inspired, minimal-noise surface with one-row effect strips.
+- Repetitive per-slot `ON` / `OPEN` labels were removed from the primary scan path.
+- The slot health LED doubles as the enable/bypass control.
+- Clicking the plug-in name opens its native vendor editor.
+- One compact slot-action affordance handles replace, insert, move and remove operations.
+- The Rack lane reserves its scrollbar gutter so adding VSTs does not change row width; the scrollbar is visually hidden until scrolling is required.
+- Pending topology transitions keep the last committed Rack snapshot visible and interaction-disabled until the new authoritative topology commits, avoiding whole-control opacity flashes and transient `Pending...` noise.
+- The master surface uses a focused Input / Output / Loudness hierarchy rather than a dense engineering dashboard.
+- Rack and vendor editor windows carry the project OBS-companion icon instead of a generic Windows application icon.
+
+### Real DSP master controls
+
+- Session **Input Trim** and **Output Fader** are real DSP controls and both default to transparent `0.0 dB`.
+- Input Trim is applied before the serial VST3 chain.
+- Output Fader is applied after the chain.
+- Both controls use lock-free atomic transport and one-block bounded linear gain ramps to reduce zipper/click artifacts.
+- Double-click resets either fader exactly to `0.0 dB` without the same double-click dragging the control away from default.
+- Output attenuation remains authoritative on fail-dry output so an unavailable plug-in wet result cannot unexpectedly restore full-scale level after the user deliberately attenuated or muted the Rack.
+
+### Broadcast metering
+
+- Stereo L/R input peaks are measured after Input Trim.
+- Stereo L/R output peaks are measured after Output Fader.
+- **LUFS-I** integrated loudness uses K-weighting and a gated ITU-R BS.1770 / EBU R128-style measurement shape with 400 ms / 75% overlap, -70 LUFS absolute gating and -10 LU relative gating.
+- **dBTP** uses 4× quarter-sample reconstruction with a 33-tap windowed-sinc polyphase interpolator and session-max true-peak hold.
+- LUFS-I and dBTP measure the final post-output-fader signal delivered to OBS, including fail-dry output.
+- Meter/control telemetry remains bounded and lock-free; the audio path uses fixed storage rather than UI calls, mutexes, condition variables or dynamic audio-path allocation.
 
 ### Rack persistence
 
@@ -56,6 +86,8 @@ The final v0.6.1 runtime candidate `ce5eb052c97076df735b95b55328f76e222475ee` pa
 - CI;
 - Compatibility Test Build.
 
+The shipping Rack UX/master-metering work also carries deterministic contracts for compact slot interaction, layout containment/alignment, conditional scrollbar behavior, flicker-resistant topology transitions, lock-free control/telemetry transport, fader reset behavior, BS.1770-style loudness structure and reconstructed true-peak reference cases. A deterministic broadcast-meter test includes a -20 dBFS 1 kHz stereo reference near -20.04 LUFS, trailing-silence gating and an inter-sample true-peak reconstruction case.
+
 Representative real OBS Rack validation changed commercial split-component VST3 settings across three successive OBS sessions and confirmed that the latest full DSP state—not only preset/controller metadata—returned after each restart.
 
 The **Single VST3 Host** was also validated through repeated full OBS close/reopen cycles with settings deliberately changed in each session. The most recent VST3 state returned after every restart, confirming that users do not need to reconfigure the Single Host after normal OBS restarts.
@@ -71,8 +103,13 @@ Supported in this release:
 - VST3 audio effects;
 - mono/stereo Float32 processing;
 - Single Host and serial VST3 Rack;
-- isolated graphical Rack Editor;
+- compact isolated graphical Rack Editor;
 - native vendor UIs;
+- per-session Input Trim and Output Fader;
+- stereo input/output peak metering;
+- LUFS-I integrated loudness metering;
+- dBTP reconstructed true-peak metering;
+- flicker-resistant topology presentation;
 - automatic working-Rack recall;
 - named Rack presets;
 - bounded fail-dry behavior.

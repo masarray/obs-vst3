@@ -3,49 +3,60 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071019">
-  <title>VST3 Compatibility — OBS Safe VST3 Host v0.6.1</title>
-  <meta name="description" content="Compatibility scope for OBS Safe VST3 Host v0.6.1: Windows x64, OBS 29.1+, VST3 audio effects, Single Host, serial multi-effect Rack and automatic working-Rack recall.">
+  <title>VST3 Compatibility — OBS Safe VST3 Host</title>
+  <meta name="description" content="Current compatibility scope for OBS Safe VST3 Host: Windows x64, OBS 29.1+, VST3 audio effects, Single Host, serial multi-effect Rack, Input Trim/Output Fader, LUFS-I/dBTP and automatic working-Rack recall.">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/compatibility.html">
   <link rel="stylesheet" href="site.css">
+  <script defer src="release-sync.js"></script>
 </head>
 <body>
-<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" href="https://github.com/masarray/obs-vst3/releases/latest">Download v0.6.1</a></nav></div></header>
+<header class="nav"><div class="wrap navin"><a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a><nav class="navlinks"><a href="./">Overview</a><a href="install.html">Install</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a class="navcta" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download installer</a></nav></div></header>
 <main>
-<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Compatibility · v0.6.1 stable</div><h1>Broad VST3 effect support, with explicit boundaries.</h1><p class="lead">The project targets conventional Windows x64 VST3 audio effects. Compatibility is evidence-based, not implemented as a hard-coded vendor whitelist, and no responsible host can guarantee every VST3 implementation.</p></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stable support matrix</div><h2>What v0.6.1 is designed to support</h2></div><div class="compat">
+<section class="hero"><div class="wrap"><div class="eyebrow"><span class="pulse"></span> Compatibility · <span data-release-version>latest stable</span></div><h1>Broad VST3 effect support, with explicit boundaries.</h1><p class="lead">The project targets conventional Windows x64 VST3 audio effects. Compatibility is evidence-based, not implemented as a hard-coded vendor whitelist, and no responsible host can guarantee every VST3 implementation.</p></div></section>
+
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Stable support matrix</div><h2>What the current stable product is designed to support</h2></div><div class="compat">
 <div class="row"><div>Windows</div><div><span class="yes">x64 supported</span></div></div>
 <div class="row"><div>OBS Studio</div><div><span class="yes">29.1+ compatibility floor</span>; release qualification builds against pinned current OBS/libobs.</div></div>
 <div class="row"><div>VST3 audio effects</div><div><span class="yes">Supported</span> in the current mono/stereo Float32 scope.</div></div>
 <div class="row"><div>Single VST3 Host</div><div><span class="yes">Stable</span></div></div>
 <div class="row"><div>Serial VST3 Rack</div><div><span class="yes">Stable</span></div></div>
-<div class="row"><div>Automatic working-Rack recall</div><div><span class="yes">Supported in v0.6.1</span></div></div>
-<div class="row"><div>Graphical Rack Editor</div><div><span class="yes">Supported</span> in the isolated Rack helper.</div></div>
+<div class="row"><div>Compact graphical Rack Editor</div><div><span class="yes">Supported</span> in the isolated Rack helper.</div></div>
+<div class="row"><div>Input Trim / Output Fader</div><div><span class="yes">Supported</span> as real pre-chain/post-chain DSP controls.</div></div>
+<div class="row"><div>Stereo input/output peak meters</div><div><span class="yes">Supported</span> around the Rack master signal path.</div></div>
+<div class="row"><div>LUFS-I integrated loudness</div><div><span class="yes">Supported</span> on the final post-output-fader signal.</div></div>
+<div class="row"><div>dBTP reconstructed true peak</div><div><span class="yes">Supported</span> on the final post-output-fader signal.</div></div>
+<div class="row"><div>Automatic working-Rack recall</div><div><span class="yes">Supported</span></div></div>
 <div class="row"><div>Native vendor editors</div><div><span class="yes">Supported</span> where the plug-in exposes a compatible native editor.</div></div>
 <div class="row"><div>Named Rack presets</div><div><span class="yes">Supported</span> independently from the automatic working session.</div></div>
-<div class="row"><div>VST3 instruments / MIDI</div><div><span class="warnTxt">Not in v0.6.1</span></div></div>
-<div class="row"><div>Sidechain / free-form routing</div><div><span class="warnTxt">Not in v0.6.1</span></div></div>
-<div class="row"><div>Arbitrary multichannel / Float64 fallback</div><div><span class="warnTxt">Not in v0.6.1</span></div></div>
+<div class="row"><div>VST3 instruments / MIDI</div><div><span class="warnTxt">Not currently supported</span></div></div>
+<div class="row"><div>Sidechain / free-form routing</div><div><span class="warnTxt">Not currently supported</span></div></div>
+<div class="row"><div>Arbitrary multichannel / Float64 fallback</div><div><span class="warnTxt">Not currently supported</span></div></div>
 <div class="row"><div>macOS / Linux packages</div><div><span class="warnTxt">Not currently shipped</span></div></div>
 </div></div></section>
+
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Rack master signal path</div><h2>The meters and faders describe the actual shipping Rack path.</h2><p>The master console is not decorative UI. Input Trim, Output Fader and broadcast telemetry are attached to the generated shipping Rack helper while preserving the isolated-helper architecture.</p></div><div class="grid3">
+<article class="card"><div class="icon">IN</div><h3>Input Trim before the chain</h3><p>Input Trim defaults to 0.0 dB, is applied before the serial VST3 chain and uses bounded smoothed gain changes. The input L/R meters observe the post-trim signal.</p></article>
+<article class="card"><div class="icon">OUT</div><h3>Output Fader after the chain</h3><p>Output Fader defaults to 0.0 dB and remains authoritative after the chain, including fail-dry output, so deliberate attenuation does not jump back to full level when a wet result is unavailable.</p></article>
+<article class="card"><div class="icon">METER</div><h3>Final-output loudness</h3><p>Output L/R peaks, LUFS-I and dBTP observe the final post-output-fader audio delivered to OBS.</p></article>
+</div></div></section>
+
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Metering contract</div><h2>Broadcast metrics are bounded telemetry, not a claim of universal loudness compliance.</h2><p>The implementation follows a deterministic broadcast-oriented measurement contract: integrated loudness uses K-weighting and gated ITU-R BS.1770 / EBU R128-style structure; true peak uses reconstructed inter-sample estimation. Final platform delivery targets and compliance remain the user's responsibility.</p></div><div class="ticks">
+<div class="tick"><span>✓</span><div><b>LUFS-I structure.</b> 400 ms windows with 75% overlap, -70 LUFS absolute gating and -10 LU relative gating.</div></div>
+<div class="tick"><span>✓</span><div><b>dBTP reconstruction.</b> 4× quarter-sample reconstruction with a 33-tap windowed-sinc polyphase interpolator and session-max hold.</div></div>
+<div class="tick"><span>✓</span><div><b>Realtime boundary.</b> Telemetry publication is atomic/lock-free and avoids UI calls, mutex waits and dynamic audio-path allocation.</div></div>
+<div class="tick"><span>✓</span><div><b>Reference coverage.</b> Deterministic tests cover loudness gating and inter-sample true-peak behavior.</div></div>
+</div></div></section>
+
 <section><div class="wrap"><div class="sectionHead"><div class="kicker">Real-machine evidence</div><h2>Representative commercial VST3 effects have been part of project qualification.</h2><p>Across the stable Single Host line and Rack development, real-machine qualification has included effects from vendors such as:</p></div><div class="brands"><span class="brandPill">iZotope Ozone / RX</span><span class="brandPill">FabFilter</span><span class="brandPill">Waves</span><span class="brandPill">Klevgrand</span><span class="brandPill">Neuro Audio</span><span class="brandPill">Process Audio</span></div><div class="notice" style="margin-top:20px">These names are qualification examples, not an allowlist or guarantee. A different plug-in version, licensing layer, editor implementation or VST3 lifecycle behavior can still expose a vendor-specific compatibility issue.</div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">v0.6.1 persistence evidence</div><h2>Recall testing now covers the actual working Rack, not only reusable presets.</h2><p>Real OBS validation changed settings in commercial split controller/processor VST3 effects across three successive OBS sessions. The latest working Rack and full DSP state restored on each restart, including cases where controller metadata alone would not have been sufficient.</p></div><div class="ticks">
+
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Persistence evidence</div><h2>Recall testing covers the actual working Rack, not only reusable presets.</h2><p>Real OBS validation changed settings in commercial split controller/processor VST3 effects across successive OBS sessions. The latest working Rack and full DSP state restored on restart, including cases where controller metadata alone would not have been sufficient.</p></div><div class="ticks">
 <div class="tick"><span>✓</span><div><b>DSP-safe capture frontier.</b> State capture is coordinated away from concurrent vendor processing.</div></div>
-<div class="tick"><span>✓</span><div><b>Dry-first restore.</b> Slow chains do not have to finish materializing before the Rack can remain safely available as dry/pass-through.</div></div>
+<div class="tick"><span>✓</span><div><b>Dry-first restore.</b> Slow chains can remain safely available as dry/pass-through while materializing.</div></div>
 <div class="tick"><span>✓</span><div><b>Split-component synchronization.</b> Native GUI edits and preset-wide parameter resyncs reach processor state before capture.</div></div>
 <div class="tick"><span>✓</span><div><b>Explicit storage failure.</b> The product does not present a writable Rack as normally persistent when durable session storage is unavailable.</div></div>
 </div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Rack behavior</div><h2>v0.6.1 Rack scope is intentionally serial.</h2></div><div class="grid3">
-<article class="card"><div class="icon">FX</div><h3>Effects only</h3><p>Normal audio effects are eligible. Explicit instrument-only classes are not exposed as today's insert-effect workflow.</p></article>
-<article class="card"><div class="icon">2CH</div><h3>Mono / stereo</h3><p>The stable scope is mono/stereo Float32. Advanced bus layouts and Float64 are future work.</p></article>
-<article class="card"><div class="icon">→</div><h3>Serial lane</h3><p>Rack slots process in a defined serial order. Sidechain, arbitrary graph routing and parallel patchbay behavior are deliberately outside v0.6.1.</p></article>
-</div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">When a plug-in is missing or unhealthy</div><h2>Compatibility failure should remain understandable and bounded.</h2></div><div class="ticks">
-<div class="tick"><span>✓</span><div><b>Missing Rack plug-ins can remain placeholders.</b> The saved Rack definition does not need to be destructively rewritten just because a VST3 is temporarily unavailable.</div></div>
-<div class="tick"><span>✓</span><div><b>Invalid preset loads do not replace the current working Rack.</b></div></div>
-<div class="tick"><span>✓</span><div><b>Unavailable wet results fall back to dry/pass-through audio</b> under the product's bounded realtime policy.</div></div>
-<div class="tick"><span>✓</span><div><b>Scanning is isolated from OBS</b> so normal candidate discovery does not intentionally load every third-party module into the broadcast process.</div></div>
-</div></div></section>
-<section><div class="wrap"><div class="sectionHead"><div class="kicker">Report a compatibility problem</div><h2>Good reports become better regression tests.</h2><p>Include Windows version, OBS version, exact VST3 product/version, Single Host vs Rack, reproduction steps, expected/actual behavior and relevant OBS logs. Do not attach commercial plug-in binaries unless their license explicitly permits redistribution.</p></div><div class="actions"><a class="btn primary" href="https://github.com/masarray/obs-vst3/issues">Open a GitHub issue</a><a class="btn secondary" href="safety.html">Read safety model</a></div></div></section>
+
+<section><div class="wrap"><div class="sectionHead"><div class="kicker">Download current stable</div><h2>Install directly from the public site.</h2><p>The installer button resolves the latest public release automatically and downloads the release asset directly.</p></div><div class="actions"><a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download installer</a><a class="btn secondary" href="safety.html">Read safety model</a><a class="btn secondary" href="https://github.com/masarray/obs-vst3/issues">Report compatibility issue</a></div></div></section>
 </main>
 <footer><div class="wrap">Compatibility claims are intentionally conservative and evidence-based.</div></footer>
 </body></html>
