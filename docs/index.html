@@ -3,22 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071019">
-  <title>VST3 for OBS Studio — Safe Single Host + Broadcast VST3 Rack</title>
-  <meta name="description" content="Use modern VST3 audio effects in OBS Studio on Windows with an isolated Single Host or serial VST3 Rack, compact broadcast UI, Input Trim, Output Fader, LUFS-I, dBTP, automatic Rack recall and native vendor GUIs.">
+  <meta name="theme-color" content="#080d13">
+  <meta name="color-scheme" content="dark">
+  <title>OBS Safe VST3 Host — Use Modern VST3 Plug-ins in OBS Studio</title>
+  <meta name="description" content="Bring modern VST3 audio plug-ins into OBS Studio on Windows. Use one effect or build an isolated serial Rack with native vendor GUIs, automatic recall, real master gain, LUFS-I and dBTP metering.">
   <meta name="author" content="MasArray">
   <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/">
   <link rel="stylesheet" href="site.css">
   <script defer src="release-sync.js"></script>
+
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="OBS Safe VST3 Host">
-  <meta property="og:title" content="VST3 for OBS Studio — Safe Single Host + Broadcast VST3 Rack">
-  <meta property="og:description" content="Modern VST3 effects in OBS with isolated helpers, compact broadcast Rack controls, LUFS-I/dBTP metering, durable recall and native vendor GUIs.">
+  <meta property="og:title" content="OBS Safe VST3 Host — Modern VST3 plug-ins in OBS">
+  <meta property="og:description" content="Use the VST3 plug-ins you already know inside OBS, with isolated hosting, a serial Rack, native plug-in windows, recall and broadcast metering.">
   <meta property="og:url" content="https://masarray.github.io/obs-vst3/">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="OBS Safe VST3 Host">
-  <meta name="twitter:description" content="Single VST3 hosting and an isolated serial broadcast Rack with real master controls, LUFS-I/dBTP and automatic working-state recall for OBS Studio on Windows.">
+  <meta name="twitter:description" content="A creator-friendly VST3 host and serial audio Rack for OBS Studio on Windows.">
+
   <script type="application/ld+json">
   {
     "@context":"https://schema.org",
@@ -27,7 +30,7 @@
     "alternateName":["VST3 for OBS","OBS VST3 Plugin","OBS VST3 Rack"],
     "applicationCategory":"MultimediaApplication",
     "operatingSystem":"Windows 10, Windows 11",
-    "description":"An OBS Studio plug-in providing an isolated Single VST3 Host and a compact graphical serial multi-effect VST3 Rack with real master controls, LUFS-I/dBTP metering and durable working-state recall for Windows.",
+    "description":"A creator-friendly OBS Studio plug-in that provides an isolated Single VST3 Host and serial multi-effect VST3 Rack with native vendor GUIs, real master controls, broadcast metering and durable working-state recall.",
     "url":"https://masarray.github.io/obs-vst3/",
     "downloadUrl":"https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe",
     "softwareRequirements":"OBS Studio 29.1 or later; Windows x64",
@@ -37,155 +40,265 @@
   }
   </script>
 </head>
-<body>
-<header class="nav">
-  <div class="wrap navin">
-    <a class="brand" href="./"><span class="mark">V3</span><span>OBS Safe VST3 Host</span></a>
-    <nav class="navlinks" aria-label="Main navigation">
-      <a href="#product">Product</a>
-      <a href="compatibility.html">Compatibility</a>
-      <a href="safety.html">Safety</a>
-      <a href="roadmap.html">Roadmap</a>
-      <a href="install.html">Install</a>
-      <a class="navcta" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download installer</a>
-    </nav>
-  </div>
-</header>
+<body class="landing-page">
+  <a class="skip-link" href="#main">Skip to main content</a>
 
-<main>
-  <section class="hero">
-    <div class="wrap heroGrid">
-      <div>
-        <div class="eyebrow"><span class="pulse"></span> Public stable <span data-release-version>latest stable</span> · Windows x64 · OBS 29.1+</div>
-        <h1><span class="gradient">Modern VST3 audio in OBS.</span> One effect or a complete isolated broadcast Rack.</h1>
-        <p class="lead">Use current studio VST3 effects through a native OBS workflow. Keep third-party VST3 DSP and vendor UI code outside <code>obs64.exe</code>, build serial effect chains, control real pre/post Rack gain, watch final-output LUFS-I and dBTP, reopen vendor interfaces, and let the Rack recall its latest working state automatically across normal OBS restarts.</p>
-        <div class="actions">
-          <a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download installer</a>
-          <a class="btn secondary" href="install.html">Installation guide</a>
+  <header class="nav landing-nav">
+    <div class="wrap navin">
+      <a class="brand" href="./" aria-label="OBS Safe VST3 Host home">
+        <span class="mark" aria-hidden="true">V3</span>
+        <span class="brandLockup"><strong>OBS VST3</strong><small>Safe host for creators</small></span>
+      </a>
+      <nav class="navlinks" aria-label="Main navigation">
+        <a href="#why">Why</a>
+        <a href="#workflow">How it works</a>
+        <a href="#rack">Rack</a>
+        <a href="#safety">Safety</a>
+        <a href="compatibility.html">Compatibility</a>
+        <a class="navcta" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download free</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="landingHero">
+      <div class="heroAura heroAuraA" aria-hidden="true"></div>
+      <div class="heroAura heroAuraB" aria-hidden="true"></div>
+      <div class="wrap landingHeroGrid">
+        <div class="heroCopy">
+          <div class="eyebrow"><span class="pulse"></span> Free · Open source · Windows x64 · OBS 29.1+</div>
+          <h1>Use the VST3 plug-ins you already love. <span class="softGradient">Keep OBS focused on the show.</span></h1>
+          <p class="lead">Bring modern EQs, compressors, de-essers, limiters and creative effects into OBS without turning <code>obs64.exe</code> into the place where third-party VST3 code lives.</p>
+
+          <div class="heroValues" aria-label="Core product benefits">
+            <span>One effect or a full Rack</span>
+            <span>Native plug-in windows</span>
+            <span>Remembers your working chain</span>
+            <span>Dry audio stays available</span>
+          </div>
+
+          <div class="actions heroActions">
+            <a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download for Windows</a>
+            <a class="btn secondary" href="#workflow">See how it works</a>
+          </div>
+
+          <div class="releaseLine" aria-label="Release information">
+            <span data-release-version>latest stable</span>
+            <span>Installer + portable ZIP</span>
+            <span>GPL-3.0-or-later</span>
+          </div>
+          <p class="heroTrust">No account · No subscription · No telemetry requirement · Direct GitHub Release download</p>
         </div>
-        <div class="trustline">
-          <span><b>✓</b> Latest stable automatically</span>
-          <span><b>✓</b> Open source</span>
-          <span><b>✓</b> CI qualified</span>
-          <span><b>✓</b> SHA-256 checksums</span>
+
+        <figure class="rackStage" aria-label="Illustration of the OBS Safe VST3 Rack">
+          <div class="rackGlow" aria-hidden="true"></div>
+          <div class="rackWindow">
+            <div class="rackTitlebar">
+              <div class="rackBrand"><span class="rackLogo">V3</span><span><b>OBS SAFE VST3 RACK</b><small>Microphone · Live chain</small></span></div>
+              <div class="liveBadge"><i></i> LIVE</div>
+            </div>
+
+            <div class="rackBody">
+              <div class="rackChain">
+                <div class="rackSectionLabel"><span>PLUGIN CHAIN</span><span>3 active</span></div>
+
+                <div class="fxSlot active">
+                  <button class="slotLed" aria-label="Enabled"></button>
+                  <div class="slotText"><strong>Vocal EQ</strong><small>Your VST3 plug-in · native editor</small></div>
+                  <div class="slotMiniMeter"><i style="--level:72%"></i><i style="--level:67%"></i></div>
+                  <button class="slotAction" aria-label="Effect menu">•••</button>
+                </div>
+
+                <div class="fxSlot active">
+                  <button class="slotLed" aria-label="Enabled"></button>
+                  <div class="slotText"><strong>Compressor</strong><small>Your VST3 plug-in · native editor</small></div>
+                  <div class="slotMiniMeter"><i style="--level:62%"></i><i style="--level:59%"></i></div>
+                  <button class="slotAction" aria-label="Effect menu">•••</button>
+                </div>
+
+                <div class="fxSlot active">
+                  <button class="slotLed" aria-label="Enabled"></button>
+                  <div class="slotText"><strong>Limiter</strong><small>Your VST3 plug-in · native editor</small></div>
+                  <div class="slotMiniMeter"><i style="--level:48%"></i><i style="--level:51%"></i></div>
+                  <button class="slotAction" aria-label="Effect menu">•••</button>
+                </div>
+
+                <button class="addFx" type="button" tabindex="-1"><span>＋</span> Add VST3 effect</button>
+              </div>
+
+              <aside class="masterPanel">
+                <div class="masterHeader"><span>MASTER</span><small>Signal sent to OBS</small></div>
+                <div class="meterPair" aria-hidden="true">
+                  <div class="meterColumn"><span>IN L</span><div class="meterTrack"><i style="--meter:77%"></i></div><small>-8.4</small></div>
+                  <div class="meterColumn"><span>IN R</span><div class="meterTrack"><i style="--meter:74%"></i></div><small>-8.9</small></div>
+                  <div class="meterColumn"><span>OUT L</span><div class="meterTrack hot"><i style="--meter:70%"></i></div><small>-9.8</small></div>
+                  <div class="meterColumn"><span>OUT R</span><div class="meterTrack hot"><i style="--meter:68%"></i></div><small>-10.2</small></div>
+                </div>
+                <div class="loudnessReadout"><div><span>LUFS-I</span><strong>-14.1</strong></div><div><span>dBTP</span><strong>-1.0</strong></div></div>
+                <div class="faderBlock"><div class="faderLabel"><span>INPUT TRIM</span><b>0.0 dB</b></div><div class="faderRail"><i style="--fader:50%"></i></div></div>
+                <div class="faderBlock"><div class="faderLabel"><span>OUTPUT</span><b>0.0 dB</b></div><div class="faderRail"><i style="--fader:50%"></i></div></div>
+              </aside>
+            </div>
+
+            <div class="rackFooter"><span><i></i> Rack ready</span><span>Auto recall on</span></div>
+          </div>
+          <figcaption>Conceptual presentation of the current Rack workflow: compact effect slots, master gain and final-output broadcast metering.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="trustStrip" aria-label="Product highlights">
+      <div class="wrap trustGrid">
+        <div><strong>Use your own VST3s</strong><span>Keep the tools and sound you already know.</span></div>
+        <div><strong>Native vendor UI</strong><span>Open the plug-in interface instead of a generic parameter wall.</span></div>
+        <div><strong>Built for live recovery</strong><span>If the wet path is unavailable, audio can stay dry instead of disappearing.</span></div>
+        <div><strong>Direct official downloads</strong><span>Installer, portable ZIP and SHA-256 from GitHub Releases.</span></div>
+      </div>
+    </section>
+
+    <section id="why" class="section humanSection">
+      <div class="wrap humanIntroGrid">
+        <div class="humanIntroCopy">
+          <span class="kicker">Why this exists</span>
+          <h2>Modern plug-ins belong in your audio workflow—not in your troubleshooting routine.</h2>
+          <p>OBS creators should be able to shape a microphone or program feed with familiar VST3 tools without first learning a hosting architecture. OBS Safe VST3 Host keeps the everyday workflow straightforward and pushes isolation, recovery and state handling into the background.</p>
+        </div>
+        <div class="promisePanel">
+          <span class="promiseLabel">THE PROMISE</span>
+          <strong>Load. Listen. Go live.</strong>
+          <p>Choose one VST3 effect for a simple job, or build a serial Rack when your chain grows. Open the real plug-in window, make the sound right, then let the host remember where you left it.</p>
+          <div class="promisePills"><span>Simple first</span><span>Rack when needed</span><span>Safe by design</span></div>
         </div>
       </div>
-      <div class="mock" aria-label="OBS Safe VST3 Rack product illustration">
-        <div class="mockTop"><span>VST3 Rack · MASTER</span><span class="dots"><i></i><i></i><i></i></span></div>
-        <div class="form">
-          <div class="field"><label>Serial chain</label><div class="control"><span>EQ → Compressor → Limiter</span><span>3 FX</span></div></div>
-          <div class="field"><label>Master gain</label><div class="control"><span>Input 0.0 dB · Output 0.0 dB</span><span>LIVE</span></div></div>
-          <div class="field"><label>Final output</label><div class="control"><span>LUFS-I · dBTP</span><span>OBS</span></div></div>
-          <div class="openBtn">Open Rack Editor</div>
-          <div class="status"><i></i><span>Durable recall · presets · vendor UI</span></div>
+
+      <div class="wrap benefitGrid">
+        <article><span class="benefitMark">01</span><h3>Keep your favorite tools</h3><p>Use modern VST3 plug-ins from vendors you already trust instead of rebuilding your sound around a special OBS-only effect set.</p></article>
+        <article><span class="benefitMark">02</span><h3>Build the chain you actually need</h3><p>Start with one effect. Add EQ, dynamics and limiting only when the job calls for it.</p></article>
+        <article><span class="benefitMark">03</span><h3>Come back to the same working Rack</h3><p>Normal OBS restarts can restore the latest working topology, bypass state and captured VST3 state automatically.</p></article>
+        <article><span class="benefitMark">04</span><h3>Prefer dry audio over dead air</h3><p>Recovery behavior is designed around keeping the original signal available when a processed result is not ready.</p></article>
+      </div>
+    </section>
+
+    <section id="workflow" class="section alt workflowSection">
+      <div class="wrap sectionHead centered compact">
+        <span class="kicker">From installer to live audio</span>
+        <h2>Three steps. No VST hosting degree required.</h2>
+        <p>The technical boundaries are there for reliability. The creator workflow stays familiar.</p>
+      </div>
+      <div class="wrap humanSteps">
+        <article><span>01</span><h3>Install the host</h3><p>Run the Windows installer, then restart OBS. The package adds the VST3 host and Rack components needed by OBS.</p><a href="install.html">Installation guide →</a></article>
+        <article><span>02</span><h3>Add an audio filter</h3><p>On a microphone or other OBS audio source, add either <b>VST 3.x Plug-in</b> for one effect or <b>VST3 Rack</b> for a serial chain.</p></article>
+        <article><span>03</span><h3>Choose your plug-ins and listen</h3><p>Open the native vendor editor, shape the sound, and use the Rack master meters when you need final-output level context.</p></article>
+      </div>
+    </section>
+
+    <section id="rack" class="section rackStorySection">
+      <div class="wrap splitFeature">
+        <div class="splitCopy">
+          <span class="kicker">Two ways to work</span>
+          <h2>One effect when that is enough. A Rack when it is not.</h2>
+          <p class="sectionLead">The project intentionally keeps both workflows. You do not need a multi-effect surface just to run one compressor.</p>
+          <div class="modeCards">
+            <article><span class="modeIcon">1FX</span><div><h3>Single Host</h3><p>Ideal for one EQ, compressor, de-esser or limiter. Discover a VST3, open its vendor UI, save state and keep the path focused.</p></div></article>
+            <article><span class="modeIcon">RACK</span><div><h3>Serial Rack</h3><p>Add, replace, remove, reorder and bypass multiple VST3 effects inside a dedicated graphical Rack editor.</p></div></article>
+          </div>
+        </div>
+        <div class="signalCard" aria-label="Rack signal flow">
+          <div class="signalHeader"><span>YOUR LIVE SIGNAL</span><small>What the Rack actually does</small></div>
+          <div class="signalFlow">
+            <div class="signalNode input"><span>01</span><strong>Input Trim</strong><small>Pre-chain level</small></div>
+            <i>→</i>
+            <div class="signalNode chain"><span>02</span><strong>VST3 Chain</strong><small>1…N effects</small></div>
+            <i>→</i>
+            <div class="signalNode output"><span>03</span><strong>Output Fader</strong><small>Final gain</small></div>
+            <i>→</i>
+            <div class="signalNode obs"><span>04</span><strong>OBS</strong><small>Final signal</small></div>
+          </div>
+          <div class="telemetryBar"><span>Peak L/R</span><span>LUFS-I</span><span>dBTP</span><span>Post-output telemetry</span></div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section id="product">
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Two workflows</div>
-        <h2>Keep the simple path simple. Use the Rack when the chain grows.</h2>
-        <p>The current stable Windows package ships both product surfaces.</p>
+    <section class="section alt recallSection">
+      <div class="wrap sectionHead centered compact">
+        <span class="kicker">Built for repeatable live work</span>
+        <h2>Your Rack should feel like part of the setup—not a temporary experiment.</h2>
+        <p>Useful persistence is not a “save preset or lose everything” experience. The working Rack can restore itself across normal OBS restarts.</p>
       </div>
-      <div class="grid3">
-        <article class="card"><div class="icon">1FX</div><h3>VST 3.x Plug-in</h3><p>The focused one-effect workflow: automatic discovery, real vendor GUI, state persistence, isolated scanner/runtime and bounded recovery.</p></article>
-        <article class="card"><div class="icon">RACK</div><h3>VST3 Rack</h3><p>Build a serial multi-effect chain with add, replace, remove, reorder and bypass from a dedicated helper-owned graphical editor.</p></article>
-        <article class="card"><div class="icon">MASTER</div><h3>Broadcast master</h3><p>Real Input Trim and Output Fader controls surround the serial chain, with stereo level telemetry plus LUFS-I and dBTP on the final signal sent to OBS.</p></article>
+      <div class="wrap recallGrid">
+        <article><span>RECALL</span><h3>Working-state continuity</h3><p>Topology, bypass and captured VST3 state can come back automatically after a normal restart.</p></article>
+        <article><span>PRESETS</span><h3>Reusable chains when you want them</h3><p>Named presets still exist for intentional reusable setups, without being mandatory for ordinary continuity.</p></article>
+        <article><span>CALM</span><h3>Less visual churn during edits</h3><p>The Rack keeps the last committed topology visible while an authoritative update is pending, reducing distracting UI flicker.</p></article>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section>
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Current Rack surface</div>
-        <h2>Compact like an audio device, not a utility dashboard.</h2>
-        <p>The Rack is deliberately quiet: less repeated text, more room for the plug-in chain, and a focused master console for the controls that matter during live operation.</p>
-      </div>
-      <div class="grid3">
-        <article class="card"><div class="icon">LEAN</div><h3>Minimal-noise slots</h3><p>Compact one-row strips use the health LED for enable/bypass, the plug-in name for opening the vendor UI, and one small action affordance for topology operations.</p></article>
-        <article class="card"><div class="icon">0dB</div><h3>Real master gain</h3><p>Input Trim is applied before the VST chain and Output Fader after it. Both default to transparent 0.0 dB and use bounded smoothed gain changes.</p></article>
-        <article class="card"><div class="icon">LUFS</div><h3>Final-output loudness</h3><p>LUFS-I and reconstructed dBTP observe post-output-fader audio—the actual level path delivered to OBS rather than a disconnected UI estimate.</p></article>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Stable topology UX</div>
-        <h2>Chain edits stay visually calm while authoritative state changes.</h2>
-        <p>The Rack keeps the last committed topology visible until the next authoritative snapshot arrives. Controls become temporarily interaction-disabled without flashing the entire surface, and the reserved scrollbar gutter prevents row-width jumps as chains grow.</p>
-      </div>
-      <div class="grid3">
-        <article class="card"><div class="icon">LED</div><h3>Direct slot interaction</h3><p>Click the status LED to enable/bypass and the plug-in name to open the vendor editor.</p></article>
-        <article class="card"><div class="icon">+</div><h3>One topology menu</h3><p>Replace, insert, move and remove live behind one compact slot action instead of repeated controls on every row.</p></article>
-        <article class="card"><div class="icon">CALM</div><h3>Flicker-resistant changes</h3><p>Pending topology changes preserve the committed Rack picture until the new state is ready, reducing visual noise during live editing.</p></article>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Stable recall</div>
-        <h2>Your working Rack survives normal OBS restarts automatically.</h2>
-        <p>Named presets remain available for reusable chains, but normal session continuity does not depend on remembering to create one.</p>
-      </div>
-      <div class="grid3">
-        <article class="card"><div class="icon">SAVE</div><h3>Durable working state</h3><p>Each OBS Rack owns a CRC-protected, atomic working-session snapshot with last-known-good recovery for topology, bypass and VST3 state.</p></article>
-        <article class="card"><div class="icon">DRY</div><h3>Dry-first restore</h3><p>Slow third-party chains restore behind a usable dry path and publish only when the complete restored generation is coherent.</p></article>
-        <article class="card"><div class="icon">DSP</div><h3>State matches the sound</h3><p>Split controller/processor VST3 editor changes are synchronized into processor state before capture, improving full DSP recall after restart.</p></article>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="wrap safety">
-      <div class="shield"><div><div class="shieldMark">🛡</div><strong>Built around failure boundaries</strong><p>VST3 runtime, vendor UI and scanning are separated from the OBS process by architecture.</p></div></div>
-      <div class="copyPanel">
-        <div class="kicker">Reliability before feature count</div>
-        <h2>The broadcast process should not own third-party VST3 code.</h2>
-        <div class="ticks">
-          <div class="tick"><span>✓</span><div><b>Separate helpers.</b> Single Host and Rack each use isolated helper-process boundaries.</div></div>
-          <div class="tick"><span>✓</span><div><b>Isolated scanning.</b> Candidate probing is kept outside OBS.</div></div>
-          <div class="tick"><span>✓</span><div><b>Bounded realtime behavior.</b> An unavailable wet result falls back to original dry/pass-through audio.</div></div>
-          <div class="tick"><span>✓</span><div><b>Authoritative output fader.</b> User attenuation remains applied even on fail-dry output.</div></div>
-          <div class="tick"><span>✓</span><div><b>DSP-safe state capture.</b> Rack persistence does not require the realtime path to wait on a control mutex.</div></div>
+    <section id="safety" class="section safetyStorySection">
+      <div class="wrap safetyStory">
+        <div class="safetyVisual" aria-hidden="true">
+          <div class="orbit orbitA"></div><div class="orbit orbitB"></div>
+          <div class="safetyCore"><span>OBS</span><strong>stays focused</strong></div>
+          <div class="safetySatellite satA"><b>VST3 DSP</b><small>helper process</small></div>
+          <div class="safetySatellite satB"><b>Vendor UI</b><small>outside OBS</small></div>
+          <div class="safetySatellite satC"><b>Scanner</b><small>isolated probing</small></div>
         </div>
-        <div class="notice">Crash isolation is not a malware sandbox. Only install VST3 plug-ins from vendors you trust. <a href="safety.html">Read the exact boundary →</a></div>
+        <div class="safetyCopy">
+          <span class="kicker">Safety without the scary wording</span>
+          <h2>If a third-party plug-in misbehaves, OBS should not be the first thing it owns.</h2>
+          <p>The project places VST3 runtime work, vendor interfaces and scanning behind separate process boundaries. That does not turn unknown plug-ins into safe software, but it gives live production a better failure boundary than loading everything directly into the OBS process.</p>
+          <div class="humanTicks">
+            <div><span>✓</span><p><b>Separate helper processes.</b> Third-party VST3 work is kept outside <code>obs64.exe</code>.</p></div>
+            <div><span>✓</span><p><b>Dry-first behavior.</b> When wet audio is unavailable, the design prefers the original signal over silence.</p></div>
+            <div><span>✓</span><p><b>Output attenuation remains authoritative.</b> Your output fader still matters on fail-dry output.</p></div>
+            <div><span>✓</span><p><b>No false promise.</b> Isolation is not a malware sandbox; only install VST3s from vendors you trust.</p></div>
+          </div>
+          <a class="textLink" href="safety.html">Read the exact safety boundary →</a>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section>
-    <div class="wrap">
-      <div class="sectionHead">
-        <div class="kicker">Public downloads</div>
-        <h2>One click from this page to the latest stable installer.</h2>
-        <p>The page resolves the newest public GitHub release automatically. The primary button points directly to the installer asset; users do not need to browse the GitHub Releases page first.</p>
+    <section class="section faqSection" id="faq">
+      <div class="wrap sectionHead centered compact">
+        <span class="kicker">Straight answers</span>
+        <h2>Before you install.</h2>
       </div>
-      <div class="compat">
-        <div class="row"><div>Latest release</div><div><span class="yes" data-release-version>latest stable</span></div></div>
-        <div class="row"><div>Installer</div><div><code data-installer-name>OBS-Safe-VST3-Host-Setup-x64.exe</code></div></div>
-        <div class="row"><div>Portable ZIP</div><div><code data-portable-name>OBS-Safe-VST3-Host-Windows-x64-Portable.zip</code></div></div>
-        <div class="row"><div>Windows</div><div><span class="yes">x64 supported</span></div></div>
-        <div class="row"><div>OBS Studio</div><div><span class="yes">29.1+ compatibility floor</span></div></div>
+      <div class="wrap faq humanFaq">
+        <details><summary>Does this package include VST3 effects?</summary><p>No. It is a VST3 host for OBS. You install the audio plug-ins you want from their own vendors, then select them inside the Single Host or Rack.</p></details>
+        <details><summary>Will every VST3 plug-in work?</summary><p>No host can promise universal compatibility with every third-party plug-in. The project has a documented compatibility boundary and test process. Check the compatibility page for the current support model.</p></details>
+        <details><summary>Does the Rack remember my chain after restarting OBS?</summary><p>Yes. The current stable Rack includes durable working-state recall for normal restart continuity, while named presets remain available for reusable setups.</p></details>
+        <details><summary>What happens if the processed path is not ready?</summary><p>The runtime is designed to keep a bounded dry/pass-through path available instead of making the realtime audio thread wait indefinitely for wet processing.</p></details>
+        <details><summary>Is macOS supported?</summary><p>The current public stable package is Windows x64. The website and release assets should be treated as Windows-only unless a future release explicitly says otherwise.</p></details>
       </div>
-      <div class="actions">
-        <a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download installer</a>
-        <a class="btn secondary" data-download="portable" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Windows-x64-Portable.zip">Portable ZIP</a>
-        <a class="btn secondary" data-download="release" href="https://github.com/masarray/obs-vst3/releases/latest">Release notes</a>
-      </div>
-    </div>
-  </section>
-</main>
+    </section>
 
-<footer>
-  <div class="wrap">OBS Safe VST3 Host · GPL-3.0-or-later · Independent open-source project · VST and OBS are trademarks of their respective owners.</div>
-</footer>
+    <section class="section downloadSection" id="download">
+      <div class="wrap downloadHero">
+        <div class="downloadCopy">
+          <span class="kicker">Ready when you are</span>
+          <h2>Put your VST3 chain where your live audio already lives.</h2>
+          <p>Download the latest stable Windows installer directly. No Releases-page detour.</p>
+          <div class="actions">
+            <a class="btn primary large" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download installer</a>
+            <a class="btn secondary" data-download="portable" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Windows-x64-Portable.zip">Portable ZIP</a>
+          </div>
+          <div class="downloadTrust"><span>Windows x64</span><span>OBS 29.1+</span><span data-release-version>latest stable</span><span>SHA-256 available</span></div>
+        </div>
+        <div class="releaseCard premiumReleaseCard">
+          <span class="releaseLabel">LATEST STABLE</span>
+          <strong data-release-version>latest stable</strong>
+          <div class="releaseAsset"><span>Installer</span><code data-installer-name>OBS-Safe-VST3-Host-Setup-x64.exe</code></div>
+          <div class="releaseAsset"><span>Portable</span><code data-portable-name>OBS-Safe-VST3-Host-Windows-x64-Portable.zip</code></div>
+          <div class="releaseLinks"><a data-download="checksums" href="https://github.com/masarray/obs-vst3/releases/latest/download/SHA256SUMS.txt">SHA-256</a><a data-download="release" href="https://github.com/masarray/obs-vst3/releases/latest">Release notes</a><a href="install.html">Install guide</a></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer landingFooter">
+    <div class="wrap footerIn">
+      <div><strong>OBS Safe VST3 Host</strong><span>Independent open-source project · GPL-3.0-or-later</span></div>
+      <div class="footerLinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a href="https://github.com/masarray/obs-vst3">GitHub</a></div>
+    </div>
+    <div class="wrap footerLegal">VST and OBS are trademarks of their respective owners. This project is not affiliated with or endorsed by those trademark owners.</div>
+  </footer>
 </body>
 </html>
