@@ -5,35 +5,35 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#080d13">
   <meta name="color-scheme" content="dark">
-  <title>OBS Safe VST3 Host — Use Modern VST3 Plug-ins in OBS Studio</title>
-  <meta name="description" content="Bring modern VST3 audio plug-ins into OBS Studio on Windows. Use one effect or build an isolated serial Rack with native vendor GUIs, automatic recall, real master gain, LUFS-I and dBTP metering.">
+  <title>OBS Safe VST3 Host — Install and Use VST3 Plug-ins in OBS Studio</title>
+  <meta name="description" content="Beginner-friendly guide to install OBS Safe VST3 Host on Windows, add the VST 3.x Plug-in filter in OBS, choose an installed VST3 effect, open its native interface and verify that processing works.">
   <meta name="author" content="MasArray">
   <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
   <link rel="canonical" href="https://masarray.github.io/obs-vst3/">
   <link rel="stylesheet" href="site.css">
+  <link rel="stylesheet" href="quickstart.css">
   <script defer src="release-sync.js"></script>
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="OBS Safe VST3 Host">
-  <meta property="og:title" content="OBS Safe VST3 Host — Modern VST3 plug-ins in OBS">
-  <meta property="og:description" content="Use the VST3 plug-ins you already know inside OBS, with isolated hosting, a serial Rack, native plug-in windows, recall and broadcast metering.">
+  <meta property="og:title" content="OBS Safe VST3 Host — Beginner setup guide for OBS">
+  <meta property="og:description" content="Install the host, add your first VST3 filter in OBS, open the plug-in interface and verify the audio processing step by step.">
   <meta property="og:url" content="https://masarray.github.io/obs-vst3/">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="OBS Safe VST3 Host">
-  <meta name="twitter:description" content="A creator-friendly VST3 host and serial audio Rack for OBS Studio on Windows.">
+  <meta name="twitter:description" content="A step-by-step beginner guide for using VST3 audio effects in OBS Studio on Windows.">
 
   <script type="application/ld+json">
   {
     "@context":"https://schema.org",
     "@type":"SoftwareApplication",
     "name":"OBS Safe VST3 Host",
-    "alternateName":["VST3 for OBS","OBS VST3 Plugin","OBS VST3 Rack"],
     "applicationCategory":"MultimediaApplication",
     "operatingSystem":"Windows 10, Windows 11",
-    "description":"A creator-friendly OBS Studio plug-in that provides an isolated Single VST3 Host and serial multi-effect VST3 Rack with native vendor GUIs, real master controls, broadcast metering and durable working-state recall.",
+    "description":"A creator-friendly OBS Studio plug-in providing an isolated Single VST3 Host and serial VST3 Rack with native vendor interfaces.",
     "url":"https://masarray.github.io/obs-vst3/",
     "downloadUrl":"https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe",
-    "softwareRequirements":"OBS Studio 29.1 or later; Windows x64",
+    "softwareRequirements":"OBS Studio 29.1 or later; Windows x64; at least one compatible VST3 audio effect installed separately",
     "license":"https://www.gnu.org/licenses/gpl-3.0.html",
     "isAccessibleForFree":true,
     "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}
@@ -50,12 +50,12 @@
         <span class="brandLockup"><strong>OBS VST3</strong><small>Safe host for creators</small></span>
       </a>
       <nav class="navlinks" aria-label="Main navigation">
-        <a href="#why">Why</a>
-        <a href="#workflow">How it works</a>
+        <a href="#quickstart"><span class="lang-en">Start here</span><span class="lang-id">Mulai di sini</span></a>
+        <a href="#requirements"><span class="lang-en">Requirements</span><span class="lang-id">Persiapan</span></a>
         <a href="#rack">Rack</a>
         <a href="#safety">Safety</a>
         <a href="compatibility.html">Compatibility</a>
-        <a class="navcta" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download free</a>
+        <a class="navcta" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe"><span class="lang-en">Download installer</span><span class="lang-id">Unduh installer</span></a>
       </nav>
     </div>
   </header>
@@ -67,19 +67,25 @@
       <div class="wrap landingHeroGrid">
         <div class="heroCopy">
           <div class="eyebrow"><span class="pulse"></span> Free · Open source · Windows x64 · OBS 29.1+</div>
-          <h1>Use the VST3 plug-ins you already love. <span class="softGradient">Keep OBS focused on the show.</span></h1>
-          <p class="lead">Bring modern EQs, compressors, de-essers, limiters and creative effects into OBS without turning <code>obs64.exe</code> into the place where third-party VST3 code lives.</p>
+          <h1>
+            <span class="lang-en">Use VST3 in OBS without guessing. <span class="softGradient">Follow the steps until it works.</span></span>
+            <span class="lang-id">Pakai VST3 di OBS tanpa menebak-nebak. <span class="softGradient">Ikuti langkahnya sampai berhasil.</span></span>
+          </h1>
+          <p class="lead">
+            <span class="lang-en">This page is the complete first-time path: install the host, confirm the filter appears in OBS, choose one VST3 effect, open its interface and verify that your audio really changes.</span>
+            <span class="lang-id">Halaman ini adalah panduan lengkap untuk pemakaian pertama: instal host, pastikan filternya muncul di OBS, pilih satu efek VST3, buka interfacenya, lalu pastikan suara Anda benar-benar berubah.</span>
+          </p>
 
           <div class="heroValues" aria-label="Core product benefits">
-            <span>One effect or a full Rack</span>
-            <span>Native plug-in windows</span>
-            <span>Remembers your working chain</span>
-            <span>Dry audio stays available</span>
+            <span><span class="lang-en">Beginner path first</span><span class="lang-id">Jalur pemula dulu</span></span>
+            <span><span class="lang-en">Direct installer</span><span class="lang-id">Installer langsung</span></span>
+            <span><span class="lang-en">Native plug-in interface</span><span class="lang-id">Interface plug-in asli</span></span>
+            <span><span class="lang-en">Rack after you succeed</span><span class="lang-id">Rack setelah berhasil</span></span>
           </div>
 
           <div class="actions heroActions">
-            <a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download for Windows</a>
-            <a class="btn secondary" href="#workflow">See how it works</a>
+            <a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe"><span class="lang-en">1. Download for Windows</span><span class="lang-id">1. Unduh untuk Windows</span></a>
+            <a class="btn secondary" href="#quickstart"><span class="lang-en">2. Follow the guide</span><span class="lang-id">2. Ikuti panduan</span></a>
           </div>
 
           <div class="releaseLine" aria-label="Release information">
@@ -87,218 +93,236 @@
             <span>Installer + portable ZIP</span>
             <span>GPL-3.0-or-later</span>
           </div>
-          <p class="heroTrust">No account · No subscription · No telemetry requirement · Direct GitHub Release download</p>
+
+          <div class="guideHeroNote">
+            <strong><span class="lang-en">Important:</span><span class="lang-id">Penting:</span></strong>
+            <span class="lang-en"> this installer does not include EQ, compressor or other VST3 effects. Install at least one VST3 audio effect from its own vendor first, or do that before Step 4 below.</span>
+            <span class="lang-id"> installer ini tidak berisi EQ, compressor, atau efek VST3 lainnya. Instal minimal satu efek audio VST3 dari vendor masing-masing terlebih dahulu, atau lakukan sebelum Langkah 4 di bawah.</span>
+          </div>
         </div>
 
-        <figure class="rackStage" aria-label="Illustration of the OBS Safe VST3 Rack">
-          <div class="rackGlow" aria-hidden="true"></div>
-          <div class="rackWindow">
-            <div class="rackTitlebar">
-              <div class="rackBrand"><span class="rackLogo">V3</span><span><b>OBS SAFE VST3 RACK</b><small>Microphone · Live chain</small></span></div>
-              <div class="liveBadge"><i></i> LIVE</div>
+        <div class="choiceCard recommended" aria-label="First-time success path">
+          <span class="choiceLabel"><span class="lang-en">FIRST-TIME SUCCESS PATH</span><span class="lang-id">JALUR PEMAKAIAN PERTAMA</span></span>
+          <h3><span class="lang-en">Your goal is simple: hear one VST3 effect working in OBS.</span><span class="lang-id">Targetnya sederhana: dengarkan satu efek VST3 bekerja di OBS.</span></h3>
+          <p><span class="lang-en">Do not start with the Rack. First prove that the host, OBS filter and one installed VST3 all work together.</span><span class="lang-id">Jangan mulai dari Rack. Pastikan dulu host, filter OBS, dan satu VST3 yang terinstal bisa bekerja bersama.</span></p>
+          <ul>
+            <li><span class="lang-en">Install the host</span><span class="lang-id">Instal host</span></li>
+            <li><span class="lang-en">See “VST 3.x Plug-in” in OBS</span><span class="lang-id">Temukan “VST 3.x Plug-in” di OBS</span></li>
+            <li><span class="lang-en">Choose one installed effect</span><span class="lang-id">Pilih satu efek yang sudah terinstal</span></li>
+            <li><span class="lang-en">Open Plug-in Interface</span><span class="lang-id">Buka Plug-in Interface</span></li>
+            <li><span class="lang-en">Toggle the filter and hear the difference</span><span class="lang-id">On/off filter dan dengarkan perbedaannya</span></li>
+          </ul>
+          <div class="uiCheckline"><i></i><span class="lang-en">When the sound changes, setup is successful.</span><span class="lang-id">Kalau suara berubah, setup sudah berhasil.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="requirements" class="preflight">
+      <div class="wrap preflightGrid">
+        <div class="preflightIntro">
+          <span class="kicker"><span class="lang-en">Before downloading</span><span class="lang-id">Sebelum mengunduh</span></span>
+          <strong><span class="lang-en">Check these three things first.</span><span class="lang-id">Pastikan tiga hal ini dulu.</span></strong>
+        </div>
+        <div class="preflightItem"><span class="preflightIcon">✓</span><span><b>Windows x64</b><span><span class="lang-en">Current public builds are for 64-bit Windows.</span><span class="lang-id">Build publik saat ini untuk Windows 64-bit.</span></span></span></div>
+        <div class="preflightItem"><span class="preflightIcon">✓</span><span><b>OBS Studio 29.1+</b><span><span class="lang-en">Use a supported OBS version before installing the filter.</span><span class="lang-id">Gunakan versi OBS yang didukung sebelum memasang filter.</span></span></span></div>
+        <div class="preflightItem"><span class="preflightIcon">✓</span><span><b><span class="lang-en">At least one VST3 effect</span><span class="lang-id">Minimal satu efek VST3</span></b><span><span class="lang-en">The host discovers VST3 effects you install separately from their vendors.</span><span class="lang-id">Host menemukan efek VST3 yang Anda instal terpisah dari vendor masing-masing.</span></span></span></div>
+      </div>
+    </section>
+
+    <section id="quickstart" class="successGuide">
+      <div class="wrap successGuideHead">
+        <span class="kicker"><span class="lang-en">Beginner quick start</span><span class="lang-id">Panduan cepat pemula</span></span>
+        <h2><span class="lang-en">From download to processed audio, one checkpoint at a time.</span><span class="lang-id">Dari download sampai audio terproses, satu checkpoint demi satu.</span></h2>
+        <p><span class="lang-en">Follow this order exactly the first time. The labels below match the product workflow so you know what to look for.</span><span class="lang-id">Untuk pemakaian pertama, ikuti urutan ini persis. Label di bawah mengikuti workflow produk agar Anda tahu apa yang harus dicari.</span></p>
+        <span class="beginnerBadge"><i></i><span class="lang-en">Recommended: start with Single Host, not Rack</span><span class="lang-id">Disarankan: mulai dari Single Host, bukan Rack</span></span>
+      </div>
+
+      <div class="wrap guideTimeline">
+        <article class="guideStep">
+          <div class="guideStepNumber">01</div>
+          <div class="guideStepCopy">
+            <h3><span class="lang-en">Close OBS and download the installer</span><span class="lang-id">Tutup OBS lalu unduh installer</span></h3>
+            <p><span class="lang-en">Stop streaming or recording and close OBS completely. Download the latest stable installer directly from this page.</span><span class="lang-id">Hentikan streaming atau recording dan tutup OBS sepenuhnya. Unduh installer stable terbaru langsung dari halaman ini.</span></p>
+            <div class="stepAction"><a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe"><span class="lang-en">Download installer</span><span class="lang-id">Unduh installer</span></a></div>
+            <span class="microNote"><span class="lang-en">Windows may show “Unknown publisher” because the current package is not commercially Authenticode-signed. Do not disable Defender or SmartScreen globally.</span><span class="lang-id">Windows mungkin menampilkan “Unknown publisher” karena paket saat ini belum ditandatangani Authenticode komersial. Jangan mematikan Defender atau SmartScreen secara global.</span></span>
+          </div>
+          <div class="uiDemo">
+            <div class="uiTitlebar"><span>OBS Safe VST3 Host Setup</span><span class="windowDots"><i></i><i></i><i></i></span></div>
+            <div class="uiBody">
+              <div class="uiField"><label>INSTALLER</label><div class="uiSelect"><span data-installer-name>OBS-Safe-VST3-Host-Setup-x64.exe</span><span>✓</span></div></div>
+              <div class="uiCheckline"><i></i><span data-release-version>latest stable</span></div>
             </div>
+          </div>
+        </article>
 
-            <div class="rackBody">
-              <div class="rackChain">
-                <div class="rackSectionLabel"><span>PLUGIN CHAIN</span><span>3 active</span></div>
+        <article class="guideStep">
+          <div class="guideStepNumber">02</div>
+          <div class="guideStepCopy">
+            <h3><span class="lang-en">Install into the correct OBS root</span><span class="lang-id">Instal ke OBS root yang benar</span></h3>
+            <p><span class="lang-en">Run Setup and select the OBS folder that contains <code>bin\64bit\obs64.exe</code>. Then click Install and start OBS again.</span><span class="lang-id">Jalankan Setup dan pilih folder OBS yang berisi <code>bin\64bit\obs64.exe</code>. Setelah itu klik Install dan jalankan OBS kembali.</span></p>
+            <span class="microNote"><span class="lang-en">Do not choose the <code>bin\64bit</code> folder itself. Choose its OBS root parent.</span><span class="lang-id">Jangan pilih folder <code>bin\64bit</code> itu sendiri. Pilih folder root OBS yang menjadi induknya.</span></span>
+          </div>
+          <div class="uiDemo">
+            <div class="uiTitlebar"><span><span class="lang-en">Select OBS installation</span><span class="lang-id">Pilih instalasi OBS</span></span><span class="windowDots"><i></i><i></i><i></i></span></div>
+            <div class="uiBody">
+              <div class="uiField"><label>OBS ROOT</label><div class="installFolder">C:\Program Files\obs-studio\</div></div>
+              <div class="verifyCard"><strong>✓ bin\64bit\obs64.exe</strong><span><span class="lang-en">This is the file the installer validates inside the selected root.</span><span class="lang-id">File inilah yang divalidasi installer di dalam root yang dipilih.</span></span></div>
+            </div>
+          </div>
+        </article>
 
-                <div class="fxSlot active">
-                  <button class="slotLed" aria-label="Enabled"></button>
-                  <div class="slotText"><strong>Vocal EQ</strong><small>Your VST3 plug-in · native editor</small></div>
-                  <div class="slotMiniMeter"><i style="--level:72%"></i><i style="--level:67%"></i></div>
-                  <button class="slotAction" aria-label="Effect menu">•••</button>
-                </div>
-
-                <div class="fxSlot active">
-                  <button class="slotLed" aria-label="Enabled"></button>
-                  <div class="slotText"><strong>Compressor</strong><small>Your VST3 plug-in · native editor</small></div>
-                  <div class="slotMiniMeter"><i style="--level:62%"></i><i style="--level:59%"></i></div>
-                  <button class="slotAction" aria-label="Effect menu">•••</button>
-                </div>
-
-                <div class="fxSlot active">
-                  <button class="slotLed" aria-label="Enabled"></button>
-                  <div class="slotText"><strong>Limiter</strong><small>Your VST3 plug-in · native editor</small></div>
-                  <div class="slotMiniMeter"><i style="--level:48%"></i><i style="--level:51%"></i></div>
-                  <button class="slotAction" aria-label="Effect menu">•••</button>
-                </div>
-
-                <button class="addFx" type="button" tabindex="-1"><span>＋</span> Add VST3 effect</button>
+        <article class="guideStep">
+          <div class="guideStepNumber">03</div>
+          <div class="guideStepCopy">
+            <h3><span class="lang-en">Confirm the OBS filter is installed</span><span class="lang-id">Pastikan filter sudah terpasang di OBS</span></h3>
+            <p><span class="lang-en">In OBS, select your microphone or another audio source, open <b>Filters</b>, press <b>+</b>, and look for <b>VST 3.x Plug-in</b>.</span><span class="lang-id">Di OBS, pilih microphone atau sumber audio lain, buka <b>Filters</b>, tekan <b>+</b>, lalu cari <b>VST 3.x Plug-in</b>.</span></p>
+            <span class="microNote"><span class="lang-en">You should also see <b>VST3 Rack</b>. For the first test, choose <b>VST 3.x Plug-in</b>.</span><span class="lang-id">Anda juga seharusnya melihat <b>VST3 Rack</b>. Untuk tes pertama, pilih <b>VST 3.x Plug-in</b>.</span></span>
+          </div>
+          <div class="uiDemo">
+            <div class="uiTitlebar"><span>OBS Studio · Filters</span><span class="windowDots"><i></i><i></i><i></i></span></div>
+            <div class="uiBody">
+              <div class="uiPath"><span>Audio Source</span><b>→</b><span>Filters</span><b>→</b><span class="uiHighlight">＋</span></div>
+              <div class="uiMenu">
+                <div class="selected">VST 3.x Plug-in</div>
+                <div>VST3 Rack</div>
               </div>
-
-              <aside class="masterPanel">
-                <div class="masterHeader"><span>MASTER</span><small>Signal sent to OBS</small></div>
-                <div class="meterPair" aria-hidden="true">
-                  <div class="meterColumn"><span>IN L</span><div class="meterTrack"><i style="--meter:77%"></i></div><small>-8.4</small></div>
-                  <div class="meterColumn"><span>IN R</span><div class="meterTrack"><i style="--meter:74%"></i></div><small>-8.9</small></div>
-                  <div class="meterColumn"><span>OUT L</span><div class="meterTrack hot"><i style="--meter:70%"></i></div><small>-9.8</small></div>
-                  <div class="meterColumn"><span>OUT R</span><div class="meterTrack hot"><i style="--meter:68%"></i></div><small>-10.2</small></div>
-                </div>
-                <div class="loudnessReadout"><div><span>LUFS-I</span><strong>-14.1</strong></div><div><span>dBTP</span><strong>-1.0</strong></div></div>
-                <div class="faderBlock"><div class="faderLabel"><span>INPUT TRIM</span><b>0.0 dB</b></div><div class="faderRail"><i style="--fader:50%"></i></div></div>
-                <div class="faderBlock"><div class="faderLabel"><span>OUTPUT</span><b>0.0 dB</b></div><div class="faderRail"><i style="--fader:50%"></i></div></div>
-              </aside>
             </div>
-
-            <div class="rackFooter"><span><i></i> Rack ready</span><span>Auto recall on</span></div>
           </div>
-          <figcaption>Conceptual presentation of the current Rack workflow: compact effect slots, master gain and final-output broadcast metering.</figcaption>
-        </figure>
-      </div>
-    </section>
+        </article>
 
-    <section class="trustStrip" aria-label="Product highlights">
-      <div class="wrap trustGrid">
-        <div><strong>Use your own VST3s</strong><span>Keep the tools and sound you already know.</span></div>
-        <div><strong>Native vendor UI</strong><span>Open the plug-in interface instead of a generic parameter wall.</span></div>
-        <div><strong>Built for live recovery</strong><span>If the wet path is unavailable, audio can stay dry instead of disappearing.</span></div>
-        <div><strong>Direct official downloads</strong><span>Installer, portable ZIP and SHA-256 from GitHub Releases.</span></div>
-      </div>
-    </section>
+        <article class="guideStep">
+          <div class="guideStepNumber">04</div>
+          <div class="guideStepCopy">
+            <h3><span class="lang-en">Choose one installed VST3 effect</span><span class="lang-id">Pilih satu efek VST3 yang sudah terinstal</span></h3>
+            <p><span class="lang-en">Keep the source set to <b>Installed plug-ins</b>, then select an EQ, compressor, de-esser, limiter or another compatible VST3 audio effect you already installed.</span><span class="lang-id">Biarkan sumber pada <b>Installed plug-ins</b>, lalu pilih EQ, compressor, de-esser, limiter, atau efek audio VST3 kompatibel lain yang sudah Anda instal.</span></p>
+            <span class="microNote"><span class="lang-en">If the list is empty, the host is installed but OBS has no VST3 effect to load yet. Install a VST3 effect from its vendor, then reopen the filter.</span><span class="lang-id">Jika daftar kosong, host sudah terpasang tetapi belum ada efek VST3 yang bisa dimuat. Instal efek VST3 dari vendornya, lalu buka kembali filter.</span></span>
+          </div>
+          <div class="uiDemo">
+            <div class="uiTitlebar"><span>VST 3.x Plug-in</span><span class="windowDots"><i></i><i></i><i></i></span></div>
+            <div class="uiBody">
+              <div class="uiField"><label>PLUG-IN SOURCE</label><div class="uiSelect"><span>Installed plug-ins</span><span>⌄</span></div></div>
+              <div class="uiField"><label>INSTALLED PLUG-IN</label><div class="uiSelect uiHighlight"><span>Your VST3 audio effect</span><span>⌄</span></div></div>
+            </div>
+          </div>
+        </article>
 
-    <section id="why" class="section humanSection">
-      <div class="wrap humanIntroGrid">
-        <div class="humanIntroCopy">
-          <span class="kicker">Why this exists</span>
-          <h2>Modern plug-ins belong in your audio workflow—not in your troubleshooting routine.</h2>
-          <p>OBS creators should be able to shape a microphone or program feed with familiar VST3 tools without first learning a hosting architecture. OBS Safe VST3 Host keeps the everyday workflow straightforward and pushes isolation, recovery and state handling into the background.</p>
+        <article class="guideStep">
+          <div class="guideStepNumber">05</div>
+          <div class="guideStepCopy">
+            <h3><span class="lang-en">Open the real plug-in interface</span><span class="lang-id">Buka interface asli plug-in</span></h3>
+            <p><span class="lang-en">Click <b>Open Plug-in Interface</b>. The vendor's native VST3 window should appear. Change one obvious parameter so the result will be easy to hear.</span><span class="lang-id">Klik <b>Open Plug-in Interface</b>. Jendela VST3 asli dari vendor seharusnya muncul. Ubah satu parameter yang efeknya mudah terdengar.</span></p>
+            <span class="microNote"><span class="lang-en">Example: make an EQ cut/boost clearly audible or lower a compressor threshold enough to hear the change.</span><span class="lang-id">Contoh: buat cut/boost EQ yang jelas terdengar atau turunkan threshold compressor sampai perubahannya mudah didengar.</span></span>
+          </div>
+          <div class="uiDemo">
+            <div class="uiTitlebar"><span>VST 3.x Plug-in</span><span class="windowDots"><i></i><i></i><i></i></span></div>
+            <div class="uiBody">
+              <div class="uiButton primary"><span class="lang-en">Open Plug-in Interface</span><span class="lang-id">Open Plug-in Interface</span></div>
+              <div class="uiCheckline"><i></i><span><span class="lang-en">Native vendor editor available</span><span class="lang-id">Editor asli vendor tersedia</span></span></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="guideStep">
+          <div class="guideStepNumber">06</div>
+          <div class="guideStepCopy">
+            <h3><span class="lang-en">Test processed versus original audio</span><span class="lang-id">Tes audio terproses versus audio asli</span></h3>
+            <p><span class="lang-en">Talk into the microphone or play audio. Toggle the OBS filter off and on. If you can hear the VST3 change disappear and return, the complete setup is working.</span><span class="lang-id">Bicara ke microphone atau putar audio. Matikan lalu aktifkan kembali filter OBS. Jika perubahan dari VST3 hilang lalu kembali, seluruh setup sudah bekerja.</span></p>
+            <span class="microNote"><span class="lang-en">Do this test before building a larger chain. One confirmed effect is the cleanest success checkpoint.</span><span class="lang-id">Lakukan tes ini sebelum membuat chain yang lebih besar. Satu efek yang sudah terkonfirmasi adalah checkpoint keberhasilan paling jelas.</span></span>
+          </div>
+          <div class="uiDemo">
+            <div class="uiTitlebar"><span>OBS Studio · Audio Filters</span><span class="windowDots"><i></i><i></i><i></i></span></div>
+            <div class="uiBody">
+              <div class="verifyCard"><strong><span class="lang-en">TEST</span><span class="lang-id">TES</span></strong><span><span class="lang-en">Filter OFF → original sound<br>Filter ON → processed sound</span><span class="lang-id">Filter OFF → suara asli<br>Filter ON → suara terproses</span></span></div>
+              <div class="uiCheckline"><i></i><span><span class="lang-en">You hear a clear difference</span><span class="lang-id">Anda mendengar perbedaan yang jelas</span></span></div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="wrap successFinish">
+        <div class="successFinishIcon">✓</div>
+        <div>
+          <strong><span class="lang-en">Success — your VST3 is now working as an OBS audio filter.</span><span class="lang-id">Berhasil — VST3 Anda sekarang bekerja sebagai filter audio OBS.</span></strong>
+          <p><span class="lang-en">At this point, you can keep using one effect or move on to the Rack for a serial multi-effect chain.</span><span class="lang-id">Sampai titik ini, Anda bisa tetap memakai satu efek atau lanjut ke Rack untuk chain beberapa efek secara serial.</span></p>
         </div>
-        <div class="promisePanel">
-          <span class="promiseLabel">THE PROMISE</span>
-          <strong>Load. Listen. Go live.</strong>
-          <p>Choose one VST3 effect for a simple job, or build a serial Rack when your chain grows. Open the real plug-in window, make the sound right, then let the host remember where you left it.</p>
-          <div class="promisePills"><span>Simple first</span><span>Rack when needed</span><span>Safe by design</span></div>
-        </div>
-      </div>
-
-      <div class="wrap benefitGrid">
-        <article><span class="benefitMark">01</span><h3>Keep your favorite tools</h3><p>Use modern VST3 plug-ins from vendors you already trust instead of rebuilding your sound around a special OBS-only effect set.</p></article>
-        <article><span class="benefitMark">02</span><h3>Build the chain you actually need</h3><p>Start with one effect. Add EQ, dynamics and limiting only when the job calls for it.</p></article>
-        <article><span class="benefitMark">03</span><h3>Come back to the same working Rack</h3><p>Normal OBS restarts can restore the latest working topology, bypass state and captured VST3 state automatically.</p></article>
-        <article><span class="benefitMark">04</span><h3>Prefer dry audio over dead air</h3><p>Recovery behavior is designed around keeping the original signal available when a processed result is not ready.</p></article>
+        <a class="btn secondary" href="#rack"><span class="lang-en">Next: learn the Rack</span><span class="lang-id">Lanjut: pelajari Rack</span></a>
       </div>
     </section>
 
-    <section id="workflow" class="section alt workflowSection">
+    <section id="rack" class="firstTimeChoice">
+      <div class="wrap sectionHead compact">
+        <span class="kicker"><span class="lang-en">After your first effect works</span><span class="lang-id">Setelah efek pertama berhasil</span></span>
+        <h2><span class="lang-en">Stay simple, or build a Rack.</span><span class="lang-id">Tetap sederhana, atau bangun Rack.</span></h2>
+        <p><span class="lang-en">Both filters are installed together. The Single Host is the best first test; the Rack is the next step when you need multiple effects.</span><span class="lang-id">Kedua filter terinstal bersamaan. Single Host adalah tes pertama terbaik; Rack adalah langkah berikutnya ketika Anda membutuhkan beberapa efek.</span></p>
+      </div>
+      <div class="wrap choiceGrid">
+        <article class="choiceCard recommended">
+          <span class="choiceLabel"><span class="lang-en">RECOMMENDED FIRST</span><span class="lang-id">DISARANKAN PERTAMA</span></span>
+          <h3>VST 3.x Plug-in</h3>
+          <p><span class="lang-en">Use one EQ, compressor, de-esser, limiter or creative effect. This is the fastest path to prove your installation works.</span><span class="lang-id">Gunakan satu EQ, compressor, de-esser, limiter, atau efek kreatif. Ini adalah jalur tercepat untuk memastikan instalasi Anda bekerja.</span></p>
+          <ul><li><span class="lang-en">One VST3 effect</span><span class="lang-id">Satu efek VST3</span></li><li><span class="lang-en">Installed plug-in discovery</span><span class="lang-id">Deteksi plug-in terinstal</span></li><li><span class="lang-en">Native vendor interface</span><span class="lang-id">Interface asli vendor</span></li></ul>
+        </article>
+        <article class="choiceCard">
+          <span class="choiceLabel"><span class="lang-en">NEXT STEP</span><span class="lang-id">LANGKAH BERIKUTNYA</span></span>
+          <h3>VST3 Rack</h3>
+          <p><span class="lang-en">Choose this after the first test succeeds when you want EQ → compressor → limiter or another serial chain.</span><span class="lang-id">Gunakan ini setelah tes pertama berhasil ketika Anda ingin membuat EQ → compressor → limiter atau chain serial lainnya.</span></p>
+          <ul><li><span class="lang-en">Multiple serial effects</span><span class="lang-id">Beberapa efek serial</span></li><li><span class="lang-en">Reorder and bypass slots</span><span class="lang-id">Atur urutan dan bypass slot</span></li><li><span class="lang-en">Automatic working-chain recall</span><span class="lang-id">Recall chain kerja otomatis</span></li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="safety" class="quickHelp">
       <div class="wrap sectionHead centered compact">
-        <span class="kicker">From installer to live audio</span>
-        <h2>Three steps. No VST hosting degree required.</h2>
-        <p>The technical boundaries are there for reliability. The creator workflow stays familiar.</p>
+        <span class="kicker"><span class="lang-en">If something does not match the guide</span><span class="lang-id">Jika hasilnya tidak sesuai panduan</span></span>
+        <h2><span class="lang-en">Check the exact point where the journey stopped.</span><span class="lang-id">Cek titik persis tempat proses Anda berhenti.</span></h2>
       </div>
-      <div class="wrap humanSteps">
-        <article><span>01</span><h3>Install the host</h3><p>Run the Windows installer, then restart OBS. The package adds the VST3 host and Rack components needed by OBS.</p><a href="install.html">Installation guide →</a></article>
-        <article><span>02</span><h3>Add an audio filter</h3><p>On a microphone or other OBS audio source, add either <b>VST 3.x Plug-in</b> for one effect or <b>VST3 Rack</b> for a serial chain.</p></article>
-        <article><span>03</span><h3>Choose your plug-ins and listen</h3><p>Open the native vendor editor, shape the sound, and use the Rack master meters when you need final-output level context.</p></article>
-      </div>
-    </section>
-
-    <section id="rack" class="section rackStorySection">
-      <div class="wrap splitFeature">
-        <div class="splitCopy">
-          <span class="kicker">Two ways to work</span>
-          <h2>One effect when that is enough. A Rack when it is not.</h2>
-          <p class="sectionLead">The project intentionally keeps both workflows. You do not need a multi-effect surface just to run one compressor.</p>
-          <div class="modeCards">
-            <article><span class="modeIcon">1FX</span><div><h3>Single Host</h3><p>Ideal for one EQ, compressor, de-esser or limiter. Discover a VST3, open its vendor UI, save state and keep the path focused.</p></div></article>
-            <article><span class="modeIcon">RACK</span><div><h3>Serial Rack</h3><p>Add, replace, remove, reorder and bypass multiple VST3 effects inside a dedicated graphical Rack editor.</p></div></article>
-          </div>
-        </div>
-        <div class="signalCard" aria-label="Rack signal flow">
-          <div class="signalHeader"><span>YOUR LIVE SIGNAL</span><small>What the Rack actually does</small></div>
-          <div class="signalFlow">
-            <div class="signalNode input"><span>01</span><strong>Input Trim</strong><small>Pre-chain level</small></div>
-            <i>→</i>
-            <div class="signalNode chain"><span>02</span><strong>VST3 Chain</strong><small>1…N effects</small></div>
-            <i>→</i>
-            <div class="signalNode output"><span>03</span><strong>Output Fader</strong><small>Final gain</small></div>
-            <i>→</i>
-            <div class="signalNode obs"><span>04</span><strong>OBS</strong><small>Final signal</small></div>
-          </div>
-          <div class="telemetryBar"><span>Peak L/R</span><span>LUFS-I</span><span>dBTP</span><span>Post-output telemetry</span></div>
-        </div>
+      <div class="wrap quickHelpGrid">
+        <article class="helpCard">
+          <strong><span class="lang-en">“VST 3.x Plug-in” does not appear</span><span class="lang-id">“VST 3.x Plug-in” tidak muncul</span></strong>
+          <p><span class="lang-en">Restart OBS and confirm Setup was pointed at the OBS root containing <code>bin\64bit\obs64.exe</code>.</span><span class="lang-id">Restart OBS dan pastikan Setup diarahkan ke OBS root yang berisi <code>bin\64bit\obs64.exe</code>.</span></p>
+          <a href="install.html"><span class="lang-en">Open installation details →</span><span class="lang-id">Buka detail instalasi →</span></a>
+        </article>
+        <article class="helpCard">
+          <strong><span class="lang-en">Installed plug-in list is empty</span><span class="lang-id">Daftar plug-in terinstal kosong</span></strong>
+          <p><span class="lang-en">This package is a host, not an effect bundle. Install a Windows x64 VST3 audio effect from its vendor first.</span><span class="lang-id">Paket ini adalah host, bukan kumpulan efek. Instal efek audio VST3 Windows x64 dari vendor masing-masing terlebih dahulu.</span></p>
+          <a href="compatibility.html"><span class="lang-en">Check compatibility →</span><span class="lang-id">Cek kompatibilitas →</span></a>
+        </article>
+        <article class="helpCard">
+          <strong><span class="lang-en">Plug-in loads but behaves unexpectedly</span><span class="lang-id">Plug-in termuat tetapi perilakunya tidak sesuai</span></strong>
+          <p><span class="lang-en">A specific VST3 version can still have vendor-specific behavior. Check the support boundary and report reproducible details when needed.</span><span class="lang-id">Versi VST3 tertentu tetap bisa memiliki perilaku khusus vendor. Cek batas dukungan dan laporkan detail yang bisa direproduksi jika perlu.</span></p>
+          <a href="https://github.com/masarray/obs-vst3/issues"><span class="lang-en">Report an issue →</span><span class="lang-id">Laporkan masalah →</span></a>
+        </article>
       </div>
     </section>
 
-    <section class="section alt recallSection">
-      <div class="wrap sectionHead centered compact">
-        <span class="kicker">Built for repeatable live work</span>
-        <h2>Your Rack should feel like part of the setup—not a temporary experiment.</h2>
-        <p>Useful persistence is not a “save preset or lose everything” experience. The working Rack can restore itself across normal OBS restarts.</p>
-      </div>
-      <div class="wrap recallGrid">
-        <article><span>RECALL</span><h3>Working-state continuity</h3><p>Topology, bypass and captured VST3 state can come back automatically after a normal restart.</p></article>
-        <article><span>PRESETS</span><h3>Reusable chains when you want them</h3><p>Named presets still exist for intentional reusable setups, without being mandatory for ordinary continuity.</p></article>
-        <article><span>CALM</span><h3>Less visual churn during edits</h3><p>The Rack keeps the last committed topology visible while an authoritative update is pending, reducing distracting UI flicker.</p></article>
-      </div>
-    </section>
-
-    <section id="safety" class="section safetyStorySection">
-      <div class="wrap safetyStory">
-        <div class="safetyVisual" aria-hidden="true">
-          <div class="orbit orbitA"></div><div class="orbit orbitB"></div>
-          <div class="safetyCore"><span>OBS</span><strong>stays focused</strong></div>
-          <div class="safetySatellite satA"><b>VST3 DSP</b><small>helper process</small></div>
-          <div class="safetySatellite satB"><b>Vendor UI</b><small>outside OBS</small></div>
-          <div class="safetySatellite satC"><b>Scanner</b><small>isolated probing</small></div>
-        </div>
-        <div class="safetyCopy">
-          <span class="kicker">Safety without the scary wording</span>
-          <h2>If a third-party plug-in misbehaves, OBS should not be the first thing it owns.</h2>
-          <p>The project places VST3 runtime work, vendor interfaces and scanning behind separate process boundaries. That does not turn unknown plug-ins into safe software, but it gives live production a better failure boundary than loading everything directly into the OBS process.</p>
-          <div class="humanTicks">
-            <div><span>✓</span><p><b>Separate helper processes.</b> Third-party VST3 work is kept outside <code>obs64.exe</code>.</p></div>
-            <div><span>✓</span><p><b>Dry-first behavior.</b> When wet audio is unavailable, the design prefers the original signal over silence.</p></div>
-            <div><span>✓</span><p><b>Output attenuation remains authoritative.</b> Your output fader still matters on fail-dry output.</p></div>
-            <div><span>✓</span><p><b>No false promise.</b> Isolation is not a malware sandbox; only install VST3s from vendors you trust.</p></div>
-          </div>
-          <a class="textLink" href="safety.html">Read the exact safety boundary →</a>
-        </div>
-      </div>
-    </section>
-
-    <section class="section faqSection" id="faq">
-      <div class="wrap sectionHead centered compact">
-        <span class="kicker">Straight answers</span>
-        <h2>Before you install.</h2>
-      </div>
-      <div class="wrap faq humanFaq">
-        <details><summary>Does this package include VST3 effects?</summary><p>No. It is a VST3 host for OBS. You install the audio plug-ins you want from their own vendors, then select them inside the Single Host or Rack.</p></details>
-        <details><summary>Will every VST3 plug-in work?</summary><p>No host can promise universal compatibility with every third-party plug-in. The project has a documented compatibility boundary and test process. Check the compatibility page for the current support model.</p></details>
-        <details><summary>Does the Rack remember my chain after restarting OBS?</summary><p>Yes. The current stable Rack includes durable working-state recall for normal restart continuity, while named presets remain available for reusable setups.</p></details>
-        <details><summary>What happens if the processed path is not ready?</summary><p>The runtime is designed to keep a bounded dry/pass-through path available instead of making the realtime audio thread wait indefinitely for wet processing.</p></details>
-        <details><summary>Is macOS supported?</summary><p>The current public stable package is Windows x64. The website and release assets should be treated as Windows-only unless a future release explicitly says otherwise.</p></details>
-      </div>
-    </section>
-
-    <section class="section downloadSection" id="download">
+    <section class="section alt">
       <div class="wrap downloadHero">
         <div class="downloadCopy">
-          <span class="kicker">Ready when you are</span>
-          <h2>Put your VST3 chain where your live audio already lives.</h2>
-          <p>Download the latest stable Windows installer directly. No Releases-page detour.</p>
+          <span class="kicker"><span class="lang-en">Ready to start?</span><span class="lang-id">Siap mulai?</span></span>
+          <h2><span class="lang-en">Download the installer, then come back to Step 1.</span><span class="lang-id">Unduh installer, lalu kembali ke Langkah 1.</span></h2>
+          <p><span class="lang-en">The button resolves the latest public stable installer directly. You do not need to search the GitHub Releases page for the correct file.</span><span class="lang-id">Tombol ini mengambil installer stable publik terbaru secara langsung. Anda tidak perlu mencari file yang benar di halaman GitHub Releases.</span></p>
           <div class="actions">
-            <a class="btn primary large" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe">Download installer</a>
-            <a class="btn secondary" data-download="portable" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Windows-x64-Portable.zip">Portable ZIP</a>
+            <a class="btn primary" data-download="installer" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Setup-x64.exe"><span class="lang-en">Download installer</span><span class="lang-id">Unduh installer</span></a>
+            <a class="btn secondary" href="install.html"><span class="lang-en">Advanced install details</span><span class="lang-id">Detail instalasi lanjutan</span></a>
           </div>
-          <div class="downloadTrust"><span>Windows x64</span><span>OBS 29.1+</span><span data-release-version>latest stable</span><span>SHA-256 available</span></div>
         </div>
-        <div class="releaseCard premiumReleaseCard">
-          <span class="releaseLabel">LATEST STABLE</span>
+        <div class="premiumReleaseCard">
+          <span class="promiseLabel"><span class="lang-en">CURRENT STABLE</span><span class="lang-id">STABLE SAAT INI</span></span>
           <strong data-release-version>latest stable</strong>
-          <div class="releaseAsset"><span>Installer</span><code data-installer-name>OBS-Safe-VST3-Host-Setup-x64.exe</code></div>
-          <div class="releaseAsset"><span>Portable</span><code data-portable-name>OBS-Safe-VST3-Host-Windows-x64-Portable.zip</code></div>
-          <div class="releaseLinks"><a data-download="checksums" href="https://github.com/masarray/obs-vst3/releases/latest/download/SHA256SUMS.txt">SHA-256</a><a data-download="release" href="https://github.com/masarray/obs-vst3/releases/latest">Release notes</a><a href="install.html">Install guide</a></div>
+          <p><span class="lang-en">Windows x64 · OBS 29.1+ · Single Host + Rack · direct official release asset</span><span class="lang-id">Windows x64 · OBS 29.1+ · Single Host + Rack · asset release resmi langsung</span></p>
+          <div class="actions"><a class="btn secondary" data-download="portable" href="https://github.com/masarray/obs-vst3/releases/latest/download/OBS-Safe-VST3-Host-Windows-x64-Portable.zip">Portable ZIP</a><a class="btn secondary" data-download="checksums" href="https://github.com/masarray/obs-vst3/releases/latest/download/SHA256SUMS.txt">SHA-256</a></div>
         </div>
       </div>
     </section>
   </main>
 
-  <footer class="footer landingFooter">
+  <footer class="footer">
     <div class="wrap footerIn">
-      <div><strong>OBS Safe VST3 Host</strong><span>Independent open-source project · GPL-3.0-or-later</span></div>
-      <div class="footerLinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a><a href="https://github.com/masarray/obs-vst3">GitHub</a></div>
+      <strong>OBS Safe VST3 Host</strong>
+      <span><span class="lang-en">Independent open-source project · GPL-3.0-or-later · crash isolation is not a malware sandbox.</span><span class="lang-id">Proyek open-source independen · GPL-3.0-or-later · crash isolation bukan sandbox malware.</span></span>
+      <div class="footerLinks"><a href="install.html">Install</a><a href="compatibility.html">Compatibility</a><a href="safety.html">Safety</a><a href="roadmap.html">Roadmap</a></div>
+      <div class="footerLegal"><span class="lang-en">VST and OBS are trademarks of their respective owners. Only install VST3 plug-ins from vendors you trust.</span><span class="lang-id">VST dan OBS adalah merek dagang milik pemegang hak masing-masing. Instal plug-in VST3 hanya dari vendor yang Anda percaya.</span></div>
     </div>
-    <div class="wrap footerLegal">VST and OBS are trademarks of their respective owners. This project is not affiliated with or endorsed by those trademark owners.</div>
   </footer>
 </body>
 </html>
