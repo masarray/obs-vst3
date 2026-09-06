@@ -81,3 +81,5 @@
       document.documentElement.dataset.releaseSync = 'fallback';
     });
 })();
+
+// pages-publish-trigger: refresh project Pages from current main
