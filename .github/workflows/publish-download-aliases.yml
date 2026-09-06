@@ -1,0 +1,78 @@
+name: Publish Stable Download Aliases
+
+on:
+  workflow_run:
+    workflows:
+      - Release Windows
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-stable-download-aliases
+  cancel-in-progress: false
+
+jobs:
+  publish-aliases:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve latest public release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name')"
+          prerelease="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq '.prerelease')"
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo "No latest public release is available."
+            exit 1
+          fi
+          if [[ "$prerelease" == "true" ]]; then
+            echo "Latest release $tag is a prerelease; stable aliases are not changed."
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download versioned installer and portable package
+        if: steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern 'OBS-Safe-VST3-Host-v*-Setup-x64.exe' \
+            --pattern 'OBS-Safe-VST3-Host-v*-Windows-x64-Portable.zip'
+
+          installer="$(find dist -maxdepth 1 -type f -name 'OBS-Safe-VST3-Host-v*-Setup-x64.exe' | head -n 1)"
+          portable="$(find dist -maxdepth 1 -type f -name 'OBS-Safe-VST3-Host-v*-Windows-x64-Portable.zip' | head -n 1)"
+
+          test -n "$installer"
+          test -n "$portable"
+
+          cp "$installer" dist/OBS-Safe-VST3-Host-Setup-x64.exe
+          cp "$portable" dist/OBS-Safe-VST3-Host-Windows-x64-Portable.zip
+
+          cmp --silent "$installer" dist/OBS-Safe-VST3-Host-Setup-x64.exe
+          cmp --silent "$portable" dist/OBS-Safe-VST3-Host-Windows-x64-Portable.zip
+
+      - name: Publish stable alias assets
+        if: steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/OBS-Safe-VST3-Host-Setup-x64.exe \
+            dist/OBS-Safe-VST3-Host-Windows-x64-Portable.zip
+
+          echo "### Stable download aliases" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`OBS-Safe-VST3-Host-Setup-x64.exe\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`OBS-Safe-VST3-Host-Windows-x64-Portable.zip\`" >> "$GITHUB_STEP_SUMMARY"
