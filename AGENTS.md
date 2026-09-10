@@ -192,3 +192,42 @@ In particular:
 - Rack v2.0 cannot lock without helper kill/recovery testing while Rack Editor/vendor windows are exercised.
 
 If required evidence is missing, milestone is not complete and next locked phase must not start.
+
+---
+
+## Result-oriented failures and asynchronous diagnostics
+
+The existing fail-dry/isolation architecture must also be exception-disciplined.
+
+Exceptions are not normal control flow in `filter_audio`, Rack DSP workers, shared process-block seams, helper real-time processing, or other latency-critical steady-state code. Expected conditions such as helper unavailable, late wet block, generation mismatch, invalid block metadata, bounded queue full, stale response, vendor processing failure, or recoverable protocol rejection should use compact explicit status/result values and deterministic fallback behavior.
+
+Use one coherent error taxonomy per runtime/protocol layer rather than creating unrelated ad-hoc Result classes for every component. Real-time outcomes should prefer fixed-size error/status codes plus minimal numeric context, not owning strings or exception objects.
+
+Windows/COM/VST3/vendor/process/filesystem/framework exceptions may still occur outside the audio hot path. Contain them at helper/control/scanner/persistence/lifecycle boundaries and convert them into explicit runtime states before they can unwind into OBS audio callbacks.
+
+Never place broad try/catch and logging inside a per-block loop as a substitute for fixing ownership or failure semantics. Do not use thrown exceptions plus sleeps/retries to implement recovery state machines.
+
+### Real-time diagnostic rule
+
+`filter_audio` and Rack DSP processing must not synchronously log, format strings, serialize JSON, create stack traces, or perform file/network telemetry.
+
+If a real-time path needs diagnostics, emit only a tiny machine-readable event/counter to a preallocated bounded non-blocking queue/ring. The producer path must not wait for the diagnostic consumer and must not allocate merely to report an error.
+
+A non-real-time consumer may aggregate, deduplicate/rate-limit, format, persist, or expose diagnostics in the helper/OBS status UI.
+
+Queue overload must have explicit semantics: coalesce duplicates, increment a dropped-event counter, preserve severe/latest events where appropriate, or discard low-priority diagnostics. Never grow the queue without bound.
+
+Diagnostic infrastructure is observational. A slow, crashed, full, or unavailable diagnostic sink must not delay `filter_audio`, block Rack DSP, prevent bounded dry fallback, trigger helper restart loops, or crash OBS.
+
+### Failure-path shape
+
+```text
+real-time input/block
+-> validate generation/shape/state
+-> compact Result/status
+-> wet success OR bounded dry/fail-safe fallback
+-> optional compact diagnostic event
+-> continue without blocking
+```
+
+State promotion remains transactional: build/validate candidate state, then publish/swap it atomically or with the already-approved bounded synchronization design. Failed candidate construction must retain last-known-good coherent state.
